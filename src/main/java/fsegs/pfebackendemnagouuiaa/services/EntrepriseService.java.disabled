@@ -1,0 +1,224 @@
+package fsegs.pfebackendemnagouuiaa.services;
+
+import fsegs.pfebackendemnagouuiaa.dto.EntrepriseRequestDTO;
+import fsegs.pfebackendemnagouuiaa.dto.EntrepriseResponseDTO;
+import fsegs.pfebackendemnagouuiaa.entities.Entreprise;
+import fsegs.pfebackendemnagouuiaa.repository.EntrepriseRepository;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.stream.Collectors;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+@Transactional
+public class EntrepriseService {
+
+    private final EntrepriseRepository entrepriseRepository;
+
+    /**
+     * Create a new company
+     */
+    public EntrepriseResponseDTO createEntreprise(EntrepriseRequestDTO requestDTO) {
+        log.info("Creating new company with name: {}", requestDTO.getNom());
+
+        // Check if company name already exists
+        if (entrepriseRepository.findByNomIgnoreCase(requestDTO.getNom()).isPresent()) {
+            throw new RuntimeException("Company name already exists: " + requestDTO.getNom());
+        }
+
+        // Check if email already exists
+        if (requestDTO.getEmail() != null && 
+            entrepriseRepository.findByEmailIgnoreCase(requestDTO.getEmail()).isPresent()) {
+            throw new RuntimeException("Company email already exists: " + requestDTO.getEmail());
+        }
+
+        // Check if telephone already exists
+        if (requestDTO.getTelephone() != null && 
+            entrepriseRepository.findByTelephone(requestDTO.getTelephone()).isPresent()) {
+            throw new RuntimeException("Company telephone already exists: " + requestDTO.getTelephone());
+        }
+
+        Entreprise entreprise = Entreprise.builder()
+                .nom(requestDTO.getNom())
+                .adresse(requestDTO.getAdresse())
+                .telephone(requestDTO.getTelephone())
+                .email(requestDTO.getEmail())
+                .secteurActivite(requestDTO.getSecteurActivite())
+                .build();
+
+        Entreprise savedEntreprise = entrepriseRepository.save(entreprise);
+        log.info("Company created successfully with ID: {}", savedEntreprise.getId());
+
+        return EntrepriseResponseDTO.fromEntity(savedEntreprise);
+    }
+
+    /**
+     * Get company by ID
+     */
+    @Transactional(readOnly = true)
+    public EntrepriseResponseDTO getEntrepriseById(Long id) {
+        log.info("Fetching company with ID: {}", id);
+        
+        Entreprise entreprise = entrepriseRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Company not found with ID: " + id));
+
+        return EntrepriseResponseDTO.fromEntity(entreprise);
+    }
+
+    /**
+     * Get company by name
+     */
+    @Transactional(readOnly = true)
+    public EntrepriseResponseDTO getEntrepriseByNom(String nom) {
+        log.info("Fetching company with name: {}", nom);
+        
+        Entreprise entreprise = entrepriseRepository.findByNomIgnoreCase(nom)
+                .orElseThrow(() -> new RuntimeException("Company not found with name: " + nom));
+
+        return EntrepriseResponseDTO.fromEntity(entreprise);
+    }
+
+    /**
+     * Get all companies
+     */
+    @Transactional(readOnly = true)
+    public List<EntrepriseResponseDTO> getAllEntreprises() {
+        log.info("Fetching all companies");
+        
+        List<Entreprise> entreprises = entrepriseRepository.findAll();
+        return entreprises.stream()
+                .map(EntrepriseResponseDTO::fromEntity)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Update company
+     */
+    public EntrepriseResponseDTO updateEntreprise(Long id, EntrepriseRequestDTO requestDTO) {
+        log.info("Updating company with ID: {}", id);
+
+        Entreprise existingEntreprise = entrepriseRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Company not found with ID: " + id));
+
+        // Check if name is being changed and if new name already exists
+        if (!existingEntreprise.getNom().equalsIgnoreCase(requestDTO.getNom()) &&
+            entrepriseRepository.findByNomIgnoreCase(requestDTO.getNom()).isPresent()) {
+            throw new RuntimeException("Company name already exists: " + requestDTO.getNom());
+        }
+
+        // Check if email is being changed and if new email already exists
+        if (requestDTO.getEmail() != null && !requestDTO.getEmail().equals(existingEntreprise.getEmail()) &&
+            entrepriseRepository.findByEmailIgnoreCase(requestDTO.getEmail()).isPresent()) {
+            throw new RuntimeException("Company email already exists: " + requestDTO.getEmail());
+        }
+
+        // Check if telephone is being changed and if new telephone already exists
+        if (requestDTO.getTelephone() != null && !requestDTO.getTelephone().equals(existingEntreprise.getTelephone()) &&
+            entrepriseRepository.findByTelephone(requestDTO.getTelephone()).isPresent()) {
+            throw new RuntimeException("Company telephone already exists: " + requestDTO.getTelephone());
+        }
+
+        existingEntreprise.setNom(requestDTO.getNom());
+        existingEntreprise.setAdresse(requestDTO.getAdresse());
+        existingEntreprise.setTelephone(requestDTO.getTelephone());
+        existingEntreprise.setEmail(requestDTO.getEmail());
+        existingEntreprise.setSecteurActivite(requestDTO.getSecteurActivite());
+
+        Entreprise updatedEntreprise = entrepriseRepository.save(existingEntreprise);
+        log.info("Company updated successfully with ID: {}", updatedEntreprise.getId());
+
+        return EntrepriseResponseDTO.fromEntity(updatedEntreprise);
+    }
+
+    /**
+     * Delete company
+     */
+    public void deleteEntreprise(Long id) {
+        log.info("Deleting company with ID: {}", id);
+
+        Entreprise entreprise = entrepriseRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Company not found with ID: " + id));
+
+        // Check if company has active internships
+        if (entreprise.getStages() != null && !entreprise.getStages().isEmpty()) {
+            boolean hasActiveStages = entreprise.getStages().stream()
+                    .anyMatch(stage -> stage.getType() != null && 
+                            (stage.getType().name().equals("EN_COURS") || stage.getType().name().equals("PLANIFIE")));
+            if (hasActiveStages) {
+                throw new RuntimeException("Cannot delete company with active internships");
+            }
+        }
+
+        // Check if company has professional supervisors
+        if (entreprise.getEncadrantProfessionnels() != null && !entreprise.getEncadrantProfessionnels().isEmpty()) {
+            throw new RuntimeException("Cannot delete company with assigned professional supervisors");
+        }
+
+        // Check if company has company managers
+        if (entreprise.getTuteurs() != null && !entreprise.getTuteurs().isEmpty()) {
+            throw new RuntimeException("Cannot delete company with assigned company managers");
+        }
+
+        entrepriseRepository.delete(entreprise);
+        log.info("Company deleted successfully with ID: {}", id);
+    }
+
+    /**
+     * Get companies by sector
+     */
+    @Transactional(readOnly = true)
+    public List<EntrepriseResponseDTO> getEntreprisesBySecteur(String secteurActivite) {
+        log.info("Fetching companies by sector: {}", secteurActivite);
+        
+        List<Entreprise> entreprises = entrepriseRepository.findBySecteurActivite(secteurActivite);
+        return entreprises.stream()
+                .map(EntrepriseResponseDTO::fromEntity)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Search companies by keyword
+     */
+    @Transactional(readOnly = true)
+    public List<EntrepriseResponseDTO> searchEntreprises(String keyword) {
+        log.info("Searching companies with keyword: {}", keyword);
+        
+        List<Entreprise> entreprises = entrepriseRepository.searchByKeyword(keyword);
+        return entreprises.stream()
+                .map(EntrepriseResponseDTO::fromEntity)
+                .collect(Collectors.toList());
+    }
+
+    /**
+     * Get company statistics
+     */
+    @Transactional(readOnly = true)
+    public EntrepriseStatsDTO getEntrepriseStats() {
+        log.info("Fetching company statistics");
+        
+        long totalEntreprises = entrepriseRepository.count();
+        long totalSectors = entrepriseRepository.findAll().stream()
+                .map(Entreprise::getSecteurActivite)
+                .distinct()
+                .count();
+
+        return EntrepriseStatsDTO.builder()
+                .totalEntreprises(totalEntreprises)
+                .totalSectors(totalSectors)
+                .build();
+    }
+
+    @lombok.Data
+    @lombok.Builder
+    @lombok.NoArgsConstructor
+    @lombok.AllArgsConstructor
+    public static class EntrepriseStatsDTO {
+        private Long totalEntreprises;
+        private Long totalSectors;
+    }
+}

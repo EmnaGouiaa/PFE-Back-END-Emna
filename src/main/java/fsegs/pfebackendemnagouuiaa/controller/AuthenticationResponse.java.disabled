@@ -1,0 +1,13 @@
+package fsegs.pfebackendemnagouuiaa.controller;
+
+import fsegs.pfebackendemnagouuiaa.dto.UserDTO;
+import lombok.*;
+
+@Data
+@Builder
+@AllArgsConstructor
+@NoArgsConstructor
+public class AuthenticationResponse {
+    private String token;
+    private UserDTO user;
+}

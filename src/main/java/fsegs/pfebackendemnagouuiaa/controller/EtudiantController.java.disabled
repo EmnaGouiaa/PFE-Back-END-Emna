@@ -1,0 +1,190 @@
+package fsegs.pfebackendemnagouuiaa.controller;
+
+import fsegs.pfebackendemnagouuiaa.dto.EtudiantRequestDTO;
+import fsegs.pfebackendemnagouuiaa.dto.EtudiantResponseDTO;
+import fsegs.pfebackendemnagouuiaa.entities.Role;
+import fsegs.pfebackendemnagouuiaa.services.EtudiantService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+@RestController
+@RequestMapping("/api/v1/etudiants")
+@RequiredArgsConstructor
+@Slf4j
+@Tag(name = "Student Management", description = "APIs for managing students")
+@CrossOrigin(origins = {"http://localhost:4200", "http://127.0.0.1:4200"})
+public class EtudiantController {
+
+    private final EtudiantService etudiantService;
+
+    @Operation(summary = "Create a new student", description = "Creates a new student account. Requires ADMIN role.")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "201", description = "Student created successfully"),
+        @ApiResponse(responseCode = "400", description = "Invalid input data"),
+        @ApiResponse(responseCode = "409", description = "Email or matricule already exists"),
+        @ApiResponse(responseCode = "403", description = "Access denied")
+    })
+    @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<EtudiantResponseDTO> createEtudiant(
+            @Valid @RequestBody EtudiantRequestDTO requestDTO) {
+        log.info("POST /api/v1/etudiants - Creating student: {}", requestDTO.getEmail());
+        
+        EtudiantResponseDTO response = etudiantService.createEtudiant(requestDTO);
+        return new ResponseEntity<>(response, HttpStatus.CREATED);
+    }
+
+    @Operation(summary = "Get student by ID", description = "Retrieves student information by ID. Requires ADMIN or the student themselves.")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "Student found"),
+        @ApiResponse(responseCode = "404", description = "Student not found"),
+        @ApiResponse(responseCode = "403", description = "Access denied")
+    })
+    @GetMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN') or (hasRole('STAGIAIRE') and @etudiantSecurity.isOwner(#id, authentication))")
+    public ResponseEntity<EtudiantResponseDTO> getEtudiantById(
+            @Parameter(description = "Student ID") @PathVariable Long id) {
+        log.info("GET /api/v1/etudiants/{} - Fetching student", id);
+        
+        EtudiantResponseDTO response = etudiantService.getEtudiantById(id);
+        return ResponseEntity.ok(response);
+    }
+
+    @Operation(summary = "Get student by matricule", description = "Retrieves student information by matricule. Requires ADMIN role.")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "Student found"),
+        @ApiResponse(responseCode = "404", description = "Student not found"),
+        @ApiResponse(responseCode = "403", description = "Access denied")
+    })
+    @GetMapping("/matricule/{matricule}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<EtudiantResponseDTO> getEtudiantByMatricule(
+            @Parameter(description = "Student matricule") @PathVariable String matricule) {
+        log.info("GET /api/v1/etudiants/matricule/{} - Fetching student", matricule);
+        
+        EtudiantResponseDTO response = etudiantService.getEtudiantByMatricule(matricule);
+        return ResponseEntity.ok(response);
+    }
+
+    @Operation(summary = "Get all students", description = "Retrieves all students. Requires ADMIN or ENCADRANT_ACADEMIQUE role.")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "Students retrieved successfully"),
+        @ApiResponse(responseCode = "403", description = "Access denied")
+    })
+    @GetMapping
+    @PreAuthorize("hasRole('ADMIN') or hasRole('ENCADRANT_ACADEMIQUE')")
+    public ResponseEntity<List<EtudiantResponseDTO>> getAllEtudiants() {
+        log.info("GET /api/v1/etudiants - Fetching all students");
+        
+        List<EtudiantResponseDTO> response = etudiantService.getAllEtudiants();
+        return ResponseEntity.ok(response);
+    }
+
+    @Operation(summary = "Update student", description = "Updates student information. Requires ADMIN or the student themselves.")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "Student updated successfully"),
+        @ApiResponse(responseCode = "404", description = "Student not found"),
+        @ApiResponse(responseCode = "409", description = "Email or matricule already exists"),
+        @ApiResponse(responseCode = "403", description = "Access denied")
+    })
+    @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN') or (hasRole('STAGIAIRE') and @etudiantSecurity.isOwner(#id, authentication))")
+    public ResponseEntity<EtudiantResponseDTO> updateEtudiant(
+            @Parameter(description = "Student ID") @PathVariable Long id,
+            @Valid @RequestBody EtudiantRequestDTO requestDTO) {
+        log.info("PUT /api/v1/etudiants/{} - Updating student", id);
+        
+        EtudiantResponseDTO response = etudiantService.updateEtudiant(id, requestDTO);
+        return ResponseEntity.ok(response);
+    }
+
+    @Operation(summary = "Delete student", description = "Deletes a student account. Requires ADMIN role.")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "204", description = "Student deleted successfully"),
+        @ApiResponse(responseCode = "404", description = "Student not found"),
+        @ApiResponse(responseCode = "400", description = "Cannot delete student with active internships"),
+        @ApiResponse(responseCode = "403", description = "Access denied")
+    })
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<Void> deleteEtudiant(
+            @Parameter(description = "Student ID") @PathVariable Long id) {
+        log.info("DELETE /api/v1/etudiants/{} - Deleting student", id);
+        
+        etudiantService.deleteEtudiant(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    @Operation(summary = "Validate student account", description = "Validates a student account. Requires ADMIN role.")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "Student account validated successfully"),
+        @ApiResponse(responseCode = "404", description = "Student not found"),
+        @ApiResponse(responseCode = "403", description = "Access denied")
+    })
+    @PatchMapping("/{id}/validate")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<EtudiantResponseDTO> validateEtudiantAccount(
+            @Parameter(description = "Student ID") @PathVariable Long id) {
+        log.info("PATCH /api/v1/etudiants/{}/validate - Validating student account", id);
+        
+        EtudiantResponseDTO response = etudiantService.validateEtudiantAccount(id);
+        return ResponseEntity.ok(response);
+    }
+
+    @Operation(summary = "Get students by filiere", description = "Retrieves students by filiere. Requires ADMIN or ENCADRANT_ACADEMIQUE role.")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "Students retrieved successfully"),
+        @ApiResponse(responseCode = "403", description = "Access denied")
+    })
+    @GetMapping("/filiere/{filiere}")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('ENCADRANT_ACADEMIQUE')")
+    public ResponseEntity<List<EtudiantResponseDTO>> getEtudiantsByFiliere(
+            @Parameter(description = "Filiere") @PathVariable String filiere) {
+        log.info("GET /api/v1/etudiants/filiere/{} - Fetching students by filiere", filiere);
+        
+        List<EtudiantResponseDTO> response = etudiantService.getEtudiantsByFiliere(filiere);
+        return ResponseEntity.ok(response);
+    }
+
+    @Operation(summary = "Get students by niveau", description = "Retrieves students by niveau. Requires ADMIN or ENCADRANT_ACADEMIQUE role.")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "Students retrieved successfully"),
+        @ApiResponse(responseCode = "403", description = "Access denied")
+    })
+    @GetMapping("/niveau/{niveau}")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('ENCADRANT_ACADEMIQUE')")
+    public ResponseEntity<List<EtudiantResponseDTO>> getEtudiantsByNiveau(
+            @Parameter(description = "Niveau") @PathVariable String niveau) {
+        log.info("GET /api/v1/etudiants/niveau/{} - Fetching students by niveau", niveau);
+        
+        List<EtudiantResponseDTO> response = etudiantService.getEtudiantsByNiveau(niveau);
+        return ResponseEntity.ok(response);
+    }
+
+    @Operation(summary = "Search students", description = "Searches students by keyword in name, email, or matricule. Requires ADMIN or ENCADRANT_ACADEMIQUE role.")
+    @ApiResponses(value = {
+        @ApiResponse(responseCode = "200", description = "Students retrieved successfully"),
+        @ApiResponse(responseCode = "403", description = "Access denied")
+    })
+    @GetMapping("/search")
+    @PreAuthorize("hasRole('ADMIN') or hasRole('ENCADRANT_ACADEMIQUE')")
+    public ResponseEntity<List<EtudiantResponseDTO>> searchEtudiants(
+            @Parameter(description = "Search keyword") @RequestParam String keyword) {
+        log.info("GET /api/v1/etudiants/search?keyword={} - Searching students", keyword);
+        
+        List<EtudiantResponseDTO> response = etudiantService.searchEtudiants(keyword);
+        return ResponseEntity.ok(response);
+    }
+}

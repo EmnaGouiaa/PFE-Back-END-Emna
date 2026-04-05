@@ -1,0 +1,57 @@
+package fsegs.pfebackendemnagouuiaa.dto;
+
+import fsegs.pfebackendemnagouuiaa.entities.Role;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalDateTime;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class EtudiantResponseDTO {
+    
+    private Long id;
+    private String prenom;
+    private String nom;
+    private String email;
+    private String matricule;
+    private String filiere;
+    private String niveau;
+    private String niveauStage;
+    private String telephone;
+    private String adresse;
+    private Role role;
+    private Boolean compteValide;
+    private LocalDateTime dateCreation;
+    
+    // Statistics
+    private Long nombreStages;
+    private Long nombreDossiers;
+    
+    public static EtudiantResponseDTO fromEntity(fsegs.pfebackendemnagouuiaa.entities.Etudiant etudiant) {
+        if (etudiant == null) {
+            return null;
+        }
+        
+        return EtudiantResponseDTO.builder()
+                .id(etudiant.getId())
+                .prenom(etudiant.getPrenom())
+                .nom(etudiant.getNom())
+                .email(etudiant.getEmail())
+                .matricule(etudiant.getMatricule())
+                .filiere(etudiant.getFiliere())
+                .niveau(etudiant.getNiveau())
+                .niveauStage(etudiant.getNiveauStage())
+                .telephone(etudiant.getTelephone())
+                .adresse(etudiant.getAdresse())
+                .role(etudiant.getRole())
+                .compteValide(etudiant.getCompteValide())
+                .nombreStages(etudiant.getStages() != null ? (long) etudiant.getStages().size() : 0L)
+                .nombreDossiers(etudiant.getDossiersStage() != null ? (long) etudiant.getDossiersStage().size() : 0L)
+                .build();
+    }
+}

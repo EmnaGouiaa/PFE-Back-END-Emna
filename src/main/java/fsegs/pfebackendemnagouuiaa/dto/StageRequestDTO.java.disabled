@@ -1,0 +1,50 @@
+package fsegs.pfebackendemnagouuiaa.dto;
+
+import fsegs.pfebackendemnagouuiaa.entities.TypeStage;
+import jakarta.validation.constraints.Future;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
+import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
+import java.time.LocalDate;
+
+@Data
+@Builder
+@NoArgsConstructor
+@AllArgsConstructor
+public class StageRequestDTO {
+    
+    @NotBlank(message = "Subject is required")
+    @Size(max = 200, message = "Subject must not exceed 200 characters")
+    private String sujet;
+    
+    @Size(max = 2000, message = "Description must not exceed 2000 characters")
+    private String description;
+    
+    @NotNull(message = "Start date is required")
+    @Future(message = "Start date must be in the future")
+    private LocalDate dateDebut;
+    
+    @NotNull(message = "Duration is required")
+    @Positive(message = "Duration must be positive")
+    private Integer dureeSemaines;
+    
+    @NotNull(message = "Type is required")
+    private TypeStage type;
+    
+    @NotNull(message = "Student ID is required")
+    private Long stagiaireId;
+    
+    @NotNull(message = "Company ID is required")
+    private Long entrepriseId;
+    
+    private Long encadrantAcademiqueId;
+    private Long encadrantProfessionnelId;
+    private Long tuteurEntrepriseId;
+    private Long offreSourceId;
+}
