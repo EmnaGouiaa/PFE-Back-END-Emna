@@ -2,32 +2,44 @@ package fsegs.pfebackendemnagouuiaa.controller;
 
 import fsegs.pfebackendemnagouuiaa.dto.AuthenticationRequest;
 import fsegs.pfebackendemnagouuiaa.dto.AuthenticationResponse;
-import fsegs.pfebackendemnagouuiaa.dto.RegisterRequest;
-import fsegs.pfebackendemnagouuiaa.dto.UserDTO;
-import fsegs.pfebackendemnagouuiaa.controller.AuthenticationService;
+import fsegs.pfebackendemnagouuiaa.dto.ForgotPasswordRequest;
+import fsegs.pfebackendemnagouuiaa.dto.PasswordResetResponse;
+import fsegs.pfebackendemnagouuiaa.dto.ResetPasswordRequest;
+import fsegs.pfebackendemnagouuiaa.dto.UserResponse;
+import fsegs.pfebackendemnagouuiaa.services.AuthenticationService;
+import fsegs.pfebackendemnagouuiaa.services.UtilisateurService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
-@RequestMapping("/api/v1/auth")
+@RequestMapping("/api/auth")
 @RequiredArgsConstructor
-@CrossOrigin(origins = {"http://localhost:4200", "http://127.0.0.1:4200"})
 public class AuthenticationController {
 
     private final AuthenticationService authenticationService;
+    private final UtilisateurService utilisateurService;
 
-    @PostMapping("/register")
-    public ResponseEntity<AuthenticationResponse> register(@RequestBody RegisterRequest request) {
-        System.out.println("Register request received for: " + request.getEmail());
-        AuthenticationResponse response = authenticationService.register(request);
-        return ResponseEntity.ok(response);
+    @PostMapping("/login")
+    public ResponseEntity<AuthenticationResponse> login(@RequestBody AuthenticationRequest request) {
+        return ResponseEntity.ok(authenticationService.authenticate(request));
     }
 
-    @PostMapping("/authenticate")
-    public ResponseEntity<AuthenticationResponse> authenticate(@RequestBody AuthenticationRequest request) {
-        System.out.println("Authentication request received for: " + request.getEmail());
-        AuthenticationResponse response = authenticationService.authenticate(request);
-        return ResponseEntity.ok(response);
+    @PostMapping("/forgot-password")
+    public ResponseEntity<PasswordResetResponse> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        return ResponseEntity.ok(authenticationService.forgotPassword(request));
+    }
+
+    @PostMapping("/reset-password")
+    public ResponseEntity<PasswordResetResponse> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+        return ResponseEntity.ok(authenticationService.resetPassword(request));
+    }
+
+    @GetMapping("/me")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<UserResponse> me() {
+        return ResponseEntity.ok(utilisateurService.getCurrentProfile());
     }
 }

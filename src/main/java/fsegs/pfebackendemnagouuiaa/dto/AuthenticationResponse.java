@@ -1,15 +1,20 @@
 package fsegs.pfebackendemnagouuiaa.dto;
 
+import fsegs.pfebackendemnagouuiaa.entities.Role;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.Getter;
+import lombok.Setter;
 
-@Data
+@Getter
+@Setter
 @Builder
-@NoArgsConstructor
 @AllArgsConstructor
 public class AuthenticationResponse {
     private String token;
-    private UserDTO user;
+    private Long userId;
+    private String nom;
+    private String prenom;
+    private String email;
+    private Role role;
 }

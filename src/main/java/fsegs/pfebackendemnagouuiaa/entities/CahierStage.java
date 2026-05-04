@@ -5,6 +5,8 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
@@ -18,26 +20,44 @@ public class CahierStage {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Temporal(TemporalType.DATE)
-    private Date dateOuverture;
+    private LocalDate dateGeneration;
 
-    @OneToOne
-    @JoinColumn(name = "dossier_stage_id")
-    private DossierStage dossierStage;
+    private LocalDate dateSignature;
 
-    @OneToMany(mappedBy = "cahierStage", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<FeuillePresence> feuillesPresence = new ArrayList<>();
+    private Boolean estSigne = false;
 
-    @OneToMany(mappedBy = "cahierStage", cascade = CascadeType.ALL)
-    private List<RapportHebdomadaire> rapportsHebdomadaires = new ArrayList<>();
+    private Boolean signeeEncAcad = false;
+    private Long signataireEncAcadId;
+    private String roleSignatureEncAcad;
+    private String nomSignataireEncAcad;
+    private String imageSignatureEncAcad;
+    private LocalDateTime dateSignatureEncAcad;
 
-    public void initialiserFeuilles(Integer dureeSemaines) {
-        for (int i = 1; i <= dureeSemaines; i++) {
-            FeuillePresence fp = new FeuillePresence();
-            fp.setSemaine(i);
-            fp.setCahierStage(this);
-            this.feuillesPresence.add(fp);
-        }
-    }
+    private Boolean signeeEncPro = false;
+    private Long signataireEncProId;
+    private String roleSignatureEncPro;
+    private String nomSignataireEncPro;
+    private String imageSignatureEncPro;
+    private LocalDateTime dateSignatureEncPro;
+
+    private Boolean signeeRespEntreprise = false;
+    private Long signataireRespEntrepriseId;
+    private String roleSignatureRespEntreprise;
+    private String nomSignataireRespEntreprise;
+    private String imageSignatureRespEntreprise;
+    private LocalDateTime dateSignatureRespEntreprise;
+
+    private Boolean signeeStagiaire = false;
+    private Long signataireStagiaireId;
+    private String roleSignatureStagiaire;
+    private String nomSignataireStagiaire;
+    private String imageSignatureStagiaire;
+    private LocalDateTime dateSignatureStagiaire;
+
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "stage_id", unique = true)
+    private Stage stage;
+    @OneToMany(mappedBy = "cahierStage")
+    private List<ReunionHebdomadaire> reunionHebdomadaires = new ArrayList<>();
 
 }

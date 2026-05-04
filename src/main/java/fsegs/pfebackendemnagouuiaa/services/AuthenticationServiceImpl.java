@@ -1,0 +1,173 @@
+package fsegs.pfebackendemnagouuiaa.services;
+
+import fsegs.pfebackendemnagouuiaa.dto.AuthenticationRequest;
+import fsegs.pfebackendemnagouuiaa.dto.AuthenticationResponse;
+import fsegs.pfebackendemnagouuiaa.dto.ForgotPasswordRequest;
+import fsegs.pfebackendemnagouuiaa.dto.PasswordResetResponse;
+import fsegs.pfebackendemnagouuiaa.dto.ResetPasswordRequest;
+import fsegs.pfebackendemnagouuiaa.entities.PasswordResetCode;
+import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
+import fsegs.pfebackendemnagouuiaa.repository.PasswordResetCodeRepository;
+import fsegs.pfebackendemnagouuiaa.repository.UtilisateurRepository;
+import fsegs.pfebackendemnagouuiaa.security.JwtService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.security.SecureRandom;
+import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Locale;
+
+@Service
+@RequiredArgsConstructor
+public class AuthenticationServiceImpl implements AuthenticationService {
+    private static final String GENERIC_FORGOT_PASSWORD_MESSAGE = "If this email exists, a reset code has been sent.";
+    private static final int RESET_CODE_LENGTH = 6;
+    private static final int RESET_CODE_EXPIRATION_MINUTES = 10;
+
+    private final AuthenticationManager authenticationManager;
+    private final UtilisateurRepository utilisateurRepository;
+    private final PasswordResetCodeRepository passwordResetCodeRepository;
+    private final JwtService jwtService;
+    private final PasswordEncoder passwordEncoder;
+    private final CredentialPolicyService credentialPolicyService;
+    private final AccountEmailService accountEmailService;
+    private final SecureRandom secureRandom = new SecureRandom();
+
+    @Override
+    public AuthenticationResponse authenticate(AuthenticationRequest request) {
+
+        // E1 : champs non renseignés
+        if (request.getEmail() == null || request.getEmail().isBlank()
+                || request.getMotDePasse() == null || request.getMotDePasse().isBlank()) {
+            throw new IllegalArgumentException("Champs non renseignés.");
+        }
+
+        // Chercher l'utilisateur
+        Utilisateur utilisateur = utilisateurRepository.findByEmailIgnoreCase(request.getEmail())
+                .orElseThrow(() -> new BadCredentialsException("Identifiants incorrects."));
+
+        // E3 : compte désactivé
+        if (!Boolean.TRUE.equals(utilisateur.getActif())) {
+            throw new DisabledException("Compte désactivé.");
+        }
+
+        // E2 : identifiants incorrects
+        authenticationManager.authenticate(
+                new UsernamePasswordAuthenticationToken(
+                        request.getEmail(),
+                        request.getMotDePasse()
+                )
+        );
+
+        // Génération du token
+        String token = jwtService.generateToken(utilisateur);
+
+        return AuthenticationResponse.builder()
+                .token(token)
+                .userId(utilisateur.getId())
+                .nom(utilisateur.getNom())
+                .prenom(utilisateur.getPrenom())
+                .email(utilisateur.getEmail())
+                .role(utilisateur.getRole())
+                .build();
+    }
+
+    @Override
+    @Transactional
+    public PasswordResetResponse forgotPassword(ForgotPasswordRequest request) {
+        String email = normalizeEmail(request.getEmail());
+        passwordResetCodeRepository.deleteByExpirationDateBefore(LocalDateTime.now());
+
+        utilisateurRepository.findByNormalizedEmail(email).ifPresent(utilisateur -> {
+            List<PasswordResetCode> activeCodes = passwordResetCodeRepository.findByEmailIgnoreCaseAndUsedFalse(email);
+            if (!activeCodes.isEmpty()) {
+                activeCodes.forEach(code -> code.setUsed(true));
+                passwordResetCodeRepository.saveAll(activeCodes);
+            }
+
+            PasswordResetCode resetCode = passwordResetCodeRepository.save(PasswordResetCode.builder()
+                    .email(email)
+                    .code(generateNumericCode())
+                    .expirationDate(LocalDateTime.now().plusMinutes(RESET_CODE_EXPIRATION_MINUTES))
+                    .used(false)
+                    .build());
+
+            try {
+                accountEmailService.sendPasswordResetCodeEmail(
+                        utilisateur.getPrenom(),
+                        utilisateur.getEmail(),
+                        resetCode.getCode(),
+                        resetCode.getExpirationDate()
+                );
+            } catch (RuntimeException exception) {
+                resetCode.setUsed(true);
+                passwordResetCodeRepository.save(resetCode);
+            }
+        });
+
+        return new PasswordResetResponse(GENERIC_FORGOT_PASSWORD_MESSAGE);
+    }
+
+    @Override
+    @Transactional
+    public PasswordResetResponse resetPassword(ResetPasswordRequest request) {
+        String email = normalizeEmail(request.getEmail());
+        String code = normalizeCode(request.getCode());
+
+        if (!request.getNewPassword().equals(request.getConfirmPassword())) {
+            throw new IllegalArgumentException("La confirmation du mot de passe ne correspond pas.");
+        }
+
+        credentialPolicyService.validatePasswordStrength(request.getNewPassword());
+
+        Utilisateur utilisateur = utilisateurRepository.findByNormalizedEmail(email)
+                .orElseThrow(() -> new IllegalArgumentException("Le code de verification est invalide ou expire."));
+
+        PasswordResetCode resetCode = passwordResetCodeRepository
+                .findFirstByEmailIgnoreCaseAndCodeAndUsedFalseOrderByExpirationDateDesc(email, code)
+                .orElseThrow(() -> new IllegalArgumentException("Le code de verification est invalide ou expire."));
+
+        if (Boolean.TRUE.equals(resetCode.getUsed()) || resetCode.getExpirationDate() == null
+                || resetCode.getExpirationDate().isBefore(LocalDateTime.now())) {
+            throw new IllegalArgumentException("Le code de verification est invalide ou expire.");
+        }
+
+        utilisateur.setMotDePasse(passwordEncoder.encode(request.getNewPassword()));
+        utilisateurRepository.save(utilisateur);
+
+        resetCode.setUsed(true);
+        passwordResetCodeRepository.save(resetCode);
+
+        return new PasswordResetResponse("Votre mot de passe a ete reinitialise avec succes.");
+    }
+
+    private String normalizeEmail(String email) {
+        if (email == null || email.isBlank()) {
+            throw new IllegalArgumentException("L'email est obligatoire.");
+        }
+        return email.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String normalizeCode(String code) {
+        if (code == null || code.isBlank()) {
+            throw new IllegalArgumentException("Le code de verification est obligatoire.");
+        }
+        String normalized = code.trim();
+        if (!normalized.matches("^\\d{6}$")) {
+            throw new IllegalArgumentException("Le code de verification doit contenir 6 chiffres.");
+        }
+        return normalized;
+    }
+
+    private String generateNumericCode() {
+        int value = secureRandom.nextInt((int) Math.pow(10, RESET_CODE_LENGTH));
+        return String.format("%0" + RESET_CODE_LENGTH + "d", value);
+    }
+}

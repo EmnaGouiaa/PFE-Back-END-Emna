@@ -1,66 +1,32 @@
 package fsegs.pfebackendemnagouuiaa.entities;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
-import jakarta.persistence.*;
-import lombok.*;
-
-import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.List;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import lombok.AllArgsConstructor;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
 
 @Entity
-@Data
-@EqualsAndHashCode(callSuper = true)
+@Getter
+@Setter
 @NoArgsConstructor
 @AllArgsConstructor
-@ToString(exclude = {"questions", "reponses"})
-public class EnqueteSatisfaction extends Formulaire {
+public class EnqueteSatisfaction {
 
-    @Enumerated(EnumType.STRING)
-    private CibleEnquete cible;
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
 
+    @Column(nullable = false)
+    private String titre;
 
-    private LocalDate dateCreation;
+    @Column(columnDefinition = "TEXT", nullable = false)
+    private String description;
 
-
-    private LocalDate dateLimitReponse;
-
-    private Boolean completee;
-
-    @ManyToOne
-    @JoinColumn(name = "stage_id")
-    private Stage stage;
-    // In EnqueteSatisfaction.java
-    @ManyToOne
-    @JoinColumn(name = "dossier_stage_id")
-    private DossierStage dossierStage;
-
-    @ManyToOne
-    @JoinColumn(name = "auteur_id")
-    private User auteur;
-
-    @OneToMany(mappedBy = "enquete", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<QuestionEnquete> questions = new ArrayList<>();
-
-    @OneToMany(mappedBy = "enquete", cascade = CascadeType.ALL , orphanRemoval= true)
-    @JsonIgnore
-
-    private List<ReponseEnquete> reponses = new ArrayList<>();
-
-    @Override
-    public String getType() { return "ENQUETE_" + cible; }
-
-    @Override
-    public boolean estComplet() {
-        return completee != null && completee;
-    }
-    public void addReponse(ReponseEnquete p) {
-        this.reponses.add(p);
-        p.setEnquete(this);
-    }
-    public void removePiece(ReponseEnquete p) {
-        this.reponses.remove(p);
-        p.setEnquete(null);
-    }
+    @Column(nullable = false)
+    private String urlFormulaire;
 }

@@ -24,8 +24,12 @@ public class CritereEvaluation {
     private String categorie;
     private Integer bareme;
     private String commentaireGeneral;
-
+    @Enumerated(EnumType.STRING)
+    private PartieEvaluation partie;
     @OneToMany(mappedBy = "critereEvaluation")
     @JsonIgnore
     private List<NoteAttribuee> notes = new ArrayList<>();
+    @ManyToOne
+    private FicheEvaluation fiche;
+
 }

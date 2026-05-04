@@ -1,5 +1,6 @@
 package fsegs.pfebackendemnagouuiaa.entities;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -22,26 +23,34 @@ public class Entreprise {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(nullable = false)
     private String nom;
-    private String adresse;
-    private String telephone;
-    private String email;
-    private String secteurActivite;
 
+    private String adresse;
+
+    private String email;
+
+    private String telephone;
+
+    private String secteurActivite;
     @Builder.Default
     @OneToMany(mappedBy = "entreprise", cascade = CascadeType.ALL, orphanRemoval= true)
+    @JsonIgnore
     private List<ResponsableEntreprise> tuteurs = new ArrayList<>();
 
     @Builder.Default
     @OneToMany(mappedBy = "entreprise", cascade = CascadeType.ALL, orphanRemoval= true)
+    @JsonIgnore
     private List<OffreStage> offresStage = new ArrayList<>();
 
     @Builder.Default
     @OneToMany(mappedBy = "entreprise", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnore
     private Set<EncadrantProfessionnel> encadrantProfessionnels = new HashSet<>();
 
     @Builder.Default
     @OneToMany(mappedBy = "entreprise",cascade=CascadeType.ALL,orphanRemoval= true)
+    @JsonIgnore
     private List<Stage> stages = new ArrayList<>();
 
     public void ajouterTuteur(ResponsableEntreprise tuteur) {
@@ -62,7 +71,7 @@ public class Entreprise {
         this.stages.add(stage);
         stage.setEntreprise(this);
     }
-    public void removePiece(Stage stage) {
+    public void removeStage(Stage stage) {
         this.stages.remove(stage);
         stage.setEntreprise(null);
     }

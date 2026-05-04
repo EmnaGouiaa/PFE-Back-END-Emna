@@ -18,19 +18,10 @@ import lombok.NoArgsConstructor;
 public class ReunionHebdomadaire extends Reunion{
 
 
-    private Integer semaine;
-    private String difficultes;
+    private Integer numSemaine;
     private String objectifsSemaineProchaine;
-    private Boolean validationPresence;
 
     @ManyToOne
     @JoinColumn(name = "cahier_stage_id")
     private CahierStage cahierStage;
-
-    @Override
-    public String getType() { return "HEBDOMADAIRE"; }
-
-    public void validerFeuillePresence() {
-        this.validationPresence = true;
-    }
 }

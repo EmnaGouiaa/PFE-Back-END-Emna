@@ -1,33 +1,28 @@
 package fsegs.pfebackendemnagouuiaa.entities;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.EqualsAndHashCode;
-import lombok.NoArgsConstructor;
+import lombok.*;
+import lombok.experimental.SuperBuilder;
 
 import java.time.LocalDateTime;
+
 @Entity
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @EqualsAndHashCode(callSuper = true)
-public class ResponsableEntreprise extends User {
-
-
-    private String adresse;
-
-    private String secteurActivite;
-
-    private String telephone;
-
-    @Column(updatable = false)
-    private LocalDateTime dateCreation;
+@SuperBuilder
+@DiscriminatorValue("ResponsableEntreprise")
+public class ResponsableEntreprise extends Utilisateur {
 
     private String poste;
 
+    private String service;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(nullable = true, name = "entreprise")
+    @JoinColumn(name = "entreprise_id")
+    @JsonIgnoreProperties({"tuteurs"})
     private Entreprise entreprise;
+
 }

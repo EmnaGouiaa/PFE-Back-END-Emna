@@ -1,38 +1,34 @@
 package fsegs.pfebackendemnagouuiaa.entities;
 
-import jakarta.persistence.DiscriminatorValue;
-import jakarta.persistence.Entity;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.OneToOne;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.EqualsAndHashCode;
-import lombok.NoArgsConstructor;
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import jakarta.persistence.*;
+import lombok.*;
+
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
 @DiscriminatorValue("Finale")
-@Data
+@Getter
+@Setter
 @NoArgsConstructor
 @AllArgsConstructor
-@EqualsAndHashCode(callSuper = true)
-public class ReunionFinale extends Reunion{
-    private Double note;
+@ToString(callSuper = true, exclude = {"ficheEvaluation"})
+@EqualsAndHashCode(callSuper = true, onlyExplicitlyIncluded = true)
+public class ReunionFinale extends Reunion {
 
-    @OneToOne
-    @JoinColumn(name = "stage_id")
-    private Stage stage;
+    private Integer note;
 
-    @OneToOne
-    @JoinColumn(name = "fiche_evaluation_id")
-    private FicheEvaluation ficheEvaluation;
+    private String urlFormEvaluation;
 
-    @Override
-    public String getType() { return "FINALE"; }
+    private String urlFormSatisfaction;
 
+    private String titreEnqueteSatisfaction;
 
-    public void validerFicheEvaluation() {
-        if (ficheEvaluation != null) {
-            ficheEvaluation.valider();
-        }
-    }
+    @Column(columnDefinition = "TEXT")
+    private String descriptionEnqueteSatisfaction;
+
+    @OneToMany(mappedBy = "reunionFinale", cascade = CascadeType.ALL)
+    @JsonIgnore
+    private List<FicheEvaluation> ficheEvaluation = new ArrayList<>();
 }

@@ -11,25 +11,18 @@ import java.util.Optional;
 
 @Repository
 public interface EntrepriseRepository extends JpaRepository<Entreprise, Long> {
-    
-    Optional<Entreprise> findByNom(String nom);
-    
-    @Query("SELECT e FROM Entreprise e WHERE LOWER(e.nom) = LOWER(:nom)")
-    Optional<Entreprise> findByNomIgnoreCase(@Param("nom") String nom);
-    
-    @Query("SELECT e FROM Entreprise e WHERE e.secteurActivite = :secteurActivite")
-    List<Entreprise> findBySecteurActivite(@Param("secteurActivite") String secteurActivite);
-    
-    @Query("SELECT e FROM Entreprise e WHERE LOWER(e.email) = LOWER(:email)")
-    Optional<Entreprise> findByEmailIgnoreCase(@Param("email") String email);
-    
-    @Query("SELECT e FROM Entreprise e WHERE e.telephone = :telephone")
-    Optional<Entreprise> findByTelephone(@Param("telephone") String telephone);
-    
-    @Query("SELECT COUNT(e) FROM Entreprise e WHERE e.secteurActivite = :secteurActivite")
-    Long countBySecteurActivite(@Param("secteurActivite") String secteurActivite);
-    
-    @Query("SELECT e FROM Entreprise e WHERE LOWER(e.nom) LIKE LOWER(CONCAT('%', :keyword, '%')) OR " +
-           "LOWER(e.secteurActivite) LIKE LOWER(CONCAT('%', :keyword, '%'))")
-    List<Entreprise> searchByKeyword(@Param("keyword") String keyword);
+
+    Optional<Entreprise> findByEmail(String email);
+
+    boolean existsByEmail(String email);
+    boolean existsByEmailIgnoreCase(String email);
+
+    boolean existsByNom(String nom);
+    boolean existsByTelephone(String telephone);
+
+    Optional<Entreprise> findByEmailIgnoreCase(String email);
+    Optional<Entreprise> findByTelephone(String telephone);
+
+    Optional<Entreprise> findByNomIgnoreCase(String nom);
+
 }

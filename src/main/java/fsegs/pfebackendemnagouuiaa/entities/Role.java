@@ -1,11 +1,12 @@
 package fsegs.pfebackendemnagouuiaa.entities;
 
 public enum Role {
-    ADMIN,
+    ADMINISTRATEUR,
     ENCADRANT_PROFESSIONNEL,
     ENCADRANT_ACADEMIQUE,
+    AGENT_STAGE,
     RESPONSABLE_SERVICE_STAGES,
-    RESPONSABLE_UNIVERSITAIRE_STAGES, // New role: University Internship Manager
+    RESPONSABLE_UNIVERSITAIRE_STAGES,
     RESPONSABLE_ENTREPRISE,
     STAGIAIRE
 }

@@ -1,207 +1,296 @@
 package fsegs.pfebackendemnagouuiaa;
 
-import fsegs.pfebackendemnagouuiaa.entities.Role;
-import fsegs.pfebackendemnagouuiaa.entities.User;
-import fsegs.pfebackendemnagouuiaa.entities.Etudiant;
-import fsegs.pfebackendemnagouuiaa.entities.EncadrantAcademique;
-import fsegs.pfebackendemnagouuiaa.entities.EncadrantProfessionnel;
-import fsegs.pfebackendemnagouuiaa.entities.ResponsableEntreprise;
-import fsegs.pfebackendemnagouuiaa.repository.UserRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import fsegs.pfebackendemnagouuiaa.entities.*;
+import fsegs.pfebackendemnagouuiaa.repository.*;
+import lombok.RequiredArgsConstructor;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.persistence.autoconfigure.EntityScan;
-import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.stereotype.Component;
+import org.springframework.context.annotation.Bean;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
+import java.time.LocalDate;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 @SpringBootApplication
-@EntityScan("fsegs.pfebackendemnagouuiaa.entities")
-@EnableJpaRepositories("fsegs.pfebackendemnagouuiaa.repository")
+@RequiredArgsConstructor
 public class PfeBackEndEmnaGouuiaaApplication {
+
 	public static void main(String[] args) {
 		SpringApplication.run(PfeBackEndEmnaGouuiaaApplication.class, args);
 	}
 
-	@Component
-	public static class AdminUserInitializer implements CommandLineRunner {
-		private static final Logger logger = LoggerFactory.getLogger(AdminUserInitializer.class);
-		private static final String DEFAULT_PASSWORD = "Password123!";
+	@Bean
+	CommandLineRunner init(UtilisateurRepository utilisateurRepository,
+	                       PasswordEncoder passwordEncoder,
+	                       EntrepriseRepository entrepriseRepository,
+	                       FiliereRepository filiereRepository,
+	                       StageRepository stageRepository) {
+		return args -> {
 
-		private final UserRepository userRepository;
-		private final BCryptPasswordEncoder passwordEncoder;
-
-		public AdminUserInitializer(UserRepository userRepository, BCryptPasswordEncoder passwordEncoder) {
-			this.userRepository = userRepository;
-			this.passwordEncoder = passwordEncoder;
-		}
-
-		@Override
-		public void run(String... args) throws Exception {
-			// ADMIN - Base User class
-			createOrUpdateUser("admin@pfe.tn", "Admin", "User", Role.ADMIN, "ADMIN001");
-			
-			// STAGIAIRE - Etudiant subclass (requires matricule)
-			createOrUpdateEtudiant("student@pfe.tn", "John", "Doe", "MAT001", "Informatique", "3ème", "PFE");
-			
-			// ENCADRANT_ACADEMIQUE - EncadrantAcademique subclass
-			createOrUpdateEncadrantAcademique("teacher@pfe.tn", "Sarah", "Smith", "Professeur", "Génie Logiciel", "Département Info");
-			
-			// RESPONSABLE_ENTREPRISE - ResponsableEntreprise subclass
-			createOrUpdateResponsableEntreprise("company@pfe.tn", "Mike", "Johnson", "Rue 123", "IT", "+216 12 345 678", "Directeur");
-			
-			// ENCADRANT_PROFESSIONNEL - EncadrantProfessionnel subclass
-			createOrUpdateEncadrantProfessionnel("supervisor@pfe.tn", "Lisa", "Williams", "Chef de Projet", "Développement");
-			
-			// RESPONSABLE_SERVICE_STAGES - Base User class
-			createOrUpdateUser("internship@pfe.tn", "David", "Brown", Role.RESPONSABLE_SERVICE_STAGES, "RS001");
-		}
-
-		private void createOrUpdateUser(String email, String prenom, String nom, Role role, String matricule) {
-			Optional<User> existingUser = userRepository.findByEmailIgnoreCase(email);
-			
-			if (!existingUser.isPresent()) {
-				User user = User.builder()
-						.prenom(prenom)
-						.nom(nom)
-						.email(email)
-						.password(passwordEncoder.encode(DEFAULT_PASSWORD))
-						.compteValide(true)
-						.role(role)
-						.matricule(matricule)
-						.build();
-
-				userRepository.save(user);
-				logger.info("{} user created successfully with email: {}", role, email);
+			// =========================
+			// ENTREPRISE
+			// =========================
+			Entreprise entreprise;
+			Optional<Entreprise> entrepriseOpt = entrepriseRepository.findByEmailIgnoreCase("contact@vermeg.com");
+			if (entrepriseOpt.isPresent()) {
+				entreprise = entrepriseOpt.get();
 			} else {
-				User user = existingUser.get();
-				// Verify and update if needed
-				boolean needsUpdate = false;
-				
-				// Check if password needs reset (for testing purposes)
-				if (!passwordEncoder.matches(DEFAULT_PASSWORD, user.getPassword())) {
-					user.setPassword(passwordEncoder.encode(DEFAULT_PASSWORD));
-					needsUpdate = true;
-					logger.warn("Password for {} updated to default", email);
+				Entreprise e = new Entreprise();
+				e.setNom("Vermeg");
+				e.setAdresse("Tunis");
+				e.setEmail("contact@vermeg.com");
+				e.setTelephone("70123456");
+				e.setSecteurActivite("Informatique");
+				entreprise = entrepriseRepository.save(e);
+			}
+
+			// =========================
+			// FILIERE
+			// =========================
+			Filiere filiere;
+			Optional<Filiere> filiereOpt = filiereRepository.findByNomIgnoreCase("Informatique");
+			if (filiereOpt.isPresent()) {
+				filiere = filiereOpt.get();
+			} else {
+				Filiere f = new Filiere();
+				f.setNom("Informatique");
+				filiere = filiereRepository.save(f);
+			}
+
+			// =========================
+			// ADMIN
+			// =========================
+			findOrCreateSeedUser(
+					utilisateurRepository,
+					"ADMIN",
+					Role.ADMINISTRATEUR,
+					Utilisateur.class,
+					"admin@test.com",
+					null,
+					"20000000",
+					() -> Utilisateur.builder()
+						.nom("Admin")
+						.prenom("System")
+						.email("admin@test.com")
+						.telephone("20000000")
+						.motDePasse(passwordEncoder.encode("admin123"))
+						.actif(true)
+						.role(Role.ADMINISTRATEUR)
+						.build()
+			);
+
+			// =========================
+			// STAGIAIRE
+			// =========================
+			Stagiaire stagiaire = findOrCreateSeedUser(
+					utilisateurRepository,
+					"STAGIAIRE",
+					Role.STAGIAIRE,
+					Stagiaire.class,
+					"stagiaire@test.com",
+					"MAT001",
+					"24444444",
+					() -> Stagiaire.builder()
+						.nom("Sarra")
+						.prenom("BenAli")
+						.email("stagiaire@test.com")
+						.telephone("24444444")
+						.motDePasse(passwordEncoder.encode("123456"))
+						.actif(true)
+						.role(Role.STAGIAIRE)
+						.matricule("MAT001")
+						.niveau(3)
+						.filiere(filiere)
+						.build()
+			);
+
+			// =========================
+			// ENCADRANT ACADEMIQUE
+			// =========================
+			EncadrantAcademique encadrantAcademique = findOrCreateSeedUser(
+					utilisateurRepository,
+					"ENCADRANT_ACADEMIQUE",
+					Role.ENCADRANT_ACADEMIQUE,
+					EncadrantAcademique.class,
+					"acad@test.com",
+					"ACAD001",
+					"21111111",
+					() -> EncadrantAcademique.builder()
+						.nom("Nadia")
+						.prenom("Prof")
+						.email("acad@test.com")
+						.telephone("21111111")
+						.motDePasse(passwordEncoder.encode("123456"))
+						.actif(true)
+						.role(Role.ENCADRANT_ACADEMIQUE)
+						.grade("Maitre Assistante")
+						.matricule("ACAD001")
+						.specialite("Genie logiciel")
+						.build()
+			);
+
+			// =========================
+			// ENCADRANT PROFESSIONNEL
+			// =========================
+			EncadrantProfessionnel encadrantProfessionnel = findOrCreateSeedUser(
+					utilisateurRepository,
+					"ENCADRANT_PROFESSIONNEL",
+					Role.ENCADRANT_PROFESSIONNEL,
+					EncadrantProfessionnel.class,
+					"pro@test.com",
+					null,
+					"22222222",
+					() -> EncadrantProfessionnel.builder()
+						.nom("Ali")
+						.prenom("Pro")
+						.email("pro@test.com")
+						.telephone("22222222")
+						.motDePasse(passwordEncoder.encode("123456"))
+						.actif(true)
+						.role(Role.ENCADRANT_PROFESSIONNEL)
+						.poste("Ingenieur")
+						.service("IT")
+						.entreprise(entreprise)
+						.build()
+			);
+
+			// =========================
+			// RESPONSABLE ENTREPRISE
+			// =========================
+			ResponsableEntreprise responsableEntreprise = findOrCreateSeedUser(
+					utilisateurRepository,
+					"RESPONSABLE_ENTREPRISE",
+					Role.RESPONSABLE_ENTREPRISE,
+					ResponsableEntreprise.class,
+					"resp@test.com",
+					null,
+					"23333333",
+					() -> ResponsableEntreprise.builder()
+						.nom("Hedi")
+						.prenom("Resp")
+						.email("resp@test.com")
+						.telephone("23333333")
+						.motDePasse(passwordEncoder.encode("123456"))
+						.actif(true)
+						.role(Role.RESPONSABLE_ENTREPRISE)
+						.poste("Manager")
+						.service("RH")
+						.entreprise(entreprise)
+						.build()
+			);
+
+			// =========================
+			// STAGE DE TEST
+			// =========================
+			if (stagiaire == null || encadrantAcademique == null || encadrantProfessionnel == null
+					|| responsableEntreprise == null) {
+				System.out.println("Initialisation du stage de test ignoree : un ou plusieurs utilisateurs de test existent deja avec un email, matricule ou telephone different.");
+			} else {
+				boolean stageExiste = stageRepository.findAll().stream()
+						.anyMatch(s -> "Stage PFE Test".equalsIgnoreCase(s.getTitre()));
+
+				if (!stageExiste) {
+					Stage stage = new Stage();
+					stage.setTitre("Stage PFE Test");
+					stage.setDateDebut(LocalDate.of(2026, 1, 1));
+					stage.setDateFin(LocalDate.of(2026, 3, 1));
+					stage.setDuree(2);
+					stage.setNbSemaine(8);
+					stage.setNiveauSouhaite("Master");
+					stage.setSujet("Systeme de gestion des stages");
+
+					stage.setStatut(StatutStage.TERMINE);
+					stage.setStatutSujet(StatutValidation.VALIDEE);
+
+					stage.setEntreprise(entreprise);
+					stage.setStagiaire(stagiaire);
+					stage.setEncadrantAcademique(encadrantAcademique);
+					stage.setEncadrantProfessionnel(encadrantProfessionnel);
+					stage.setTuteurEntreprise(responsableEntreprise);
+					stage.setSujetValidePar(encadrantAcademique);
+
+					stageRepository.save(stage);
 				}
-				
-				// Ensure account is validated
-				if (!user.getCompteValide()) {
-					user.setCompteValide(true);
-					needsUpdate = true;
-					logger.warn("Account validation enabled for {}", email);
-				}
-				
-				// Ensure correct role
-				if (user.getRole() != role) {
-					user.setRole(role);
-					needsUpdate = true;
-					logger.warn("Role updated to {} for {}", role, email);
-				}
-				
-				if (needsUpdate) {
-					userRepository.save(user);
-					logger.info("{} user updated successfully with email: {}", role, email);
-				} else {
-					logger.info("{} user already exists and is up-to-date with email: {}", role, email);
-				}
 			}
+
+			System.out.println("Donnees initialisees avec succes");
+		};
+	}
+
+	private static <T extends Utilisateur> T findOrCreateSeedUser(UtilisateurRepository utilisateurRepository,
+	                                                              String label,
+	                                                              Role expectedRole,
+	                                                              Class<T> expectedType,
+	                                                              String email,
+	                                                              String matricule,
+	                                                              String telephone,
+	                                                              Supplier<T> factory) {
+		Optional<Utilisateur> existing = findExistingSeedUser(utilisateurRepository, email, matricule, telephone);
+		if (existing.isPresent()) {
+			return castSeedUserOrSkip(existing.get(), expectedType, expectedRole, label);
 		}
 
-		private void createOrUpdateEtudiant(String email, String prenom, String nom, String matricule, String filiere, String niveau, String niveauStage) {
-			Optional<User> existingUser = userRepository.findByEmailIgnoreCase(email);
-			
-			if (!existingUser.isPresent()) {
-				Etudiant etudiant = new Etudiant();
-				etudiant.setPrenom(prenom);
-				etudiant.setNom(nom);
-				etudiant.setEmail(email);
-				etudiant.setPassword(passwordEncoder.encode(DEFAULT_PASSWORD));
-				etudiant.setCompteValide(true);
-				etudiant.setRole(Role.STAGIAIRE);
-				etudiant.setMatricule(matricule);
-				etudiant.setFiliere(filiere);
-				etudiant.setNiveau(niveau);
-				etudiant.setNiveauStage(niveauStage);
+		try {
+			return utilisateurRepository.save(factory.get());
+		} catch (DataIntegrityViolationException ex) {
+			System.out.println("Initialisation ignoree pour " + label
+					+ " : utilisateur deja existant (email, matricule ou telephone). "
+					+ getDatabaseMessage(ex));
+			return findExistingSeedUser(utilisateurRepository, email, matricule, telephone)
+					.map(user -> castSeedUserOrSkip(user, expectedType, expectedRole, label))
+					.orElse(null);
+		}
+	}
 
-				userRepository.save(etudiant);
-				logger.info("STAGIAIRE user created successfully with email: {}", email);
-			} else {
-				logger.info("STAGIAIRE user already exists with email: {}", email);
-			}
+	private static Optional<Utilisateur> findExistingSeedUser(UtilisateurRepository utilisateurRepository,
+	                                                          String email,
+	                                                          String matricule,
+	                                                          String telephone) {
+		Optional<Utilisateur> byEmail = hasText(email)
+				? utilisateurRepository.findByNormalizedEmail(email.trim())
+				: Optional.empty();
+		if (byEmail.isPresent()) {
+			return byEmail;
 		}
 
-		private void createOrUpdateEncadrantAcademique(String email, String prenom, String nom, String grade, String specialite, String departement) {
-			Optional<User> existingUser = userRepository.findByEmailIgnoreCase(email);
-			
-			if (!existingUser.isPresent()) {
-				EncadrantAcademique encadrant = new EncadrantAcademique();
-				encadrant.setPrenom(prenom);
-				encadrant.setNom(nom);
-				encadrant.setEmail(email);
-				encadrant.setPassword(passwordEncoder.encode(DEFAULT_PASSWORD));
-				encadrant.setCompteValide(true);
-				encadrant.setRole(Role.ENCADRANT_ACADEMIQUE);
-				encadrant.setMatricule("ACAD-" + System.currentTimeMillis());
-				encadrant.setGrade(grade);
-				encadrant.setSpecialite(specialite);
-				encadrant.setDepartement(departement);
-
-				userRepository.save(encadrant);
-				logger.info("ENCADRANT_ACADEMIQUE user created successfully with email: {}", email);
-			} else {
-				logger.info("ENCADRANT_ACADEMIQUE user already exists with email: {}", email);
-			}
+		Optional<Utilisateur> byMatricule = hasText(matricule)
+				? utilisateurRepository.findByMatricule(matricule.trim())
+				: Optional.empty();
+		if (byMatricule.isPresent()) {
+			return byMatricule;
 		}
 
-		private void createOrUpdateEncadrantProfessionnel(String email, String prenom, String nom, String poste, String service) {
-			Optional<User> existingUser = userRepository.findByEmailIgnoreCase(email);
-			
-			if (!existingUser.isPresent()) {
-				EncadrantProfessionnel encadrant = new EncadrantProfessionnel();
-				encadrant.setPrenom(prenom);
-				encadrant.setNom(nom);
-				encadrant.setEmail(email);
-				encadrant.setPassword(passwordEncoder.encode(DEFAULT_PASSWORD));
-				encadrant.setCompteValide(true);
-				encadrant.setRole(Role.ENCADRANT_PROFESSIONNEL);
-				encadrant.setMatricule("PROF-" + System.currentTimeMillis());
-				encadrant.setPoste(poste);
-				encadrant.setService(service);
+		return hasText(telephone)
+				? utilisateurRepository.findByTelephone(telephone.trim())
+				: Optional.empty();
+	}
 
-				userRepository.save(encadrant);
-				logger.info("ENCADRANT_PROFESSIONNEL user created successfully with email: {}", email);
-			} else {
-				logger.info("ENCADRANT_PROFESSIONNEL user already exists with email: {}", email);
-			}
+	private static <T extends Utilisateur> T castSeedUserOrSkip(Utilisateur user,
+	                                                            Class<T> expectedType,
+	                                                            Role expectedRole,
+	                                                            String label) {
+		if (!expectedType.isInstance(user) || user.getRole() != expectedRole) {
+			System.out.println("Initialisation ignoree pour " + label
+					+ " : un utilisateur existe deja avec le meme email, matricule ou telephone"
+					+ " mais avec un type ou role different. id=" + user.getId());
+			return null;
 		}
 
-		private void createOrUpdateResponsableEntreprise(String email, String prenom, String nom, String adresse, String secteurActivite, String telephone, String poste) {
-			Optional<User> existingUser = userRepository.findByEmailIgnoreCase(email);
-			
-			if (!existingUser.isPresent()) {
-				ResponsableEntreprise responsable = new ResponsableEntreprise();
-				responsable.setPrenom(prenom);
-				responsable.setNom(nom);
-				responsable.setEmail(email);
-				responsable.setPassword(passwordEncoder.encode(DEFAULT_PASSWORD));
-				responsable.setCompteValide(true);
-				responsable.setRole(Role.RESPONSABLE_ENTREPRISE);
-				responsable.setMatricule("RESP-" + System.currentTimeMillis());
-				responsable.setAdresse(adresse);
-				responsable.setSecteurActivite(secteurActivite);
-				responsable.setTelephone(telephone);
-				responsable.setPoste(poste);
+		return expectedType.cast(user);
+	}
 
-				userRepository.save(responsable);
-				logger.info("RESPONSABLE_ENTREPRISE user created successfully with email: {}", email);
-			} else {
-				logger.info("RESPONSABLE_ENTREPRISE user already exists with email: {}", email);
-			}
+	private static boolean hasText(String value) {
+		return value != null && !value.trim().isEmpty();
+	}
+
+	private static String getDatabaseMessage(DataIntegrityViolationException ex) {
+		Throwable cause = ex.getMostSpecificCause();
+		if (cause == null || cause.getMessage() == null || cause.getMessage().isBlank()) {
+			return "";
 		}
+		return "Detail MySQL: " + cause.getMessage();
 	}
 }

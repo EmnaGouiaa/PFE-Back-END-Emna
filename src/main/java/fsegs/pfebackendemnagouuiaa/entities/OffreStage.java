@@ -7,7 +7,8 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDate;
-import java.util.Date;
+import java.util.HashSet;
+import java.util.Set;
 
 @Entity
 @Data
@@ -21,59 +22,40 @@ public class OffreStage {
 
     private String titre;
 
-    @Column(length = 2000)
-    private String description;
+    @Column(columnDefinition = "TEXT")
+    private String descriptionMissions;
 
-    private String missions;
-    private String competencesRequises;
     private Integer duree;
 
+    private String profilRecherche;
 
-    private LocalDate dateDebut;
-
-    private Double gratification;
-
+    private LocalDate dateDebutPrevue;
 
     private LocalDate datePublication;
 
     @Enumerated(EnumType.STRING)
+    @Column(length = 32)
     private StatutOffre statut;
 
-    private String motifRejet;
+    @Column(columnDefinition = "TEXT")
+    private String motifRefus;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(nullable=false,name="entreprise")
+    @JoinColumn(nullable = false, name = "entreprise_id")
+    @JsonIgnore
     private Entreprise entreprise;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "publiee_par_id")
+    @JsonIgnore
     private ResponsableEntreprise publieePar;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "validee_par_id")
+    @JsonIgnore
     private ResponsableServiceStages valideePar;
 
-    @OneToOne(mappedBy = "offreSource")
+    @OneToMany(mappedBy = "offreSource")
     @JsonIgnore
-
-    private Stage stage;
-    public void soumettreValidation() {
-        this.statut = StatutOffre.EN_ATTENTE;
-    }
-
-    public void valider(ResponsableServiceStages gestionnaire) {
-        this.valideePar = gestionnaire;
-        this.statut = StatutOffre.VALIDEE;
-    }
-
-    public void rejeter(String motif) {
-        this.motifRejet = motif;
-        this.statut = StatutOffre.REJETEE;
-    }
-
-    public void marquerPourvue() {
-        this.statut = StatutOffre.POURVUE;
-    }
-
-
+    private Set<Stage> stages = new HashSet<>();
 }

@@ -4,30 +4,37 @@ import fsegs.pfebackendemnagouuiaa.entities.Role;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import jakarta.validation.constraints.Pattern;
+import lombok.Getter;
+import lombok.Setter;
 
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
+@Getter
+@Setter
 public class CreateUserRequest {
-    
-    @NotBlank(message = "First name is required")
-    private String prenom;
-    
-    @NotBlank(message = "Last name is required")
+
+    @NotBlank(message = "Le nom est obligatoire")
     private String nom;
-    
-    @NotBlank(message = "Email is required")
-    @Email(message = "Email should be valid")
+
+    @NotBlank(message = "Le prenom est obligatoire")
+    private String prenom;
+
+    @NotBlank(message = "L'email est obligatoire")
+    @Email(message = "Format d'email invalide")
+    @Pattern(regexp = ".*@.*", message = "L'email doit contenir @")
     private String email;
-    
-    @NotBlank(message = "Password is required")
-    private String password;
-    
-    @NotNull(message = "Role is required")
+
+    @Pattern(
+            regexp = "^$|^\\+?[0-9][0-9 .()\\-]{7,19}$",
+            message = "Format de telephone invalide"
+    )
+    private String telephone;
+
+    private String matricule;
+
+    private Boolean actif;
+
+    private String nomFichierSignature;
+
+    @NotNull(message = "Le role est obligatoire")
     private Role role;
 }

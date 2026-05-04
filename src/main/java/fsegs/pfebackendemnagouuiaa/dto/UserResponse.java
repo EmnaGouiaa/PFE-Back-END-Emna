@@ -1,37 +1,34 @@
 package fsegs.pfebackendemnagouuiaa.dto;
 
 import fsegs.pfebackendemnagouuiaa.entities.Role;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.Getter;
+import lombok.Setter;
 
-import java.time.LocalDateTime;
+import java.time.LocalDate;
 
-@Data
-@Builder
-@NoArgsConstructor
-@AllArgsConstructor
+@Getter
+@Setter
 public class UserResponse {
-    
     private Long id;
-    private String prenom;
     private String nom;
+    private String prenom;
     private String email;
+    private String telephone;
+    private String adresse;
+    private Boolean actif;
+    private String nomFichierSignature;
     private Role role;
-    private Boolean compteValide;
     private String matricule;
-    
-    // Type-specific fields (nullable for non-applicable user types)
-    private String filiere;
-    private String niveau;
-    private String niveauStage;
     private String grade;
     private String specialite;
-    private String departement;
     private String poste;
     private String service;
-    private String adresse;
-    private String secteurActivite;
-    private String telephone;
+    private Long entrepriseId;
+    private String entrepriseNom;
+    private Long filiereId;
+    private String filiereNom;
+    private LocalDate dateNaiss;
+    private Integer niveau;
+    private Boolean emailSent;
+    private String message;
 }

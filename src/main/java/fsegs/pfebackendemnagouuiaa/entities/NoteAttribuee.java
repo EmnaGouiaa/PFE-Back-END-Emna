@@ -13,8 +13,10 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class NoteAttribuee {
+
     @EmbeddedId
     private CleNoteAttribuee id;
+
     @ManyToOne
     @JoinColumn(name = "fiche_evaluation_id")
     private FicheEvaluation ficheEvaluation;
@@ -33,7 +35,9 @@ public class NoteAttribuee {
     }
 
     public Double calculerScorePondere() {
-        if (note == null) return 0.0;
-        return (note * poids) / 100.0;
+        if (note == null || poids == null || bareme == null || bareme <= 0) {
+            return 0.0;
+        }
+        return (note.doubleValue() / bareme.doubleValue()) * poids.doubleValue();
     }
 }

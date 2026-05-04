@@ -1,10 +1,10 @@
 package fsegs.pfebackendemnagouuiaa.entities;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.EqualsAndHashCode;
-import lombok.NoArgsConstructor;
+import lombok.*;
+import lombok.experimental.SuperBuilder;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -14,39 +14,31 @@ import java.util.List;
 @EqualsAndHashCode(callSuper = true)
 @NoArgsConstructor
 @AllArgsConstructor
-public class EncadrantProfessionnel extends User {
+@SuperBuilder
+@DiscriminatorValue("EncadrantProfessionnel")
+public class EncadrantProfessionnel extends Utilisateur {
 
     private String poste;
 
     private String service;
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(nullable = true, name = "entreprise")
+    @JoinColumn(name = "entreprise_id")
+    @JsonIgnoreProperties({"tuteurs"})
     private Entreprise entreprise;
 
     @OneToMany(mappedBy = "encadrantProfessionnel")
-    private List<Stage> stagesEncadres = new ArrayList<>();
+    @JsonIgnore
+    private List<Stage> stages = new ArrayList<>();
 
-    @OneToMany(mappedBy = "evaluateur")
-    private List<FicheEvaluation> fichesEvaluees = new ArrayList<>();
-
-    public void suivreStagiaire(Stage stage) {
-        // Suivi technique quotidien
+    @PrePersist
+    private void applyDefaults() {
+        if (getRole() == null) {
+            setRole(Role.ENCADRANT_PROFESSIONNEL);
+        }
+        if (getActif() == null) {
+            setActif(true);
+        }
     }
 
-
-
-    // AJOUTÉ : Remplit la fiche d'évaluation (mi-stage ou fin de stage)
-    public FicheEvaluation remplirFicheEvaluation(Stage stage, TypeEvaluation type) {
-        FicheEvaluation fe = new FicheEvaluation();
-        fe.setStage(stage);
-        fe.setEvaluateur(this);
-        fe.setType(type);
-        this.fichesEvaluees.add(fe);
-        return fe;
-    }
-
-    public void validerRapportHebdomadaire(RapportHebdomadaire rapport) {
-        rapport.setValideParEncadrant(true);
-    }
 }

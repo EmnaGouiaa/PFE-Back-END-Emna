@@ -1,38 +1,32 @@
 package fsegs.pfebackendemnagouuiaa.entities;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.EqualsAndHashCode;
-import lombok.NoArgsConstructor;
+import lombok.*;
+import lombok.experimental.SuperBuilder;
 
 import java.util.ArrayList;
 import java.util.List;
 
 @Entity
-@Data
+@DiscriminatorValue("EncadrantAcademique") // si SINGLE_TABLE
+@Getter
+@Setter
 @NoArgsConstructor
 @AllArgsConstructor
-@EqualsAndHashCode(callSuper = true)
+@SuperBuilder
 
-public class EncadrantAcademique extends User {
+public class EncadrantAcademique extends Utilisateur {
 
     private String grade;
 
     private String specialite;
 
-    private String departement;
     @OneToMany(mappedBy = "encadrantAcademique")
-    private List<Stage> stagesEncadres = new ArrayList<>();
+    @JsonIgnore
+    private List<Stage> stages = new ArrayList<>();
 
-    @OneToMany(mappedBy = "evaluateur")
-    private List<FicheEvaluation> fichesEvaluees = new ArrayList<>();
-
-
-    public void evaluerRapport(RapportHebdomadaire rapport) {
-        rapport.setCommentaireEncadrant("Évalué");
-        rapport.valider();
-    }
-
-
+    @OneToMany(mappedBy = "encadrantAcademique")
+    @JsonIgnore
+    private List<Stagiaire> stagiaires = new ArrayList<>();
 }
