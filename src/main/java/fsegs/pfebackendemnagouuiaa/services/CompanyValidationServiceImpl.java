@@ -54,14 +54,13 @@ public class CompanyValidationServiceImpl implements CompanyValidationService {
                 continue;
             }
 
-            items.add(buildStageValidationItem(stage));
-            items.add(buildSubjectValidationItem(stage));
-
             conventionStageRepository.findByStageId(stage.getId())
+                    .filter(convention -> !Boolean.TRUE.equals(convention.getSigneeEntreprise()))
                     .map(convention -> buildConventionValidationItem(stage, convention))
                     .ifPresent(items::add);
 
             cahierStageRepository.findByStageId(stage.getId())
+                    .filter(cahier -> !Boolean.TRUE.equals(cahier.getSigneeRespEntreprise()))
                     .map(cahier -> buildCahierValidationItem(stage, cahier))
                     .ifPresent(items::add);
         }

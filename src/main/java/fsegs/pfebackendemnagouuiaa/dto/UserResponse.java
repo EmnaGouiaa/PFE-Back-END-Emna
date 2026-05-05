@@ -5,6 +5,7 @@ import lombok.Getter;
 import lombok.Setter;
 
 import java.time.LocalDate;
+import java.util.List;
 
 @Getter
 @Setter
@@ -29,6 +30,8 @@ public class UserResponse {
     private String filiereNom;
     private LocalDate dateNaiss;
     private Integer niveau;
+    private List<String> champsProfilAutorises;
+    private List<String> documentsStageAutorises;
     private Boolean emailSent;
     private String message;
 }

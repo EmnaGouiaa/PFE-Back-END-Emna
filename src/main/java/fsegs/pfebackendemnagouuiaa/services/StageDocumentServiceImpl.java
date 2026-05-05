@@ -123,6 +123,7 @@ public class StageDocumentServiceImpl implements StageDocumentService {
                 .stream()
                 .sorted(Comparator.comparing(Stage::getId).reversed())
                 .map(this::toOverview)
+                .filter(this::hasVisibleDocuments)
                 .toList();
     }
 
@@ -135,6 +136,7 @@ public class StageDocumentServiceImpl implements StageDocumentService {
     @Transactional
     public StageDocumentActionResponseDto generateConventionPdf(Long stageId) {
         Stage stage = getAuthorizedStage(stageId);
+        ensureConventionVisible(stage, conventionStageRepository.findByStageId(stageId));
         ConventionStage convention = getOrCreateConventionForProcess(stage);
         validateNoBlockingReasons(getConventionPdfBlockingReasons(stage, convention));
         return new StageDocumentActionResponseDto(
@@ -147,6 +149,7 @@ public class StageDocumentServiceImpl implements StageDocumentService {
     @Transactional
     public StageDocumentActionResponseDto generateEvaluationPdf(Long stageId) {
         Stage stage = getAuthorizedStage(stageId);
+        ensureEvaluationVisible(stage, ficheEvaluationRepository.findFirstByStageId(stageId));
         FicheEvaluation fiche = getOrCreateEvaluationForProcess(stage);
         validateNoBlockingReasons(getEvaluationPdfBlockingReasons(stage, fiche));
         return new StageDocumentActionResponseDto(
@@ -159,6 +162,7 @@ public class StageDocumentServiceImpl implements StageDocumentService {
     @Transactional
     public StageDocumentActionResponseDto generateLogbookPdf(Long stageId) {
         Stage stage = getAuthorizedStage(stageId);
+        ensureLogbookVisible(stage, cahierStageRepository.findByStageId(stageId));
         CahierStage cahierStage = getOrCreateLogbookForProcess(stage);
         validateNoBlockingReasons(getLogbookPdfBlockingReasons(stage, cahierStage));
         return new StageDocumentActionResponseDto(
@@ -172,6 +176,7 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         Stage stage = getAuthorizedStage(stageId);
         ConventionStage convention = conventionStageRepository.findByStageId(stageId)
                 .orElseThrow(() -> new EntityNotFoundException("Convention manquante pour ce stage."));
+        ensureConventionVisible(stage, Optional.of(convention));
         validateNoBlockingReasons(getConventionPdfBlockingReasons(stage, convention));
 
         return createConventionPdf(stage, convention);
@@ -182,6 +187,7 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         Stage stage = getAuthorizedStage(stageId);
         FicheEvaluation fiche = ficheEvaluationRepository.findFirstByStageId(stageId)
                 .orElseThrow(() -> new EntityNotFoundException("Fiche d'evaluation manquante pour ce stage."));
+        ensureEvaluationVisible(stage, Optional.of(fiche));
         validateNoBlockingReasons(getEvaluationPdfBlockingReasons(stage, fiche));
 
         return createPdf(
@@ -206,6 +212,7 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         Stage stage = getAuthorizedStage(stageId);
         CahierStage cahierStage = cahierStageRepository.findByStageId(stageId)
                 .orElseThrow(() -> new EntityNotFoundException("Cahier de stage manquant pour ce stage."));
+        ensureLogbookVisible(stage, Optional.of(cahierStage));
         validateNoBlockingReasons(getLogbookPdfBlockingReasons(stage, cahierStage));
 
         return createLogbookPdf(stage, cahierStage);
@@ -215,6 +222,7 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         Optional<ConventionStage> convention = conventionStageRepository.findByStageId(stage.getId());
         Optional<FicheEvaluation> evaluation = ficheEvaluationRepository.findFirstByStageId(stage.getId());
         Optional<CahierStage> cahierStage = cahierStageRepository.findByStageId(stage.getId());
+        Role role = getCurrentRole();
 
         return new StageDocumentsOverviewDto(
                 stage.getId(),
@@ -224,10 +232,16 @@ public class StageDocumentServiceImpl implements StageDocumentService {
                 stage.getEntreprise() != null ? safeText(stage.getEntreprise().getNom()) : "-",
                 buildFullName(stage.getEncadrantAcademique() != null ? stage.getEncadrantAcademique().getPrenom() : null, stage.getEncadrantAcademique() != null ? stage.getEncadrantAcademique().getNom() : null),
                 buildFullName(stage.getEncadrantProfessionnel() != null ? stage.getEncadrantProfessionnel().getPrenom() : null, stage.getEncadrantProfessionnel() != null ? stage.getEncadrantProfessionnel().getNom() : null),
-                buildConventionStatus(stage, convention),
-                buildEvaluationStatus(stage, evaluation),
-                buildLogbookStatus(stage, cahierStage)
+                canSeeConvention(role, convention) ? buildConventionStatus(stage, convention) : null,
+                canSeeEvaluation(role, evaluation) ? buildEvaluationStatus(stage, evaluation) : null,
+                canSeeLogbook(role, cahierStage) ? buildLogbookStatus(stage, cahierStage) : null
         );
+    }
+
+    private boolean hasVisibleDocuments(StageDocumentsOverviewDto overview) {
+        return overview.getConvention() != null
+                || overview.getFicheEvaluation() != null
+                || overview.getCahierStage() != null;
     }
 
     private StageDocumentStatusDto buildConventionStatus(Stage stage, Optional<ConventionStage> convention) {
@@ -324,6 +338,82 @@ public class StageDocumentServiceImpl implements StageDocumentService {
 
     private StageDocumentStatusDto missingStatus(String code, String libelle, String reason, boolean generationAutorisee) {
         return new StageDocumentStatusDto(code, libelle, null, false, false, generationAutorisee, "Manquant", reason, false, "");
+    }
+
+    private Role getCurrentRole() {
+        return jwtService.getAuthenticatedUtilisateur()
+                .map(Utilisateur::getRole)
+                .orElse(null);
+    }
+
+    private boolean canSeeConvention(Role role, Optional<ConventionStage> convention) {
+        if (role == null) {
+            return false;
+        }
+
+        return switch (role) {
+            case ADMINISTRATEUR,
+                    STAGIAIRE,
+                    ENCADRANT_ACADEMIQUE,
+                    ENCADRANT_PROFESSIONNEL,
+                    RESPONSABLE_SERVICE_STAGES,
+                    RESPONSABLE_UNIVERSITAIRE_STAGES -> true;
+            case RESPONSABLE_ENTREPRISE -> convention
+                    .map(item -> !Boolean.TRUE.equals(item.getSigneeEntreprise()))
+                    .orElse(false);
+            default -> false;
+        };
+    }
+
+    private boolean canSeeEvaluation(Role role, Optional<FicheEvaluation> evaluation) {
+        if (role == null) {
+            return false;
+        }
+
+        return switch (role) {
+            case ADMINISTRATEUR, STAGIAIRE, ENCADRANT_PROFESSIONNEL -> true;
+            case RESPONSABLE_ENTREPRISE -> evaluation
+                    .map(item -> !hasText(item.getSignatureRepresentantEntreprise()))
+                    .orElse(false);
+            default -> false;
+        };
+    }
+
+    private boolean canSeeLogbook(Role role, Optional<CahierStage> cahierStage) {
+        if (role == null) {
+            return false;
+        }
+
+        return switch (role) {
+            case ADMINISTRATEUR,
+                    STAGIAIRE,
+                    ENCADRANT_ACADEMIQUE,
+                    ENCADRANT_PROFESSIONNEL,
+                    RESPONSABLE_SERVICE_STAGES,
+                    RESPONSABLE_UNIVERSITAIRE_STAGES -> true;
+            case RESPONSABLE_ENTREPRISE -> cahierStage
+                    .map(item -> !Boolean.TRUE.equals(item.getSigneeRespEntreprise()))
+                    .orElse(false);
+            default -> false;
+        };
+    }
+
+    private void ensureConventionVisible(Stage stage, Optional<ConventionStage> convention) {
+        if (!canSeeConvention(getCurrentRole(), convention)) {
+            throw new AccessDeniedException("Convention de stage non autorisee pour votre role.");
+        }
+    }
+
+    private void ensureEvaluationVisible(Stage stage, Optional<FicheEvaluation> evaluation) {
+        if (!canSeeEvaluation(getCurrentRole(), evaluation)) {
+            throw new AccessDeniedException("Fiche d'evaluation non autorisee pour votre role.");
+        }
+    }
+
+    private void ensureLogbookVisible(Stage stage, Optional<CahierStage> cahierStage) {
+        if (!canSeeLogbook(getCurrentRole(), cahierStage)) {
+            throw new AccessDeniedException("Cahier de stage non autorise pour votre role.");
+        }
     }
 
     private ConventionStage getOrCreateConventionForProcess(Stage stage) {

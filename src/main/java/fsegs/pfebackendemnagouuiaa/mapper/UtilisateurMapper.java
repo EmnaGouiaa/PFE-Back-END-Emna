@@ -11,7 +11,19 @@ import fsegs.pfebackendemnagouuiaa.entities.Role;
 import fsegs.pfebackendemnagouuiaa.entities.Stagiaire;
 import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
 
+import java.util.ArrayList;
+import java.util.List;
+
 public class UtilisateurMapper {
+
+    private static final List<String> COMMON_PROFILE_FIELDS = List.of(
+            "email",
+            "nom",
+            "prenom",
+            "telephone",
+            "adresse",
+            "nomFichierSignature"
+    );
 
     private UtilisateurMapper() {
     }
@@ -78,6 +90,65 @@ public class UtilisateurMapper {
         }
 
         return response;
+    }
+
+    public static UserResponse toProfileResponse(Utilisateur utilisateur) {
+        UserResponse response = toResponse(utilisateur);
+        response.setId(null);
+        response.setActif(null);
+        response.setEntrepriseId(null);
+        response.setEntrepriseNom(null);
+        response.setFiliereId(null);
+        response.setFiliereNom(null);
+        response.setNiveau(null);
+
+        List<String> allowedFields = new ArrayList<>(COMMON_PROFILE_FIELDS);
+        if (utilisateur.getRole() != null) {
+            switch (utilisateur.getRole()) {
+                case STAGIAIRE -> allowedFields.addAll(List.of("dateNaiss", "matricule"));
+                case RESPONSABLE_ENTREPRISE, ENCADRANT_PROFESSIONNEL -> allowedFields.addAll(List.of("poste", "service"));
+                case ENCADRANT_ACADEMIQUE -> allowedFields.addAll(List.of("grade", "specialite"));
+                case RESPONSABLE_SERVICE_STAGES, RESPONSABLE_UNIVERSITAIRE_STAGES -> allowedFields.addAll(List.of("service"));
+                default -> {
+                }
+            }
+        }
+        response.setChampsProfilAutorises(allowedFields);
+        response.setDocumentsStageAutorises(getDocumentsStageAutorises(utilisateur));
+
+        if (!allowedFields.contains("matricule")) {
+            response.setMatricule(null);
+        }
+        if (!allowedFields.contains("grade")) {
+            response.setGrade(null);
+        }
+        if (!allowedFields.contains("specialite")) {
+            response.setSpecialite(null);
+        }
+        if (!allowedFields.contains("poste")) {
+            response.setPoste(null);
+        }
+        if (!allowedFields.contains("service")) {
+            response.setService(null);
+        }
+        if (!allowedFields.contains("dateNaiss")) {
+            response.setDateNaiss(null);
+        }
+
+        return response;
+    }
+
+    private static List<String> getDocumentsStageAutorises(Utilisateur utilisateur) {
+        if (utilisateur.getRole() == null) {
+            return List.of();
+        }
+
+        return switch (utilisateur.getRole()) {
+            case STAGIAIRE, ENCADRANT_PROFESSIONNEL -> List.of("CONVENTION", "FICHE_EVALUATION", "CAHIER_STAGE");
+            case ENCADRANT_ACADEMIQUE, RESPONSABLE_SERVICE_STAGES, RESPONSABLE_UNIVERSITAIRE_STAGES -> List.of("CONVENTION", "CAHIER_STAGE");
+            case RESPONSABLE_ENTREPRISE -> List.of("CONVENTION", "FICHE_EVALUATION", "CAHIER_STAGE");
+            default -> List.of();
+        };
     }
 
     private static Utilisateur instantiateByRole(Role role) {

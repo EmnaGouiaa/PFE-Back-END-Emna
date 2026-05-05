@@ -169,12 +169,12 @@ public class UtilisateurServiceImpl implements UtilisateurService {
     public UserResponse getCurrentProfile() {
         Utilisateur authenticatedUser = jwtService.getAuthenticatedUtilisateur()
                 .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifie introuvable."));
-        return UtilisateurMapper.toResponse(authenticatedUser);
+        return UtilisateurMapper.toProfileResponse(authenticatedUser);
     }
 
     @Override
     public UserResponse getProfile(Long id) {
-        return UtilisateurMapper.toResponse(findOwnedUser(id));
+        return UtilisateurMapper.toProfileResponse(findOwnedUser(id));
     }
 
     @Override
@@ -192,6 +192,7 @@ public class UtilisateurServiceImpl implements UtilisateurService {
         String previousSignature = utilisateur.getNomFichierSignature();
 
         ensureEmailIsNotChangedByProfilePatch(utilisateur, request);
+        ensureProfileRequestMatchesRole(utilisateur, request);
 
         if (request.getNom() != null) {
             utilisateur.setNom(requireNonBlank(request.getNom(), "Le nom ne peut pas etre vide"));
@@ -221,15 +222,26 @@ public class UtilisateurServiceImpl implements UtilisateurService {
             ));
         }
 
+        if (request.getGrade() != null && utilisateur instanceof EncadrantAcademique encadrantAcademique) {
+            encadrantAcademique.setGrade(requireNonBlank(request.getGrade(), "Le grade ne peut pas etre vide"));
+        }
+
         if (request.getDateNaiss() != null && utilisateur instanceof Stagiaire stagiaire) {
             stagiaire.setDateNaiss(request.getDateNaiss());
         }
 
-        if (request.getNiveau() != null && utilisateur instanceof Stagiaire stagiaire) {
-            if (request.getNiveau() < 1) {
-                throw new IllegalArgumentException("Le niveau doit etre superieur ou egal a 1");
+        if (request.getMatricule() != null && utilisateur instanceof Stagiaire stagiaire) {
+            String matricule = contactUniquenessService.normalizeAndValidateOptionalMatricule(request.getMatricule(), "matricule");
+            if (matricule == null) {
+                throw new IllegalArgumentException("Le matricule ne peut pas etre vide");
             }
-            stagiaire.setNiveau(request.getNiveau());
+            contactUniquenessService.validateUserIdentityForUpdate(
+                    utilisateur.getId(),
+                    utilisateur.getEmail(),
+                    utilisateur.getTelephone(),
+                    matricule
+            );
+            stagiaire.setMatricule(matricule);
         }
 
         if (request.getPoste() != null && utilisateur instanceof EncadrantProfessionnel encadrantProfessionnel) {
@@ -261,7 +273,7 @@ public class UtilisateurServiceImpl implements UtilisateurService {
 
         Utilisateur updated = utilisateurRepository.save(utilisateur);
         notifierStagiairesSiSignatureAjouteeOuMiseAJour(updated, previousSignature, request.getNomFichierSignature() != null);
-        return UtilisateurMapper.toResponse(updated);
+        return UtilisateurMapper.toProfileResponse(updated);
     }
 
     @Override
@@ -376,6 +388,31 @@ public class UtilisateurServiceImpl implements UtilisateurService {
 
         return utilisateurRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Utilisateur introuvable avec l'id : " + id));
+    }
+
+    private void ensureProfileRequestMatchesRole(Utilisateur utilisateur, UpdateProfileRequest request) {
+        boolean stagiaire = utilisateur instanceof Stagiaire;
+        boolean encadrantAcademique = utilisateur instanceof EncadrantAcademique;
+        boolean encadrantProfessionnel = utilisateur instanceof EncadrantProfessionnel;
+        boolean responsableEntreprise = utilisateur instanceof ResponsableEntreprise;
+        boolean responsableServiceStages = utilisateur instanceof ResponsableServiceStages;
+
+        rejectIfUnsupported(request.getDateNaiss() != null && !stagiaire, "dateNaiss");
+        rejectIfUnsupported(request.getMatricule() != null && !stagiaire, "matricule");
+        rejectIfUnsupported(request.getNiveau() != null, "niveau");
+        rejectIfUnsupported(request.getGrade() != null && !encadrantAcademique, "grade");
+        rejectIfUnsupported(request.getSpecialite() != null && !encadrantAcademique, "specialite");
+        rejectIfUnsupported(request.getPoste() != null && !(encadrantProfessionnel || responsableEntreprise), "poste");
+        rejectIfUnsupported(
+                request.getService() != null && !(encadrantProfessionnel || responsableEntreprise || responsableServiceStages),
+                "service"
+        );
+    }
+
+    private void rejectIfUnsupported(boolean unsupported, String fieldName) {
+        if (unsupported) {
+            throw new AccessDeniedException("Le champ " + fieldName + " n'est pas autorise pour votre role.");
+        }
     }
 
     private String requireNonBlank(String value, String message) {

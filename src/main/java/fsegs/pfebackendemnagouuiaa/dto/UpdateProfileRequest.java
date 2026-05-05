@@ -36,6 +36,12 @@ public class UpdateProfileRequest {
     @Size(max = 100, message = "La specialite ne doit pas depasser 100 caracteres")
     private String specialite;
 
+    @Size(max = 100, message = "Le grade ne doit pas depasser 100 caracteres")
+    private String grade;
+
+    @Size(max = 100, message = "Le matricule ne doit pas depasser 100 caracteres")
+    private String matricule;
+
     private LocalDate dateNaiss;
 
     private Integer niveau;
