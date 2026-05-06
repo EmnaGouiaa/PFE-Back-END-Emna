@@ -23,11 +23,15 @@ import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
 public class AuthenticationServiceImpl implements AuthenticationService {
-    private static final String GENERIC_FORGOT_PASSWORD_MESSAGE = "If this email exists, a reset code has been sent.";
+    private static final String GENERIC_FORGOT_PASSWORD_MESSAGE =
+            "Si cette adresse existe, un code de reinitialisation a ete envoye.";
+    private static final String RESET_CODE_SENT_MESSAGE =
+            "Un code de verification a ete envoye par email. Il reste valable 10 minutes.";
     private static final int RESET_CODE_LENGTH = 6;
     private static final int RESET_CODE_EXPIRATION_MINUTES = 10;
 
@@ -76,6 +80,7 @@ public class AuthenticationServiceImpl implements AuthenticationService {
                 .prenom(utilisateur.getPrenom())
                 .email(utilisateur.getEmail())
                 .role(utilisateur.getRole())
+                .doitChangerMotDePasse(Boolean.TRUE.equals(utilisateur.getDoitChangerMotDePasse()))
                 .build();
     }
 
@@ -85,7 +90,9 @@ public class AuthenticationServiceImpl implements AuthenticationService {
         String email = normalizeEmail(request.getEmail());
         passwordResetCodeRepository.deleteByExpirationDateBefore(LocalDateTime.now());
 
-        utilisateurRepository.findByNormalizedEmail(email).ifPresent(utilisateur -> {
+        Optional<Utilisateur> utilisateurOpt = utilisateurRepository.findByNormalizedEmail(email);
+
+        utilisateurOpt.ifPresent(utilisateur -> {
             List<PasswordResetCode> activeCodes = passwordResetCodeRepository.findByEmailIgnoreCaseAndUsedFalse(email);
             if (!activeCodes.isEmpty()) {
                 activeCodes.forEach(code -> code.setUsed(true));
@@ -99,20 +106,16 @@ public class AuthenticationServiceImpl implements AuthenticationService {
                     .used(false)
                     .build());
 
-            try {
-                accountEmailService.sendPasswordResetCodeEmail(
-                        utilisateur.getPrenom(),
-                        utilisateur.getEmail(),
-                        resetCode.getCode(),
-                        resetCode.getExpirationDate()
-                );
-            } catch (RuntimeException exception) {
-                resetCode.setUsed(true);
-                passwordResetCodeRepository.save(resetCode);
-            }
+            accountEmailService.sendPasswordResetCodeEmail(
+                    utilisateur.getPrenom(),
+                    utilisateur.getEmail(),
+                    resetCode.getCode(),
+                    resetCode.getExpirationDate()
+            );
         });
 
-        return new PasswordResetResponse(GENERIC_FORGOT_PASSWORD_MESSAGE);
+        boolean accountExists = utilisateurOpt.isPresent();
+        return new PasswordResetResponse(accountExists ? RESET_CODE_SENT_MESSAGE : GENERIC_FORGOT_PASSWORD_MESSAGE);
     }
 
     @Override
@@ -140,6 +143,7 @@ public class AuthenticationServiceImpl implements AuthenticationService {
         }
 
         utilisateur.setMotDePasse(passwordEncoder.encode(request.getNewPassword()));
+        utilisateur.setDoitChangerMotDePasse(false);
         utilisateurRepository.save(utilisateur);
 
         resetCode.setUsed(true);

@@ -17,7 +17,7 @@ public class EnqueteSatisfactionDto {
     private String description;
     private String urlFormulaire;
     private String statut;
-    private boolean disponible;
-    private boolean dateAtteinte;
+    private Boolean disponible;
+    private Boolean dateAtteinte;
     private String message;
 }

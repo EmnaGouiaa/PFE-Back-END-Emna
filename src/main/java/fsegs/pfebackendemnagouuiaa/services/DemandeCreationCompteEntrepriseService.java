@@ -20,7 +20,7 @@ public interface DemandeCreationCompteEntrepriseService {
 
     DemandeCreationCompteEntreprise validerParAdmin(Long demandeId, Long adminId);
 
-    DemandeCreationCompteEntreprise refuserParAdmin(Long demandeId, Long adminId);
+    DemandeCreationCompteEntreprise refuserParAdmin(Long demandeId, Long adminId, String commentaire);
 
     DemandeCreationCompteEntreprise validerParEncadrantAcademique(Long demandeId, Long encadrantId);
 
@@ -28,5 +28,5 @@ public interface DemandeCreationCompteEntrepriseService {
 
     DemandeCreationCompteEntreprise validerParResponsableStages(Long demandeId);
 
-    DemandeCreationCompteEntreprise refuserParResponsableStages(Long demandeId);
+    DemandeCreationCompteEntreprise refuserParResponsableStages(Long demandeId, String commentaire);
 }

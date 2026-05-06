@@ -21,7 +21,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -31,6 +33,8 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class ReunionFinaleServiceImpl implements ReunionFinaleService {
 
+    private static final Duration MIN_UPDATE_DELAY = Duration.ofHours(24);
+    private static final int DUREE_VISIBILITE_ENQUETE_JOURS = 7;
     private static final String STATUT_DISPONIBLE = "Disponible";
     private static final String STATUT_NON_DISPONIBLE = "Non disponible";
     private static final String MESSAGE_INDISPONIBLE = "Aucune enquête de satisfaction disponible pour le moment.";
@@ -42,6 +46,7 @@ public class ReunionFinaleServiceImpl implements ReunionFinaleService {
     private final StageRepository stageRepository;
     private final UtilisateurRepository utilisateurRepository;
     private final ReunionFinaleMapper reunionFinaleMapper;
+    private final NotificationService notificationService;
     private final JwtService jwtService;
 
     @Override
@@ -103,6 +108,7 @@ public class ReunionFinaleServiceImpl implements ReunionFinaleService {
         entity.setParticipants(new HashSet<>());
 
         ReunionFinale saved = reunionFinaleRepository.save(entity);
+        notifierStagiaireReunionFinale(saved);
         log.info("Reunion finale creee avec succes. id={}, stageId={}", saved.getId(), stage.getId());
         return reunionFinaleMapper.toDto(saved);
     }
@@ -148,6 +154,8 @@ public class ReunionFinaleServiceImpl implements ReunionFinaleService {
     public ReunionFinaleDto update(Long id, ReunionFinaleDto dto) {
         ReunionFinale entity = reunionFinaleRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Reunion finale introuvable avec l'id : " + id));
+
+        ensureFinalMeetingCanBeModified(entity.getDate(), entity.getHeure());
 
         if (entity.getFicheEvaluation() != null
                 && entity.getFicheEvaluation().stream().anyMatch(FicheEvaluation::estVerrouillee)) {
@@ -195,6 +203,7 @@ public class ReunionFinaleServiceImpl implements ReunionFinaleService {
         entity.setParticipants(participants);
 
         ReunionFinale updated = reunionFinaleRepository.save(entity);
+        notifierStagiaireReunionFinaleModifiee(updated);
         log.info("Reunion finale mise a jour. id={}", updated.getId());
         return reunionFinaleMapper.toDto(updated);
     }
@@ -236,16 +245,40 @@ public class ReunionFinaleServiceImpl implements ReunionFinaleService {
 
     @Override
     public void delete(Long id) {
-        if (!reunionFinaleRepository.existsById(id)) {
-            throw new RuntimeException("Reunion finale introuvable avec l'id : " + id);
-        }
+        ReunionFinale reunionFinale = reunionFinaleRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Reunion finale introuvable avec l'id : " + id));
 
-        throw new AccessDeniedException("La suppression d'une reunion de suivi est interdite.");
+        authorizeFinalMeetingManagement(reunionFinale.getStage());
+        ensureFinalMeetingCanBeCancelled(reunionFinale.getDate(), reunionFinale.getHeure());
+        reunionFinaleRepository.delete(reunionFinale);
+        notifierStagiaireReunionFinaleAnnulee(reunionFinale);
     }
 
     private void validateFinalMeetingDate(Stage stage, java.time.LocalDate meetingDate) {
         if (stage.getDateFin() == null || meetingDate == null || !meetingDate.equals(stage.getDateFin())) {
             throw new RuntimeException("La réunion finale doit être planifiée le dernier jour du stage.");
+        }
+    }
+
+    private void ensureFinalMeetingCanBeModified(LocalDate date, java.time.LocalTime heure) {
+        if (date == null || heure == null) {
+            throw new RuntimeException("La date et l'heure de la reunion finale sont obligatoires.");
+        }
+
+        LocalDateTime meetingStart = LocalDateTime.of(date, heure);
+        if (Duration.between(LocalDateTime.now(), meetingStart).compareTo(MIN_UPDATE_DELAY) < 0) {
+            throw new RuntimeException("Vous ne pouvez pas modifier une reunion moins de 24 heures avant son horaire.");
+        }
+    }
+
+    private void ensureFinalMeetingCanBeCancelled(LocalDate date, java.time.LocalTime heure) {
+        if (date == null || heure == null) {
+            throw new RuntimeException("La date et l'heure de la reunion finale sont obligatoires.");
+        }
+
+        LocalDateTime meetingStart = LocalDateTime.of(date, heure);
+        if (Duration.between(LocalDateTime.now(), meetingStart).compareTo(MIN_UPDATE_DELAY) < 0) {
+            throw new RuntimeException("Vous ne pouvez pas annuler une reunion moins de 24 heures avant son horaire.");
         }
     }
 
@@ -273,6 +306,13 @@ public class ReunionFinaleServiceImpl implements ReunionFinaleService {
         boolean validUrl = hasUrl && isValidHttpUrl(reunionFinale.getUrlFormSatisfaction());
         boolean disponible = dateAtteinte && hasUrl && validUrl;
         dto.setDateAtteinte(dateAtteinte);
+
+        if (isSatisfactionExpired(reunionFinale)) {
+            dto.setDisponible(false);
+            dto.setStatut(STATUT_NON_DISPONIBLE);
+            dto.setMessage("La periode de reponse a l'enquete de satisfaction est expiree.");
+            return dto;
+        }
 
         if (!dateAtteinte) {
             dto.setDisponible(false);
@@ -304,11 +344,18 @@ public class ReunionFinaleServiceImpl implements ReunionFinaleService {
     }
 
     private boolean isSatisfactionAvailableToday(ReunionFinale reunionFinale) {
-        return isSatisfactionDateReached(reunionFinale) && isValidHttpUrl(reunionFinale.getUrlFormSatisfaction());
+        return isSatisfactionDateReached(reunionFinale)
+                && !isSatisfactionExpired(reunionFinale)
+                && isValidHttpUrl(reunionFinale.getUrlFormSatisfaction());
     }
 
     private boolean isSatisfactionDateReached(ReunionFinale reunionFinale) {
-        return reunionFinale.getDate() != null && reunionFinale.getDate().equals(LocalDate.now());
+        return reunionFinale.getDate() != null && !reunionFinale.getDate().isAfter(LocalDate.now());
+    }
+
+    private boolean isSatisfactionExpired(ReunionFinale reunionFinale) {
+        return reunionFinale.getDate() != null
+                && reunionFinale.getDate().plusDays(DUREE_VISIBILITE_ENQUETE_JOURS).isBefore(LocalDate.now());
     }
 
     private String resolveSurveyTitle(ReunionFinale reunionFinale) {
@@ -371,6 +418,81 @@ public class ReunionFinaleServiceImpl implements ReunionFinaleService {
 
         String normalized = value.trim();
         return normalized.isEmpty() ? null : normalized;
+    }
+
+    private void notifierStagiaireReunionFinale(ReunionFinale reunionFinale) {
+        Stage stage = reunionFinale.getStage();
+        if (stage == null || stage.getStagiaire() == null || stage.getStagiaire().getId() == null) {
+            return;
+        }
+
+        String nomEncadrant = stage.getEncadrantProfessionnel() == null
+                ? "Non renseigné"
+                : ((stage.getEncadrantProfessionnel().getPrenom() != null ? stage.getEncadrantProfessionnel().getPrenom() : "")
+                + " "
+                + (stage.getEncadrantProfessionnel().getNom() != null ? stage.getEncadrantProfessionnel().getNom() : "")).trim();
+
+        notificationService.notifierStagiaireReunionFixee(
+                stage.getStagiaire().getId(),
+                reunionFinale.getId(),
+                "Une nouvelle réunion a été planifiée avec votre encadrant professionnel "
+                        + (nomEncadrant.isBlank() ? "Non renseigné" : nomEncadrant)
+                        + " le " + reunionFinale.getDate() + " à " + reunionFinale.getHeure() + "."
+        );
+    }
+
+    private void notifierStagiaireReunionFinaleModifiee(ReunionFinale reunionFinale) {
+        Stage stage = reunionFinale.getStage();
+        if (stage == null || stage.getStagiaire() == null || stage.getStagiaire().getId() == null) {
+            return;
+        }
+
+        notificationService.creerNotification(
+                stage.getStagiaire().getId(),
+                "Réunion finale modifiée",
+                "Votre réunion finale a été modifiée. Nouvelle date : "
+                        + reunionFinale.getDate() + " à " + reunionFinale.getHeure() + ".",
+                "REUNION_FIXEE",
+                reunionFinale.getId(),
+                "REUNION_FINALE"
+        );
+    }
+
+    private void notifierStagiaireReunionFinaleAnnulee(ReunionFinale reunionFinale) {
+        Stage stage = reunionFinale.getStage();
+        if (stage == null || stage.getStagiaire() == null || stage.getStagiaire().getId() == null) {
+            return;
+        }
+
+        notificationService.creerNotification(
+                stage.getStagiaire().getId(),
+                "Réunion finale annulée",
+                "Votre réunion finale prévue le " + reunionFinale.getDate() + " à " + reunionFinale.getHeure()
+                        + " a été annulée.",
+                "REUNION_FIXEE",
+                reunionFinale.getId(),
+                "REUNION_FINALE"
+        );
+    }
+
+    private void authorizeFinalMeetingManagement(Stage stage) {
+        if (stage == null || stage.getId() == null) {
+            throw new AccessDeniedException("Aucun stage n'est associe a cette reunion finale.");
+        }
+
+        Utilisateur utilisateur = jwtService.getAuthenticatedUtilisateur()
+                .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifie introuvable."));
+
+        boolean academicSupervisor = utilisateur.getRole() == Role.ENCADRANT_ACADEMIQUE
+                && stage.getEncadrantAcademique() != null
+                && utilisateur.getId().equals(stage.getEncadrantAcademique().getId());
+        boolean professionalSupervisor = utilisateur.getRole() == Role.ENCADRANT_PROFESSIONNEL
+                && stage.getEncadrantProfessionnel() != null
+                && utilisateur.getId().equals(stage.getEncadrantProfessionnel().getId());
+
+        if (!academicSupervisor && !professionalSupervisor) {
+            throw new AccessDeniedException("Seul un encadrant associe au stage peut gerer cette reunion finale.");
+        }
     }
 
     private void authorizeStageAccess(Stage stage) {

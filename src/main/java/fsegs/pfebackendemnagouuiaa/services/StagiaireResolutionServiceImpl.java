@@ -25,7 +25,7 @@ public class StagiaireResolutionServiceImpl implements StagiaireResolutionServic
 
     @Override
     @Transactional
-    public Stagiaire resolveByEmail(String email) {
+    public Stagiaire findByEmail(String email) {
         log.info("Resolution stagiaire - email brut recu: [{}]", email);
         String normalizedEmail = normalizeRequiredEmail(email);
         log.info("Resolution stagiaire - email normalise: [{}]", normalizedEmail);

@@ -24,10 +24,13 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class EnqueteSatisfactionServiceImpl implements EnqueteSatisfactionService {
 
+    private static final int DUREE_VISIBILITE_APRES_REUNION_JOURS = 7;
+
     private static final String STATUT_DISPONIBLE = "Disponible";
     private static final String STATUT_NON_DISPONIBLE = "Non disponible";
-    private static final String MESSAGE_INDISPONIBLE = "Aucune enquête de satisfaction disponible pour le moment.";
-    private static final String MESSAGE_URL_INVALIDE = "Le lien de l’enquête est indisponible.";
+    private static final String MESSAGE_INDISPONIBLE = "Aucune enquete de satisfaction disponible pour le moment.";
+    private static final String MESSAGE_URL_INVALIDE = "Le lien de l'enquete est indisponible.";
+    private static final String MESSAGE_PERIODE_EXPIREE = "La periode de reponse a l'enquete de satisfaction est expiree.";
 
     private final EnqueteSatisfactionRepository enqueteSatisfactionRepository;
     private final ReunionFinaleRepository reunionFinaleRepository;
@@ -45,11 +48,11 @@ public class EnqueteSatisfactionServiceImpl implements EnqueteSatisfactionServic
     @Transactional
     public EnqueteSatisfactionDto saveConfiguration(EnqueteSatisfactionDto dto) {
         if (dto == null) {
-            throw new IllegalArgumentException("Les données de l’enquête sont obligatoires.");
+            throw new IllegalArgumentException("Les donnees de l'enquete sont obligatoires.");
         }
 
-        String titre = requireText(dto.getTitre(), "Le titre de l’enquête est obligatoire.");
-        String description = requireText(dto.getDescription(), "La description de l’enquête est obligatoire.");
+        String titre = requireText(dto.getTitre(), "Le titre de l'enquete est obligatoire.");
+        String description = requireText(dto.getDescription(), "La description de l'enquete est obligatoire.");
         String url = normalizeUrl(dto.getUrlFormulaire(), "Veuillez saisir une URL http(s) valide.");
 
         EnqueteSatisfaction enquete = enqueteSatisfactionRepository.findTopByOrderByIdAsc()
@@ -65,36 +68,45 @@ public class EnqueteSatisfactionServiceImpl implements EnqueteSatisfactionServic
     @Transactional(readOnly = true)
     public EnqueteSatisfactionDto getDisponiblePourUtilisateurConnecte() {
         Utilisateur utilisateur = jwtService.getAuthenticatedUtilisateur()
-                .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifié introuvable."));
+                .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifie introuvable."));
 
         if (!isSatisfactionActorRole(utilisateur.getRole()) || utilisateur.getId() == null) {
-            throw new AccessDeniedException("Accès refusé à l’enquête de satisfaction.");
+            throw new AccessDeniedException("Acces refuse a l'enquete de satisfaction.");
         }
 
         Optional<EnqueteSatisfaction> configuredSurvey = enqueteSatisfactionRepository.findTopByOrderByIdAsc();
         if (configuredSurvey.isEmpty()) {
-            return unavailable(MESSAGE_INDISPONIBLE);
+            return unavailable(MESSAGE_INDISPONIBLE, false);
         }
 
         EnqueteSatisfaction enquete = configuredSurvey.get();
         if (!isValidHttpUrl(enquete.getUrlFormulaire())) {
-            return unavailable(MESSAGE_URL_INVALIDE);
+            return unavailable(MESSAGE_URL_INVALIDE, false);
         }
 
         LocalDate today = LocalDate.now();
-        Optional<ReunionFinale> reunionDuJour = reunionFinaleRepository
-                .findConcernedByUtilisateurIdAndDate(utilisateur.getId(), today)
+        LocalDate windowStart = today.minusDays(DUREE_VISIBILITE_APRES_REUNION_JOURS);
+
+        Optional<ReunionFinale> reunionDisponible = reunionFinaleRepository
+                .findAvailableForSatisfactionByUtilisateurId(utilisateur.getId(), windowStart, today)
                 .stream()
-                .min(Comparator.comparing(ReunionFinale::getHeure, Comparator.nullsLast(Comparator.naturalOrder()))
+                .max(Comparator.comparing(ReunionFinale::getDate, Comparator.nullsLast(Comparator.naturalOrder()))
+                        .thenComparing(ReunionFinale::getHeure, Comparator.nullsLast(Comparator.naturalOrder()))
                         .thenComparing(ReunionFinale::getId, Comparator.nullsLast(Comparator.naturalOrder())));
 
-        if (reunionDuJour.isEmpty()) {
-            EnqueteSatisfactionDto dto = unavailable(MESSAGE_INDISPONIBLE);
-            dto.setDateAtteinte(false);
-            return dto;
+        if (reunionDisponible.isPresent()) {
+            return toAvailableDto(enquete, reunionDisponible.get());
         }
 
-        return toAvailableDto(enquete, reunionDuJour.get());
+        boolean hadPastFinalMeeting = !reunionFinaleRepository
+                .findPastForSatisfactionByUtilisateurId(utilisateur.getId(), today)
+                .isEmpty();
+
+        if (hadPastFinalMeeting) {
+            return unavailable(MESSAGE_PERIODE_EXPIREE, true);
+        }
+
+        return unavailable(MESSAGE_INDISPONIBLE, false);
     }
 
     private EnqueteSatisfactionDto toConfigurationDto(EnqueteSatisfaction enquete) {
@@ -104,7 +116,7 @@ public class EnqueteSatisfactionServiceImpl implements EnqueteSatisfactionServic
         dto.setDescription(enquete.getDescription());
         dto.setUrlFormulaire(enquete.getUrlFormulaire());
         dto.setDisponible(isValidHttpUrl(enquete.getUrlFormulaire()));
-        dto.setStatut(dto.isDisponible() ? STATUT_DISPONIBLE : STATUT_NON_DISPONIBLE);
+        dto.setStatut(Boolean.TRUE.equals(dto.getDisponible()) ? STATUT_DISPONIBLE : STATUT_NON_DISPONIBLE);
         return dto;
     }
 
@@ -132,9 +144,10 @@ public class EnqueteSatisfactionServiceImpl implements EnqueteSatisfactionServic
         return dto;
     }
 
-    private EnqueteSatisfactionDto unavailable(String message) {
+    private EnqueteSatisfactionDto unavailable(String message, boolean dateAtteinte) {
         EnqueteSatisfactionDto dto = emptyConfigurationDto();
         dto.setMessage(message);
+        dto.setDateAtteinte(dateAtteinte);
         return dto;
     }
 
@@ -156,7 +169,7 @@ public class EnqueteSatisfactionServiceImpl implements EnqueteSatisfactionServic
     }
 
     private String normalizeUrl(String rawUrl, String invalidMessage) {
-        String normalized = requireText(rawUrl, "L’URL externe du formulaire est obligatoire.");
+        String normalized = requireText(rawUrl, "L'URL externe du formulaire est obligatoire.");
         if (!isValidHttpUrl(normalized)) {
             throw new IllegalArgumentException(invalidMessage);
         }

@@ -130,7 +130,7 @@ public class StagiaireServiceImpl implements StagiaireService {
 
     @Override
     public StagiaireResponseDTO searchByEmail(String email) {
-        return toResponseDTO(stagiaireResolutionService.resolveByEmail(email));
+        return toResponseDTO(stagiaireResolutionService.findByEmail(email));
     }
 
     @Override

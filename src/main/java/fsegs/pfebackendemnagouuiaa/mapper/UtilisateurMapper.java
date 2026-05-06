@@ -57,6 +57,7 @@ public class UtilisateurMapper {
         response.setNomFichierSignature(utilisateur.getNomFichierSignature());
         response.setRole(utilisateur.getRole());
         response.setMatricule(utilisateur.getMatricule());
+        response.setDoitChangerMotDePasse(utilisateur.getDoitChangerMotDePasse());
 
         if (utilisateur instanceof Stagiaire stagiaire) {
             response.setDateNaiss(stagiaire.getDateNaiss());

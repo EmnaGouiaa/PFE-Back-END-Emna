@@ -52,6 +52,9 @@ public class Utilisateur implements UserDetails {
 
     @Builder.Default
     private Boolean actif = true;
+
+    @Builder.Default
+    private Boolean doitChangerMotDePasse = false;
     
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

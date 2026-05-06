@@ -35,6 +35,12 @@ public class Reunion {
     @Column(columnDefinition = "TEXT")
     private String compteRendu;
 
+    private Long encadrantCreateurId;
+
+    private String typeEncadrantCreateur;
+
+    private String nomEncadrantCreateur;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "stage_id", nullable = false)
     private Stage stage;

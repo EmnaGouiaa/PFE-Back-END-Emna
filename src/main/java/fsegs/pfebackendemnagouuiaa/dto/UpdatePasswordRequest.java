@@ -13,7 +13,7 @@ public class UpdatePasswordRequest {
     private String ancienMotDePasse;
 
     @NotBlank(message = "Le nouveau mot de passe est obligatoire")
-    @Size(min = 6, max = 100, message = "Le nouveau mot de passe doit contenir entre 6 et 100 caracteres")
+    @Size(min = 8, max = 100, message = "Le nouveau mot de passe doit contenir entre 8 et 100 caracteres")
     private String nouveauMotDePasse;
 
     @NotBlank(message = "La confirmation du nouveau mot de passe est obligatoire")

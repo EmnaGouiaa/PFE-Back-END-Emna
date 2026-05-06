@@ -24,5 +24,7 @@ public interface NotificationService {
 
     void notifierDemandeEntrepriseValidee(Long stagiaireId, Long demandeEntrepriseId, String nomEntreprise);
 
+    void notifierDemandeEntrepriseRefusee(Long stagiaireId, Long demandeEntrepriseId, String motifRefus);
+
     void notifierStageAffecte(Long stagiaireId, Long stageId, String titreStage, String nomEntreprise);
 }

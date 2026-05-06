@@ -37,6 +37,9 @@ public class ReunionDto {
     private String stagiaireNom;
     private String entrepriseNom;
     private String typeReunion;
+    private String typeEncadrantCreateur;
+    private String nomEncadrantCreateur;
+    private Long encadrantCreateurId;
 
     private Set<Long> participantIds;
 }

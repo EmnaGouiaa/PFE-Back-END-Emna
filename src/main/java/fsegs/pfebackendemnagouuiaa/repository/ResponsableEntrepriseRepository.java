@@ -13,8 +13,10 @@ public interface ResponsableEntrepriseRepository extends JpaRepository<Responsab
     Optional<ResponsableEntreprise> findByEmail(String email);
 
     Optional<ResponsableEntreprise> findByEmailIgnoreCase(String email);
+    Optional<ResponsableEntreprise> findByTelephone(String telephone);
 
     List<ResponsableEntreprise> findByEntrepriseId(Long entrepriseId);
 
     boolean existsByEmail(String email);
+    boolean existsByEmailIgnoreCase(String email);
 }

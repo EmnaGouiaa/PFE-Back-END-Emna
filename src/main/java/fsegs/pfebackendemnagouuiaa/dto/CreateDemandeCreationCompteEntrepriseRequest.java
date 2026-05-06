@@ -16,4 +16,5 @@ public class CreateDemandeCreationCompteEntrepriseRequest {
     private String nomResponsable;
     private String prenomResponsable;
     private String emailResponsable;
+    private String telephoneResponsable;
 }

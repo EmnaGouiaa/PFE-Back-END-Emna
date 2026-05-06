@@ -15,11 +15,14 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 @Service
 @RequiredArgsConstructor
 public class AbsenceServiceImpl implements AbsenceService {
+    private static final int DUREE_PERIODE_REVISION_JOURS = 7;
+    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
     private final AbsenceRepository absenceRepository;
     private final StageRepository stageRepository;
@@ -37,6 +40,7 @@ public class AbsenceServiceImpl implements AbsenceService {
         Stage stage = stageRepository.findById(dto.getStageId())
                 .orElseThrow(() -> new RuntimeException("Stage introuvable avec l'id : " + dto.getStageId()));
         ensureResponsableEntrepriseScope(stage);
+        ensureAbsenceWriteWindow(stage);
         validateAbsence(stage, dto);
 
         entity.setStage(stage);
@@ -86,6 +90,7 @@ public class AbsenceServiceImpl implements AbsenceService {
                     .orElseThrow(() -> new RuntimeException("Stage introuvable avec l'id : " + dto.getStageId()));
         }
         ensureResponsableEntrepriseScope(stage);
+        ensureAbsenceWriteWindow(stage);
         validateAbsence(stage, dto);
 
         entity.setDateAbsence(dto.getDateAbsence());
@@ -104,6 +109,7 @@ public class AbsenceServiceImpl implements AbsenceService {
         Absence entity = absenceRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Absence introuvable avec l'id : " + id));
         ensureResponsableEntrepriseScope(entity.getStage());
+        ensureAbsenceWriteWindow(entity.getStage());
 
         absenceRepository.delete(entity);
     }
@@ -120,6 +126,31 @@ public class AbsenceServiceImpl implements AbsenceService {
         if (dateDebut != null && dto.getDateAbsence().isBefore(dateDebut)
                 || dateFin != null && dto.getDateAbsence().isAfter(dateFin)) {
             throw new RuntimeException("L'absence doit etre enregistree pendant la periode du stage.");
+        }
+    }
+
+    private void ensureAbsenceWriteWindow(Stage stage) {
+        if (stage == null) {
+            throw new RuntimeException("Le stage associe a cette absence est introuvable.");
+        }
+
+        LocalDate today = LocalDate.now();
+        LocalDate dateDebut = stage.getDateDebut();
+        LocalDate dateFin = stage.getDateFin();
+
+        if (dateDebut != null && today.isBefore(dateDebut)) {
+            throw new RuntimeException("Les absences ne peuvent pas etre enregistrees avant le debut du stage prevu le "
+                    + formatDate(dateDebut) + ".");
+        }
+
+        if (dateFin != null) {
+            LocalDate finPeriodeRevision = dateFin.plusDays(DUREE_PERIODE_REVISION_JOURS);
+            if (today.isAfter(dateFin) && today.isAfter(finPeriodeRevision)) {
+                throw new RuntimeException("La periode d'enregistrement des absences est expiree depuis le "
+                        + formatDate(finPeriodeRevision)
+                        + ". Les absences ne sont autorisees que pendant le stage ou durant la periode de revision de "
+                        + DUREE_PERIODE_REVISION_JOURS + " jours apres la fin du stage.");
+            }
         }
     }
 
@@ -178,5 +209,9 @@ public class AbsenceServiceImpl implements AbsenceService {
         }
         String normalized = value.trim();
         return normalized.isEmpty() ? null : normalized;
+    }
+
+    private String formatDate(LocalDate date) {
+        return date == null ? "-" : date.format(DATE_FORMATTER);
     }
 }

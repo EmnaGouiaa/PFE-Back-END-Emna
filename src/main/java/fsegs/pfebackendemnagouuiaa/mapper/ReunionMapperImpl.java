@@ -27,6 +27,9 @@ public class ReunionMapperImpl implements ReunionMapper {
         dto.setObservation(entity.getObservation());
         dto.setCompteRendu(entity.getCompteRendu());
         dto.setTypeReunion(entity instanceof ReunionFinale ? "FINALE" : "HEBDOMADAIRE");
+        dto.setTypeEncadrantCreateur(entity.getTypeEncadrantCreateur());
+        dto.setNomEncadrantCreateur(entity.getNomEncadrantCreateur());
+        dto.setEncadrantCreateurId(entity.getEncadrantCreateurId());
 
         if (entity.getStage() != null) {
             dto.setStageId(entity.getStage().getId());

@@ -75,6 +75,12 @@ public class UtilisateurController {
         return ResponseEntity.ok(utilisateurService.updatePassword(id, request));
     }
 
+    @PreAuthorize("isAuthenticated()")
+    @PatchMapping("/me/mot-de-passe")
+    public ResponseEntity<UserResponse> updateCurrentPassword(@Valid @RequestBody UpdatePasswordRequest request) {
+        return ResponseEntity.ok(utilisateurService.updateCurrentPassword(request));
+    }
+
     @PreAuthorize("hasRole('ADMINISTRATEUR')")
     @GetMapping("/{id}")
     public ResponseEntity<UserResponse> getUserById(@PathVariable Long id) {

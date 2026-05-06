@@ -34,7 +34,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ReunionServiceImpl implements ReunionService {
 
-    private static final Duration MIN_UPDATE_DELAY = Duration.ofHours(6);
+    private static final Duration MIN_UPDATE_DELAY = Duration.ofHours(24);
 
     private final ReunionRepository reunionRepository;
     private final StageRepository stageRepository;
@@ -50,18 +50,20 @@ public class ReunionServiceImpl implements ReunionService {
             throw new IllegalArgumentException("Les donnees de la reunion sont obligatoires.");
         }
 
-        Reunion reunion = reunionMapper.toEntity(dto);
-
         if (dto.getStageId() == null) {
             throw new IllegalArgumentException("Le stage est obligatoire");
         }
 
+        Reunion reunion = reunionMapper.toEntity(dto);
         Stage stage = stageRepository.findById(dto.getStageId())
                 .orElseThrow(() -> new EntityNotFoundException("Stage introuvable avec l'id : " + dto.getStageId()));
 
-        authorizeSupervisorForStage(stage);
+        Utilisateur supervisor = getAuthorizedSupervisorForStage(stage);
         validateActiveStage(stage);
         reunion.setStage(stage);
+        reunion.setEncadrantCreateurId(supervisor.getId());
+        reunion.setTypeEncadrantCreateur(resolveSupervisorType(supervisor.getRole()));
+        reunion.setNomEncadrantCreateur(formatFullName(supervisor));
         validateMeetingWithinStagePeriod(stage, dto.getDate());
         validateNoDuplicateMeeting(stage.getId(), dto.getDate(), dto.getHeure(), null);
 
@@ -77,8 +79,7 @@ public class ReunionServiceImpl implements ReunionService {
         }
 
         Reunion saved = reunionRepository.save(reunion);
-        notifierParticipants(saved, "Nouvelle reunion de suivi",
-                "Une reunion de suivi a ete programmee le " + saved.getDate() + " a " + saved.getHeure() + ".");
+        notifierCreationMeeting(saved);
 
         return reunionMapper.toDto(saved);
     }
@@ -211,7 +212,7 @@ public class ReunionServiceImpl implements ReunionService {
         Reunion reunion = reunionRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Reunion introuvable avec l'id : " + id));
 
-        authorizeSupervisorForStage(reunion.getStage());
+        getAuthorizedSupervisorForStage(reunion.getStage());
         ensureMeetingCanBeModified(reunion.getDate(), reunion.getHeure());
 
         if (dto.getNumReunion() != null && !dto.getNumReunion().isBlank()) {
@@ -225,7 +226,7 @@ public class ReunionServiceImpl implements ReunionService {
         if (dto.getStageId() != null) {
             Stage stage = stageRepository.findById(dto.getStageId())
                     .orElseThrow(() -> new EntityNotFoundException("Stage introuvable avec l'id : " + dto.getStageId()));
-            authorizeSupervisorForStage(stage);
+            getAuthorizedSupervisorForStage(stage);
             reunion.setStage(stage);
         }
 
@@ -234,7 +235,6 @@ public class ReunionServiceImpl implements ReunionService {
         }
 
         validateActiveStage(reunion.getStage());
-        ensureMeetingCanBeModified(reunion.getDate(), reunion.getHeure());
         validateMeetingWithinStagePeriod(reunion.getStage(), reunion.getDate());
         validateNoDuplicateMeeting(reunion.getStage().getId(), reunion.getDate(), reunion.getHeure(), reunion.getId());
 
@@ -244,9 +244,7 @@ public class ReunionServiceImpl implements ReunionService {
         }
 
         Reunion updated = reunionRepository.save(reunion);
-        notifierParticipants(updated, "Reunion de suivi modifiee",
-                "La reunion de suivi " + updated.getNumReunion() + " a ete modifiee. Nouvelle date : "
-                        + updated.getDate() + " a " + updated.getHeure() + ".");
+        notifierMeetingUpdate(updated);
         return reunionMapper.toDto(updated);
     }
 
@@ -255,7 +253,7 @@ public class ReunionServiceImpl implements ReunionService {
         Reunion reunion = reunionRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Reunion introuvable avec l'id : " + id));
 
-        authorizeSupervisorForStage(reunion.getStage());
+        getAuthorizedSupervisorForStage(reunion.getStage());
 
         reunion.setCompteRendu(compteRendu);
         Reunion updated = reunionRepository.save(reunion);
@@ -267,11 +265,14 @@ public class ReunionServiceImpl implements ReunionService {
 
     @Override
     public void delete(Long id) {
-        if (!reunionRepository.existsById(id)) {
-            throw new EntityNotFoundException("Reunion introuvable avec l'id : " + id);
-        }
+        Reunion reunion = reunionRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Reunion introuvable avec l'id : " + id));
 
-        throw new AccessDeniedException("La suppression d'une reunion de suivi est interdite.");
+        getAuthorizedSupervisorForStage(reunion.getStage());
+        ensureMeetingCanBeCancelled(reunion.getDate(), reunion.getHeure());
+
+        reunionRepository.delete(reunion);
+        notifierMeetingCancellation(reunion);
     }
 
     private ResponsableEntreprise resolveResponsableEntreprise(Utilisateur utilisateur) {
@@ -322,11 +323,22 @@ public class ReunionServiceImpl implements ReunionService {
 
         LocalDateTime meetingStart = LocalDateTime.of(date, heure);
         if (Duration.between(LocalDateTime.now(), meetingStart).compareTo(MIN_UPDATE_DELAY) < 0) {
-            throw new IllegalArgumentException("La modification est refusee car la reunion commence dans moins de 6 heures.");
+            throw new IllegalArgumentException("Vous ne pouvez pas modifier une reunion moins de 24 heures avant son horaire.");
         }
     }
 
-    private void authorizeSupervisorForStage(Stage stage) {
+    private void ensureMeetingCanBeCancelled(LocalDate date, LocalTime heure) {
+        if (date == null || heure == null) {
+            throw new IllegalArgumentException("La date et l'heure de la reunion sont obligatoires.");
+        }
+
+        LocalDateTime meetingStart = LocalDateTime.of(date, heure);
+        if (Duration.between(LocalDateTime.now(), meetingStart).compareTo(MIN_UPDATE_DELAY) < 0) {
+            throw new IllegalArgumentException("Vous ne pouvez pas annuler une reunion moins de 24 heures avant son horaire.");
+        }
+    }
+
+    private Utilisateur getAuthorizedSupervisorForStage(Stage stage) {
         if (stage == null || stage.getId() == null) {
             throw new AccessDeniedException("Aucun stage n'est associe a cette reunion.");
         }
@@ -344,6 +356,72 @@ public class ReunionServiceImpl implements ReunionService {
         if (!academicSupervisor && !professionalSupervisor) {
             throw new AccessDeniedException("Seul un encadrant associe au stage peut gerer cette reunion de suivi.");
         }
+
+        return utilisateur;
+    }
+
+    private void notifierCreationMeeting(Reunion reunion) {
+        Stage stage = reunion.getStage();
+        if (stage != null && stage.getStagiaire() != null && stage.getStagiaire().getId() != null) {
+            notificationService.notifierStagiaireReunionFixee(
+                    stage.getStagiaire().getId(),
+                    reunion.getId(),
+                    buildStudentMeetingNotification(reunion)
+            );
+        }
+
+        Set<Long> recipients = collectParticipantIds(reunion);
+        Long stagiaireId = stage != null && stage.getStagiaire() != null ? stage.getStagiaire().getId() : null;
+        recipients.stream()
+                .filter(userId -> stagiaireId == null || !stagiaireId.equals(userId))
+                .forEach(userId -> notificationService.creerNotification(
+                        userId,
+                        "Nouvelle reunion de suivi",
+                        "Une reunion de suivi a ete programmee le " + reunion.getDate() + " a " + reunion.getHeure() + ".",
+                        "REUNION_SUIVI",
+                        reunion.getId(),
+                        "REUNION"
+                ));
+    }
+
+    private void notifierMeetingUpdate(Reunion reunion) {
+        String message = "La reunion hebdomadaire " + safeText(reunion.getNumReunion(), "de suivi")
+                + " a ete modifiee. Nouvelle date : " + reunion.getDate() + " a " + reunion.getHeure() + ".";
+        notifierParticipants(reunion, "Reunion hebdomadaire modifiee", message);
+    }
+
+    private void notifierMeetingCancellation(Reunion reunion) {
+        String message = "La reunion hebdomadaire " + safeText(reunion.getNumReunion(), "de suivi")
+                + " prevue le " + reunion.getDate() + " a " + reunion.getHeure() + " a ete annulee.";
+        notifierParticipants(reunion, "Reunion hebdomadaire annulee", message);
+    }
+
+    private String buildStudentMeetingNotification(Reunion reunion) {
+        String typeEncadrant = "ACADEMIQUE".equalsIgnoreCase(reunion.getTypeEncadrantCreateur())
+                ? "académique"
+                : "professionnel";
+        String nomEncadrant = safeText(reunion.getNomEncadrantCreateur(), "Non renseigné");
+        String date = reunion.getDate() != null ? reunion.getDate().toString() : "date non renseignée";
+        String heure = reunion.getHeure() != null ? reunion.getHeure().toString() : "heure non renseignée";
+        return "Une nouvelle réunion a été planifiée avec votre encadrant "
+                + typeEncadrant + " " + nomEncadrant + " le " + date + " à " + heure + ".";
+    }
+
+    private String resolveSupervisorType(Role role) {
+        return role == Role.ENCADRANT_ACADEMIQUE ? "ACADEMIQUE" : "PROFESSIONNEL";
+    }
+
+    private String formatFullName(Utilisateur utilisateur) {
+        String fullName = ((utilisateur.getPrenom() != null ? utilisateur.getPrenom() : "") + " "
+                + (utilisateur.getNom() != null ? utilisateur.getNom() : "")).trim();
+        return fullName.isBlank() ? safeText(utilisateur.getEmail(), "Encadrant") : fullName;
+    }
+
+    private String safeText(String value, String fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
+        }
+        return value.trim();
     }
 
     private void notifierParticipants(Reunion reunion, String title, String message) {

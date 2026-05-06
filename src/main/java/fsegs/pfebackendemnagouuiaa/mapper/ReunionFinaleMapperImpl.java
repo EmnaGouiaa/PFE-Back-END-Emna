@@ -36,11 +36,29 @@ public class ReunionFinaleMapperImpl implements ReunionFinaleMapper {
             dto.setStageId(entity.getStage().getId());
             dto.setStageTitre(entity.getStage().getTitre());
             if (entity.getStage().getStagiaire() != null) {
-                dto.setStagiaireNom((entity.getStage().getStagiaire().getPrenom() + " " + entity.getStage().getStagiaire().getNom()).trim());
+        dto.setStagiaireNom((entity.getStage().getStagiaire().getPrenom() + " " + entity.getStage().getStagiaire().getNom()).trim());
             }
             if (entity.getStage().getEntreprise() != null) {
                 dto.setEntrepriseNom(entity.getStage().getEntreprise().getNom());
             }
+            if (entity.getNomEncadrantCreateur() == null && entity.getStage().getEncadrantProfessionnel() != null) {
+                dto.setNomEncadrantCreateur(
+                        (entity.getStage().getEncadrantProfessionnel().getPrenom() + " "
+                                + entity.getStage().getEncadrantProfessionnel().getNom()).trim()
+                );
+                dto.setTypeEncadrantCreateur("PROFESSIONNEL");
+                dto.setEncadrantCreateurId(entity.getStage().getEncadrantProfessionnel().getId());
+            }
+        }
+
+        if (dto.getTypeEncadrantCreateur() == null) {
+            dto.setTypeEncadrantCreateur(entity.getTypeEncadrantCreateur());
+        }
+        if (dto.getNomEncadrantCreateur() == null) {
+            dto.setNomEncadrantCreateur(entity.getNomEncadrantCreateur());
+        }
+        if (dto.getEncadrantCreateurId() == null) {
+            dto.setEncadrantCreateurId(entity.getEncadrantCreateurId());
         }
 
         if (entity.getParticipants() != null) {

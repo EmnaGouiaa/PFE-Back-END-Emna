@@ -88,6 +88,7 @@ public class UtilisateurServiceImpl implements UtilisateurService {
         utilisateur.setTelephone(telephone);
         utilisateur.setMatricule(matricule);
         utilisateur.setMotDePasse(passwordEncoder.encode(generatedPassword));
+        utilisateur.setDoitChangerMotDePasse(true);
 
         Utilisateur saved;
         try {
@@ -127,7 +128,7 @@ public class UtilisateurServiceImpl implements UtilisateurService {
             log.info("Email de creation envoye pour le compte utilisateur. id={}, email={}", saved.getId(), saved.getEmail());
         } catch (AccountEmailDeliveryException ex) {
             response.setEmailSent(false);
-            response.setMessage("Compte cree, mais l'envoi de l'email a echoue.");
+            response.setMessage(buildSmtpFailureMessage("Compte cree, mais l'envoi de l'email a echoue.", ex));
             log.error(
                     "Echec SMTP apres creation du compte utilisateur. id={}, email={}",
                     saved.getId(),
@@ -322,6 +323,14 @@ public class UtilisateurServiceImpl implements UtilisateurService {
 
     @Override
     @Transactional
+    public UserResponse updateCurrentPassword(UpdatePasswordRequest request) {
+        Utilisateur authenticatedUser = jwtService.getAuthenticatedUtilisateur()
+                .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifie introuvable."));
+        return updatePassword(authenticatedUser.getId(), request);
+    }
+
+    @Override
+    @Transactional
     public UserResponse updatePassword(Long id, UpdatePasswordRequest request) {
         Utilisateur utilisateur = findOwnedUser(id);
 
@@ -339,6 +348,7 @@ public class UtilisateurServiceImpl implements UtilisateurService {
 
         credentialPolicyService.validatePasswordStrength(request.getNouveauMotDePasse());
         utilisateur.setMotDePasse(passwordEncoder.encode(request.getNouveauMotDePasse()));
+        utilisateur.setDoitChangerMotDePasse(false);
         Utilisateur updated = utilisateurRepository.save(utilisateur);
         return UtilisateurMapper.toResponse(updated);
     }
@@ -442,6 +452,13 @@ public class UtilisateurServiceImpl implements UtilisateurService {
 
     private String normalizeEmailValue(String email) {
         return email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
+    }
+
+    private String buildSmtpFailureMessage(String fallbackMessage, AccountEmailDeliveryException ex) {
+        if (ex == null || ex.getDetails() == null || ex.getDetails().isBlank()) {
+            return fallbackMessage;
+        }
+        return fallbackMessage + " " + ex.getDetails();
     }
 
     private DuplicateFieldException resolveDuplicateFieldException(DataIntegrityViolationException ex) {

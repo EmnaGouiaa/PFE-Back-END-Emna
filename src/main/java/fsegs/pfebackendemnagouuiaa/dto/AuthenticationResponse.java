@@ -17,4 +17,5 @@ public class AuthenticationResponse {
     private String prenom;
     private String email;
     private Role role;
+    private Boolean doitChangerMotDePasse;
 }

@@ -351,7 +351,7 @@ public class StageServiceImpl implements StageService {
     private Stagiaire getAuthenticatedStagiaire() {
         String email = getAuthenticatedUtilisateur().getEmail();
 
-        return stagiaireResolutionService.resolveByEmail(email);
+        return stagiaireResolutionService.findByEmail(email);
     }
 
     private Utilisateur getAuthenticatedUtilisateur() {

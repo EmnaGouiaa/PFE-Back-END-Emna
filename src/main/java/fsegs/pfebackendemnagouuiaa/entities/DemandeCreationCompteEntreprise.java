@@ -30,6 +30,12 @@ public class DemandeCreationCompteEntreprise {
     @Enumerated(EnumType.STRING)
     private StatutValidation statutResponsableStages;
 
+    @Column(length = 1000)
+    private String commentaireAdmin;
+
+    @Column(length = 1000)
+    private String commentaireResponsableStages;
+
     private String nomEntreprise;
 
     private String emailEntreprise;
@@ -45,6 +51,8 @@ public class DemandeCreationCompteEntreprise {
     private String prenomResponsable;
 
     private String emailResponsable;
+
+    private String telephoneResponsable;
 
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "validee_par_encadrant_academique_id")

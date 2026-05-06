@@ -33,5 +33,6 @@ public class UserResponse {
     private List<String> champsProfilAutorises;
     private List<String> documentsStageAutorises;
     private Boolean emailSent;
+    private Boolean doitChangerMotDePasse;
     private String message;
 }

@@ -20,6 +20,7 @@ import java.util.List;
 public class NotificationServiceImpl implements NotificationService {
 
     private static final String TYPE_DEMANDE_ENTREPRISE_VALIDEE = "DEMANDE_ENTREPRISE_VALIDEE";
+    private static final String TYPE_DEMANDE_ENTREPRISE_REFUSEE = "DEMANDE_ENTREPRISE_REFUSEE";
     private static final String TYPE_STAGE_AFFECTE = "STAGE_AFFECTE";
     private static final String TYPE_REUNION_FIXEE = "REUNION_FIXEE";
 
@@ -116,9 +117,21 @@ public class NotificationServiceImpl implements NotificationService {
     public void notifierDemandeEntrepriseValidee(Long stagiaireId, Long demandeEntrepriseId, String nomEntreprise) {
         creerNotification(
                 stagiaireId,
-                "Demande entreprise approuvee",
-                "Votre demande de creation du compte entreprise " + safeName(nomEntreprise) + " a ete approuvee par les deux acteurs.",
+                "Demande d'ajout d'entreprise approuvée",
+                "Votre demande d’ajout d’entreprise " + safeName(nomEntreprise) + " a été approuvée avec succès.",
                 TYPE_DEMANDE_ENTREPRISE_VALIDEE,
+                demandeEntrepriseId,
+                "DEMANDE_ENTREPRISE"
+        );
+    }
+
+    @Override
+    public void notifierDemandeEntrepriseRefusee(Long stagiaireId, Long demandeEntrepriseId, String motifRefus) {
+        creerNotification(
+                stagiaireId,
+                "Demande d'ajout d'entreprise refusée",
+                "Votre demande d’ajout d’entreprise a été refusée.\nMotif : " + safeName(motifRefus),
+                TYPE_DEMANDE_ENTREPRISE_REFUSEE,
                 demandeEntrepriseId,
                 "DEMANDE_ENTREPRISE"
         );

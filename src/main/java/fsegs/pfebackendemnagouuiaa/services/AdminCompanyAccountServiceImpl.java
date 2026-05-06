@@ -65,6 +65,7 @@ public class AdminCompanyAccountServiceImpl implements AdminCompanyAccountServic
                         .email(normalized.emailResponsable())
                         .telephone(normalized.telephoneResponsable())
                         .motDePasse(passwordEncoder.encode(generatedPassword))
+                        .doitChangerMotDePasse(true)
                         .role(Role.RESPONSABLE_ENTREPRISE)
                         .actif(true)
                         .entreprise(savedEntreprise)
@@ -135,6 +136,7 @@ public class AdminCompanyAccountServiceImpl implements AdminCompanyAccountServic
                 if (representantToSave == null) {
                     representantToSave = ResponsableEntreprise.builder()
                             .motDePasse(passwordEncoder.encode(generatedPassword))
+                            .doitChangerMotDePasse(true)
                             .role(Role.RESPONSABLE_ENTREPRISE)
                             .actif(true)
                             .entreprise(updatedEntreprise)
@@ -353,7 +355,7 @@ public class AdminCompanyAccountServiceImpl implements AdminCompanyAccountServic
             );
         } catch (AccountEmailDeliveryException ex) {
             response.setEmailSent(false);
-            response.setMessage(smtpFailureMessage);
+            response.setMessage(buildSmtpFailureMessage(smtpFailureMessage, ex));
             log.error(
                     "Echec SMTP apres sauvegarde du representant entreprise. representantId={}, email={}",
                     representant.getId(),
@@ -361,6 +363,13 @@ public class AdminCompanyAccountServiceImpl implements AdminCompanyAccountServic
                     ex
             );
         }
+    }
+
+    private String buildSmtpFailureMessage(String fallbackMessage, AccountEmailDeliveryException ex) {
+        if (ex == null || ex.getDetails() == null || ex.getDetails().isBlank()) {
+            return fallbackMessage;
+        }
+        return fallbackMessage + " " + ex.getDetails();
     }
 
     private String generatePassword() {

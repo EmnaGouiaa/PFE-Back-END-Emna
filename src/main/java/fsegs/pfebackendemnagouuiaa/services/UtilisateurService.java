@@ -18,6 +18,7 @@ public interface UtilisateurService {
     UserResponse updateCurrentProfile(UpdateProfileRequest request);
     UserResponse updateProfile(Long id, UpdateProfileRequest request);
     UpdateEmailResponse updateCurrentEmail(UpdateEmailRequest request);
+    UserResponse updateCurrentPassword(UpdatePasswordRequest request);
     UserResponse updatePassword(Long id, UpdatePasswordRequest request);
     UserResponse getUserById(Long id);
     List<UserResponse> getAllUsers();

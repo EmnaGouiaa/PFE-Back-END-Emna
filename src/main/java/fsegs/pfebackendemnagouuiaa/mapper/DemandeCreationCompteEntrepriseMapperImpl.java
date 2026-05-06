@@ -29,6 +29,7 @@ public class DemandeCreationCompteEntrepriseMapperImpl implements DemandeCreatio
         dto.setNomResponsable(entity.getNomResponsable());
         dto.setPrenomResponsable(entity.getPrenomResponsable());
         dto.setEmailResponsable(entity.getEmailResponsable());
+        dto.setTelephoneResponsable(entity.getTelephoneResponsable());
 
         dto.setValideeParAdminId(entity.getValideeParAdminId());
         dto.setValideeParEncadrantId(entity.getValideeParEncadrantId());
@@ -72,6 +73,7 @@ public class DemandeCreationCompteEntrepriseMapperImpl implements DemandeCreatio
         entity.setNomResponsable(dto.getNomResponsable());
         entity.setPrenomResponsable(dto.getPrenomResponsable());
         entity.setEmailResponsable(dto.getEmailResponsable());
+        entity.setTelephoneResponsable(dto.getTelephoneResponsable());
 
         entity.setValideeParAdminId(dto.getValideeParAdminId());
         entity.setValideeParEncadrantId(dto.getValideeParEncadrantId());

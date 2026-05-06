@@ -1,6 +1,7 @@
 package fsegs.pfebackendemnagouuiaa.controller;
 
 import fsegs.pfebackendemnagouuiaa.dto.CreateDemandeCreationCompteEntrepriseRequest;
+import fsegs.pfebackendemnagouuiaa.dto.RejectDemandeCreationCompteEntrepriseRequest;
 import fsegs.pfebackendemnagouuiaa.entities.DemandeCreationCompteEntreprise;
 import fsegs.pfebackendemnagouuiaa.services.DemandeCreationCompteEntrepriseService;
 import lombok.RequiredArgsConstructor;
@@ -73,9 +74,14 @@ public class DemandeCreationCompteEntrepriseController {
     @PutMapping("/{demandeId}/refuser-admin/{adminId}")
     public ResponseEntity<DemandeCreationCompteEntreprise> refuserParAdmin(
             @PathVariable Long demandeId,
-            @PathVariable Long adminId
+            @PathVariable Long adminId,
+            @RequestBody(required = false) RejectDemandeCreationCompteEntrepriseRequest request
     ) {
-        return ResponseEntity.ok(demandeService.refuserParAdmin(demandeId, adminId));
+        return ResponseEntity.ok(demandeService.refuserParAdmin(
+                demandeId,
+                adminId,
+                request != null ? request.getCommentaire() : null
+        ));
     }
 
     @PreAuthorize("hasAnyRole('ENCADRANT_ACADEMIQUE','ADMINISTRATEUR')")
@@ -107,8 +113,12 @@ public class DemandeCreationCompteEntrepriseController {
     @PreAuthorize("hasAnyRole('RESPONSABLE_UNIVERSITAIRE_STAGES','RESPONSABLE_SERVICE_STAGES')")
     @PutMapping("/{demandeId}/refuser-responsable-stages")
     public ResponseEntity<DemandeCreationCompteEntreprise> refuserParResponsableStages(
-            @PathVariable Long demandeId
+            @PathVariable Long demandeId,
+            @RequestBody(required = false) RejectDemandeCreationCompteEntrepriseRequest request
     ) {
-        return ResponseEntity.ok(demandeService.refuserParResponsableStages(demandeId));
+        return ResponseEntity.ok(demandeService.refuserParResponsableStages(
+                demandeId,
+                request != null ? request.getCommentaire() : null
+        ));
     }
 }

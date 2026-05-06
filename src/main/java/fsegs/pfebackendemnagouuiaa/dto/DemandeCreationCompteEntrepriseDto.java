@@ -30,6 +30,7 @@ public class DemandeCreationCompteEntrepriseDto {
     private String nomResponsable;
     private String prenomResponsable;
     private String emailResponsable;
+    private String telephoneResponsable;
 
     private Long valideeParAdminId;
     private Long valideeParEncadrantId;

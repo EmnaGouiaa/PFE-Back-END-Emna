@@ -294,9 +294,9 @@ public class OffreStageServiceImpl implements OffreStageService {
             throw new IllegalStateException("Offre non validee.");
         }
 
-        Stagiaire stagiaire = stagiaireResolutionService.resolveByEmail(normalizedEmail);
+        Stagiaire stagiaire = stagiaireResolutionService.findByEmail(normalizedEmail);
         log.info("Affectation etudiant - stagiaire resolu: id={}, email={}", stagiaire.getId(), stagiaire.getEmail());
-        ensureNoPeriodConflict(stagiaire, offre);
+        existsStageActifByStagiaire(stagiaire, offre);
 
         Stage stage = stageService.creerStageDepuisOffrePourEntreprise(offre, stagiaire, responsableAuthentifie);
 
@@ -532,7 +532,7 @@ public class OffreStageServiceImpl implements OffreStageService {
         return !stageCree && offre.getStatut() == StatutOffre.VALIDEE;
     }
 
-    private void ensureNoPeriodConflict(Stagiaire stagiaire, OffreStage offre) {
+    private void existsStageActifByStagiaire(Stagiaire stagiaire, OffreStage offre) {
         LocalDate requestedStart = offre.getDateDebutPrevue();
         LocalDate requestedEnd = calculateOfferEndDate(offre);
 

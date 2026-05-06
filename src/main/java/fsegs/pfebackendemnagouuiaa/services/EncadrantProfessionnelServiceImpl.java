@@ -40,6 +40,7 @@ public class EncadrantProfessionnelServiceImpl implements EncadrantProfessionnel
         entity.setEmail(normalizedEmail);
         entity.setTelephone(normalizedPhone);
         entity.setMotDePasse(passwordEncoder.encode(generatedPassword));
+        entity.setDoitChangerMotDePasse(true);
         entity.setRole(Role.ENCADRANT_PROFESSIONNEL);
         entity.setActif(true);
 
@@ -48,7 +49,7 @@ public class EncadrantProfessionnelServiceImpl implements EncadrantProfessionnel
         }
 
         EncadrantProfessionnel saved = encadrantProfessionnelRepository.save(entity);
-        accountEmailService.sendProfessionalSupervisorAccountCreatedEmail(dto.getPrenom(), saved.getEmail(), generatedPassword);
+        accountEmailService.sendProfessionalSupervisorAccountCreatedEmail(saved.getPrenom(), saved.getEmail(), generatedPassword);
         return encadrantProfessionnelMapper.toDto(saved);
     }
 
@@ -121,11 +122,12 @@ public class EncadrantProfessionnelServiceImpl implements EncadrantProfessionnel
         entity.setTelephone(normalizedPhone);
         entity.setEntreprise(responsable.getEntreprise());
         entity.setMotDePasse(passwordEncoder.encode(generatedPassword));
+        entity.setDoitChangerMotDePasse(true);
         entity.setRole(Role.ENCADRANT_PROFESSIONNEL);
         entity.setActif(true);
 
         EncadrantProfessionnel saved = encadrantProfessionnelRepository.save(entity);
-        accountEmailService.sendProfessionalSupervisorAccountCreatedEmail(dto.getPrenom(), saved.getEmail(), generatedPassword);
+        accountEmailService.sendProfessionalSupervisorAccountCreatedEmail(saved.getPrenom(), saved.getEmail(), generatedPassword);
         return encadrantProfessionnelMapper.toDto(saved);
     }
 
