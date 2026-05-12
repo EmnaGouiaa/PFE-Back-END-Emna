@@ -8,6 +8,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.ToString;
 
+import java.util.ArrayList;
 import java.time.LocalDate;
 import java.util.HashSet;
 import java.util.List;
@@ -26,8 +27,11 @@ import java.util.Set;
         "offreSource",
         "demandeStage",
         "conventionDeStage",
+        "cahierStage",
+        "ficheEvaluation",
         "fichesEvaluation",
         "reunions",
+        "notifications",
         "absences"
 })
 public class Stage {
@@ -89,7 +93,7 @@ public class Stage {
     @JoinColumn(name = "offre_source_id")
     private OffreStage offreSource;
 
-    @OneToOne(mappedBy = "stage", cascade = CascadeType.ALL)
+    @OneToOne(mappedBy = "stage", cascade = CascadeType.ALL, orphanRemoval = true)
     @JsonIgnore
     private ConventionStage conventionDeStage;
 
@@ -97,15 +101,33 @@ public class Stage {
     @JoinColumn(name = "demande_stage_id")
     private DemandeCreationCompteEntreprise demandeStage;
 
-    @OneToOne(mappedBy = "stage", cascade = CascadeType.ALL)
+    @OneToOne(mappedBy = "stage", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnore
+    private CahierStage cahierStage;
+
+    @OneToOne(mappedBy = "stage", cascade = CascadeType.ALL, orphanRemoval = true)
     @JsonIgnore
     private FicheEvaluation ficheEvaluation;
 
-    @OneToMany(mappedBy = "stage", cascade = CascadeType.ALL)
+    @OneToMany(mappedBy = "stage", cascade = CascadeType.ALL, orphanRemoval = true)
     @JsonIgnore
-    private List<Reunion> reunions;
+    private List<Reunion> reunions = new ArrayList<>();
+
+    @OneToMany(mappedBy = "stage", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnore
+    private List<Notification> notifications = new ArrayList<>();
 
     @OneToMany(mappedBy = "stage", cascade = CascadeType.ALL)
     @JsonIgnore
     private Set<Absence> absences = new HashSet<>();
+
+    @OneToMany(mappedBy = "stage", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnore
+    private List<EnqueteSatisfaction> enquetesSatisfaction = new ArrayList<>();
+
+    private Boolean sectionEvaluationOuverte = Boolean.FALSE;
+
+    private Boolean sectionEnqueteOuverte = Boolean.FALSE;
+
+    private Boolean notificationOuvertureEspacesEnvoyee = Boolean.FALSE;
 }

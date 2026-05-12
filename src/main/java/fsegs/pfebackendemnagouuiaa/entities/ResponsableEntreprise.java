@@ -22,7 +22,7 @@ public class ResponsableEntreprise extends Utilisateur {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "entreprise_id")
-    @JsonIgnoreProperties({"tuteurs"})
+    @JsonIgnoreProperties({"responsables"})
     private Entreprise entreprise;
 
 }

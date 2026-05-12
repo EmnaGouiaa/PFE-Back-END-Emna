@@ -1,5 +1,6 @@
 package fsegs.pfebackendemnagouuiaa.entities;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -57,7 +58,12 @@ public class CahierStage {
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "stage_id", unique = true)
     private Stage stage;
-    @OneToMany(mappedBy = "cahierStage")
-    private List<ReunionHebdomadaire> reunionHebdomadaires = new ArrayList<>();
+
+    @OneToMany(mappedBy = "cahierStage", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<Reunion> reunions = new ArrayList<>();
+
+    @OneToMany(mappedBy = "cahierStage", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnore
+    private List<Notification> notifications = new ArrayList<>();
 
 }

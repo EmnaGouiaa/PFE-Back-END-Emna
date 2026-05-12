@@ -1,5 +1,6 @@
 package fsegs.pfebackendemnagouuiaa.entities;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.*;
 import lombok.experimental.SuperBuilder;
@@ -69,6 +70,11 @@ public class ConventionStage {
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "stage_id", unique = true)
     private Stage stage;
+
+    @OneToMany(mappedBy = "conventionStage", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnore
+    private List<Notification> notifications = new ArrayList<>();
+
     @ManyToOne
     @JoinColumn(name = "demande_stage_id")
     private DemandeCreationCompteEntreprise demandeStage;

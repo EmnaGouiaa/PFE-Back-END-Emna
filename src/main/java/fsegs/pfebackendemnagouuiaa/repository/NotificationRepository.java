@@ -8,7 +8,19 @@ import java.util.List;
 
 @Repository
 public interface NotificationRepository extends JpaRepository<Notification, Long> {
-    List<Notification> findByUtilisateurIdOrderByCreeLeDesc(Long utilisateurId);
+    List<Notification> findByStageId(Long stageId);
 
-    long countByUtilisateurIdAndLuFalse(Long utilisateurId);
+    List<Notification> findByReunionId(Long reunionId);
+
+    List<Notification> findByReunionFinaleId(Long reunionFinaleId);
+
+    List<Notification> findByReunionHebdomadaireId(Long reunionHebdomadaireId);
+
+    List<Notification> findByCahierStageId(Long cahierStageId);
+
+    List<Notification> findByFicheEvaluationId(Long ficheEvaluationId);
+
+    List<Notification> findByConventionStageId(Long conventionId);
+
+    List<Notification> findByDemandeCreationCompteEntrepriseId(Long demandeId);
 }

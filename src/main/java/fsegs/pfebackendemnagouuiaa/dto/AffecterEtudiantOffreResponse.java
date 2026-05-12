@@ -14,4 +14,6 @@ public class AffecterEtudiantOffreResponse {
     private String stageTitre;
     private Long stagiaireId;
     private String stagiaireEmail;
+    private boolean stageDeclenche;
+    private boolean trelloEnabled;
 }

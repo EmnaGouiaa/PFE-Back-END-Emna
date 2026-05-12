@@ -1,6 +1,7 @@
 package fsegs.pfebackendemnagouuiaa.controller;
 
 import fsegs.pfebackendemnagouuiaa.dto.FicheEvaluationDto;
+import fsegs.pfebackendemnagouuiaa.dto.NoteAttribueeDto;
 import fsegs.pfebackendemnagouuiaa.services.FicheEvaluationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -24,7 +25,7 @@ public class FicheEvaluationController {
         return new ResponseEntity<>(ficheEvaluationService.create(dto), HttpStatus.CREATED);
     }
 
-    @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','STAGIAIRE','RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
     @GetMapping("/{id}")
     public ResponseEntity<FicheEvaluationDto> getById(@PathVariable Long id) {
         return ResponseEntity.ok(ficheEvaluationService.getById(id));
@@ -36,13 +37,13 @@ public class FicheEvaluationController {
         return ResponseEntity.ok(ficheEvaluationService.getAll());
     }
 
-    @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','STAGIAIRE','RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
     @GetMapping("/stage/{stageId}")
     public ResponseEntity<FicheEvaluationDto> getByStageId(@PathVariable Long stageId) {
         return ResponseEntity.ok(ficheEvaluationService.getByStageId(stageId));
     }
 
-    @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','STAGIAIRE','RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
     @GetMapping("/reunion-finale/{reunionFinaleId}")
     public ResponseEntity<List<FicheEvaluationDto>> getByReunionFinaleId(@PathVariable Long reunionFinaleId) {
         return ResponseEntity.ok(ficheEvaluationService.getByReunionFinaleId(reunionFinaleId));
@@ -76,5 +77,14 @@ public class FicheEvaluationController {
             @PathVariable Long userId,
             @RequestBody FicheEvaluationDto dto) {
         return ResponseEntity.ok(ficheEvaluationService.remplirPartieResponsableEntreprise(id, userId, dto));
+    }
+
+    @PreAuthorize("hasRole('ENCADRANT_PROFESSIONNEL')")
+    @PutMapping("/{id}/notes/{userId}")
+    public ResponseEntity<FicheEvaluationDto> enregistrerNotes(
+            @PathVariable Long id,
+            @PathVariable Long userId,
+            @RequestBody List<NoteAttribueeDto> notes) {
+        return ResponseEntity.ok(ficheEvaluationService.enregistrerNotesEncadrantProfessionnel(id, userId, notes));
     }
 }

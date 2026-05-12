@@ -25,5 +25,7 @@ public class OffreStageResponse {
     private Long valideeParId;
     private String valideeParNomComplet;
     private boolean stageCree;
+    private boolean stageDeclenche;
+    private boolean trelloEnabled;
     private boolean affectable;
 }

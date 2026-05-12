@@ -8,6 +8,7 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.LocalDate;
@@ -15,6 +16,7 @@ import java.util.Optional;
 import java.util.function.Supplier;
 
 @SpringBootApplication
+@EnableScheduling
 @RequiredArgsConstructor
 public class PfeBackEndEmnaGouuiaaApplication {
 

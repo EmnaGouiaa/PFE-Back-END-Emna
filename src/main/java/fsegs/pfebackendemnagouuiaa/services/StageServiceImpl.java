@@ -2,64 +2,121 @@ package fsegs.pfebackendemnagouuiaa.services;
 
 import fsegs.pfebackendemnagouuiaa.dto.ConventionStageDto;
 import fsegs.pfebackendemnagouuiaa.dto.CreateStageRequest;
+import fsegs.pfebackendemnagouuiaa.dto.RapportEnqueteSatisfactionResponse;
+import fsegs.pfebackendemnagouuiaa.dto.StageEnqueteSectionStatusResponse;
 import fsegs.pfebackendemnagouuiaa.entities.*;
 import fsegs.pfebackendemnagouuiaa.mapper.StageMapper;
 import fsegs.pfebackendemnagouuiaa.repository.ConventionStageRepository;
 import fsegs.pfebackendemnagouuiaa.repository.EncadrantAcademiqueRepository;
 import fsegs.pfebackendemnagouuiaa.repository.EncadrantProfessionnelRepository;
 import fsegs.pfebackendemnagouuiaa.repository.EntrepriseRepository;
+import fsegs.pfebackendemnagouuiaa.repository.FicheEvaluationRepository;
 import fsegs.pfebackendemnagouuiaa.repository.OffreStageRepository;
+import fsegs.pfebackendemnagouuiaa.repository.RapportEnqueteSatisfactionRepository;
+import fsegs.pfebackendemnagouuiaa.repository.ReunionFinaleRepository;
 import fsegs.pfebackendemnagouuiaa.repository.ResponsableEntrepriseRepository;
 import fsegs.pfebackendemnagouuiaa.repository.StageRepository;
 import fsegs.pfebackendemnagouuiaa.repository.StagiaireRepository;
+import fsegs.pfebackendemnagouuiaa.repository.UtilisateurRepository;
 import fsegs.pfebackendemnagouuiaa.security.JwtService;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Service;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.PathResource;
+import org.springframework.core.io.Resource;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class StageServiceImpl implements StageService {
+
+    private static final LocalTime HEURE_REUNION_FINALE_PAR_DEFAUT = LocalTime.of(9, 0);
+    private static final String TYPE_NOTIFICATION_OUVERTURE_ESPACES = "OUVERTURE_ESPACES_FIN_STAGE";
 
     private final StageRepository stageRepository;
     private final StagiaireRepository stagiaireRepository;
     private final EntrepriseRepository entrepriseRepository;
     private final EncadrantAcademiqueRepository encadrantAcademiqueRepository;
     private final EncadrantProfessionnelRepository encadrantProfessionnelRepository;
+    private final FicheEvaluationRepository ficheEvaluationRepository;
     private final ResponsableEntrepriseRepository responsableEntrepriseRepository;
     private final OffreStageRepository offreStageRepository;
+    private final ReunionFinaleRepository reunionFinaleRepository;
+    private final RapportEnqueteSatisfactionRepository rapportEnqueteSatisfactionRepository;
     private final TrelloService trelloService;
     private final ConventionStageService conventionStageService;
     private final ConventionStageRepository conventionStageRepository;
     private final StagiaireResolutionService stagiaireResolutionService;
+    private final UtilisateurRepository utilisateurRepository;
     private final NotificationService notificationService;
+    private final EnqueteSatisfactionService enqueteSatisfactionService;
     private final JwtService jwtService;
+
+    @Value("${app.upload.rapport-enquete-dir:C:/tmp/rapport-enquete-satisfaction}")
+    private String rapportEnqueteUploadDir;
+
+    @Scheduled(cron = "${app.stage.finalization.cron:0 0 */1 * * *}", zone = "${app.stage.finalization.zone:Africa/Tunis}")
+    @Transactional
+    public void synchroniserFinStagesPlanifies() {
+        LocalDate today = LocalDate.now();
+        List<Stage> stagesDus = stageRepository.findByDateFinLessThanEqualAndStatutIn(
+                today,
+                List.of(StatutStage.PAS_COMMENCE, StatutStage.EN_COURS, StatutStage.TERMINE)
+        );
+
+        for (Stage stage : stagesDus) {
+            try {
+                Stage savedStage = synchroniserAutomatisationReunionFinaleEtOuverture(stage);
+                if (savedStage.getId() != null) {
+                    log.debug("Synchronisation de fin de stage executee pour le stage {}", savedStage.getId());
+                }
+            } catch (RuntimeException ex) {
+                Long stageId = stage != null ? stage.getId() : null;
+                log.error("Echec de la synchronisation automatique de fin de stage. stageId={}", stageId, ex);
+            }
+        }
+    }
 
     @Override
     public Stage createStage(CreateStageRequest request) {
         Stage stage = StageMapper.toEntity(request);
-        stage.setStatut(StatutStage.EN_ATTENTE);
+        stage.setStatut(StatutStage.PAS_COMMENCE);
         stage.setStatutSujet(StatutValidation.EN_ATTENTE);
+        initialiserStatutsSections(stage);
 
         remplirRelations(stage, request);
+        appliquerStatutMetier(stage);
 
-        Stage savedStage = stageRepository.save(stage);
-        initialiserTrelloPourStage(savedStage);
-        Stage persistedStage = stageRepository.save(savedStage);
+        Stage persistedStage = enregistrerStageAvecDeclenchement(stage, null);
         notifierEncadrantsAffectes(persistedStage, null, null);
-        return persistedStage;
+        return enrichStageSurveyStatus(persistedStage);
     }
 
     @Override
     public Stage updateStage(Long id, CreateStageRequest request) {
         Stage stage = stageRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
+        StatutStage previousStatus = stage.getStatut();
         Long previousEncadrantAcademiqueId = stage.getEncadrantAcademique() != null ? stage.getEncadrantAcademique().getId() : null;
         Long previousEncadrantProfessionnelId = stage.getEncadrantProfessionnel() != null ? stage.getEncadrantProfessionnel().getId() : null;
 
@@ -71,35 +128,41 @@ public class StageServiceImpl implements StageService {
         stage.setNiveauSouhaite(request.getNiveauSouhaite());
         stage.setSujet(request.getSujet());
         remplirRelations(stage, request);
+        appliquerStatutMetier(stage);
 
-        Stage updatedStage = stageRepository.save(stage);
+        Stage updatedStage = enregistrerStageAvecDeclenchement(stage, previousStatus);
         notifierEncadrantsAffectes(updatedStage, previousEncadrantAcademiqueId, previousEncadrantProfessionnelId);
-        return updatedStage;
+        return enrichStageSurveyStatus(updatedStage);
     }
 
     @Override
     public Stage getStageById(Long id) {
         return stageRepository.findById(id)
+                .map(this::enrichStageSurveyStatus)
                 .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
     }
 
     @Override
     public List<Stage> getAllStages() {
-        return stageRepository.findAll();
+        return stageRepository.findAll().stream().map(this::enrichStageSurveyStatus).toList();
     }
 
     @Override
+    @Transactional
     public void deleteStage(Long id) {
-        if (!stageRepository.existsById(id)) {
-            throw new EntityNotFoundException("Stage introuvable");
-        }
-        stageRepository.deleteById(id);
+        Stage stage = stageRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
+
+        detachReunionParticipants(stage);
+
+        stageRepository.delete(stage);
     }
 
     @Override
     public Stage affecterEncadrantAcademique(Long stageId, Long encadrantAcademiqueId) {
         Stage stage = stageRepository.findById(stageId)
                 .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
+        StatutStage previousStatus = stage.getStatut();
         Long previousEncadrantAcademiqueId = stage.getEncadrantAcademique() != null ? stage.getEncadrantAcademique().getId() : null;
 
         EncadrantAcademique encadrant = encadrantAcademiqueRepository.findById(encadrantAcademiqueId)
@@ -108,40 +171,44 @@ public class StageServiceImpl implements StageService {
         synchroniserEncadrantAcademiqueStagiaire(stage.getStagiaire(), encadrant);
         synchroniserStagesActifsDuStagiaire(stage.getStagiaire(), encadrant);
         stage.setEncadrantAcademique(encadrant);
-        Stage savedStage = stageRepository.save(stage);
+        appliquerStatutMetier(stage);
+        Stage savedStage = enregistrerStageAvecDeclenchement(stage, previousStatus);
         notifierEncadrantAffecte(
                 savedStage,
                 previousEncadrantAcademiqueId,
                 savedStage.getEncadrantAcademique() != null ? savedStage.getEncadrantAcademique().getId() : null,
                 "academique"
         );
-        return savedStage;
+        return enrichStageSurveyStatus(savedStage);
     }
 
     @Override
     public Stage affecterEncadrantProfessionnel(Long stageId, Long encadrantProfessionnelId) {
         Stage stage = stageRepository.findById(stageId)
                 .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
+        StatutStage previousStatus = stage.getStatut();
         Long previousEncadrantProfessionnelId = stage.getEncadrantProfessionnel() != null ? stage.getEncadrantProfessionnel().getId() : null;
 
         EncadrantProfessionnel encadrant = encadrantProfessionnelRepository.findById(encadrantProfessionnelId)
                 .orElseThrow(() -> new EntityNotFoundException("EncadrantProfessionnel introuvable"));
 
         stage.setEncadrantProfessionnel(encadrant);
-        Stage savedStage = stageRepository.save(stage);
+        appliquerStatutMetier(stage);
+        Stage savedStage = enregistrerStageAvecDeclenchement(stage, previousStatus);
         notifierEncadrantAffecte(
                 savedStage,
                 previousEncadrantProfessionnelId,
                 savedStage.getEncadrantProfessionnel() != null ? savedStage.getEncadrantProfessionnel().getId() : null,
                 "professionnel"
         );
-        return savedStage;
+        return enrichStageSurveyStatus(savedStage);
     }
 
     @Override
     public Stage validerStageParEntreprise(Long stageId) {
         Stage stage = stageRepository.findById(stageId)
                 .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
+        StatutStage previousStatus = stage.getStatut();
 
         Utilisateur utilisateur = getAuthenticatedUtilisateur();
         if (utilisateur.getRole() != Role.RESPONSABLE_ENTREPRISE) {
@@ -150,24 +217,26 @@ public class StageServiceImpl implements StageService {
 
         ensureEntrepriseScope(stage, utilisateur);
 
-        stage.setStatut(StatutStage.VALIDE_PAR_ENTREPRISE);
-        Stage saved = stageRepository.save(stage);
+        appliquerStatutMetier(stage);
+        Stage saved = enregistrerStageAvecDeclenchement(stage, previousStatus);
         notifierValidationEntreprise(saved);
-        return saved;
+        return enrichStageSurveyStatus(saved);
     }
 
     @Override
     public Stage validerStageParResponsable(Long stageId) {
         Stage stage = stageRepository.findById(stageId)
                 .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
+        StatutStage previousStatus = stage.getStatut();
 
-        stage.setStatut(StatutStage.VALIDE_PAR_RESPONSABLE);
-        return stageRepository.save(stage);
+        appliquerStatutMetier(stage);
+        Stage saved = enregistrerStageAvecDeclenchement(stage, previousStatus);
+        return enrichStageSurveyStatus(saved);
     }
 
     @Override
     public List<Stage> getStagesByStagiaire(Long stagiaireId) {
-        return stageRepository.findByStagiaireId(stagiaireId);
+        return stageRepository.findByStagiaireId(stagiaireId).stream().map(this::enrichStageSurveyStatus).toList();
     }
 
     @Override
@@ -176,17 +245,17 @@ public class StageServiceImpl implements StageService {
         if (utilisateur.getRole() == Role.RESPONSABLE_ENTREPRISE) {
             ensureEntrepriseScope(entrepriseId, utilisateur);
         }
-        return stageRepository.findByEntrepriseId(entrepriseId);
+        return stageRepository.findByEntrepriseId(entrepriseId).stream().map(this::enrichStageSurveyStatus).toList();
     }
 
     @Override
     public List<Stage> getStagesByEncadrantAcademique(Long encadrantId) {
-        return stageRepository.findByEncadrantAcademiqueId(encadrantId);
+        return stageRepository.findByEncadrantAcademiqueId(encadrantId).stream().map(this::enrichStageSurveyStatus).toList();
     }
 
     @Override
     public List<Stage> getStagesByEncadrantProfessionnel(Long encadrantId) {
-        return stageRepository.findByEncadrantProfessionnelId(encadrantId);
+        return stageRepository.findByEncadrantProfessionnelId(encadrantId).stream().map(this::enrichStageSurveyStatus).toList();
     }
 
     @Override
@@ -195,7 +264,7 @@ public class StageServiceImpl implements StageService {
         if (utilisateur.getRole() != Role.ENCADRANT_ACADEMIQUE) {
             throw new RuntimeException("Acces refuse : role encadrant academique requis.");
         }
-        return stageRepository.findByEncadrantAcademiqueId(utilisateur.getId());
+        return stageRepository.findByEncadrantAcademiqueId(utilisateur.getId()).stream().map(this::enrichStageSurveyStatus).toList();
     }
 
     @Override
@@ -204,7 +273,7 @@ public class StageServiceImpl implements StageService {
         if (utilisateur.getRole() != Role.ENCADRANT_PROFESSIONNEL) {
             throw new RuntimeException("Acces refuse : role encadrant professionnel requis.");
         }
-        return stageRepository.findByEncadrantProfessionnelId(utilisateur.getId());
+        return stageRepository.findByEncadrantProfessionnelId(utilisateur.getId()).stream().map(this::enrichStageSurveyStatus).toList();
     }
 
     @Override
@@ -213,6 +282,7 @@ public class StageServiceImpl implements StageService {
         return stageRepository.findByStagiaireId(stagiaire.getId())
                 .stream()
                 .filter(stage -> stage.getStatut() != StatutStage.REFUSE)
+                .map(this::enrichStageSurveyStatus)
                 .toList();
     }
 
@@ -223,9 +293,9 @@ public class StageServiceImpl implements StageService {
         return stages.stream()
                 .filter(stage -> stage.getStatut() == StatutStage.EN_COURS)
                 .findFirst()
-                .or(() -> stages.stream().filter(stage -> stage.getStatut() == StatutStage.VALIDE_PAR_ENTREPRISE).findFirst())
-                .or(() -> stages.stream().filter(stage -> stage.getStatut() == StatutStage.VALIDE_PAR_RESPONSABLE).findFirst())
+                .or(() -> stages.stream().filter(stage -> stage.getStatut() == StatutStage.PAS_COMMENCE).findFirst())
                 .or(() -> stages.stream().filter(stage -> stage.getStatut() == StatutStage.TERMINE).findFirst())
+                .map(this::enrichStageSurveyStatus)
                 .orElseThrow(() -> new EntityNotFoundException("Aucun stage ne vous a encore ete affecte."));
     }
 
@@ -275,14 +345,14 @@ public class StageServiceImpl implements StageService {
         stage.setEncadrantAcademique(stagiaire.getEncadrantAcademique());
         stage.setOffreSource(offre);
         stage.setTuteurEntreprise(responsableEntreprise);
-        stage.setStatut(StatutStage.EN_ATTENTE);
+        stage.setStatut(StatutStage.PAS_COMMENCE);
         stage.setStatutSujet(StatutValidation.EN_ATTENTE);
+        initialiserStatutsSections(stage);
+        appliquerStatutMetier(stage);
 
-        Stage savedStage = stageRepository.save(stage);
-        initialiserTrelloPourStage(savedStage);
-        Stage persistedStage = stageRepository.save(savedStage);
+        Stage persistedStage = enregistrerStageAvecDeclenchement(stage, null);
         notifierEncadrantsAffectes(persistedStage, null, null);
-        return persistedStage;
+        return enrichStageSurveyStatus(persistedStage);
     }
 
     private void remplirRelations(Stage stage, CreateStageRequest request) {
@@ -453,7 +523,20 @@ public class StageServiceImpl implements StageService {
         return stage != null
                 && stage.getStatut() != null
                 && stage.getStatut() != StatutStage.REFUSE
+                && stage.getStatut() != StatutStage.ANNULE
                 && stage.getStatut() != StatutStage.TERMINE;
+    }
+
+    private void detachReunionParticipants(Stage stage) {
+        if (stage == null || stage.getReunions() == null) {
+            return;
+        }
+
+        stage.getReunions().forEach(reunion -> {
+            if (reunion.getParticipants() != null) {
+                reunion.getParticipants().clear();
+            }
+        });
     }
 
     private void notifierEncadrantsAffectes(Stage stage,
@@ -488,6 +571,7 @@ public class StageServiceImpl implements StageService {
     public Stage validerSujetParEncadrantAcademique(Long stageId, Long encadrantId) {
         Stage stage = stageRepository.findById(stageId)
                 .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
+        StatutStage previousStatus = stage.getStatut();
 
         EncadrantAcademique encadrant = encadrantAcademiqueRepository.findById(encadrantId)
                 .orElseThrow(() -> new EntityNotFoundException("EncadrantAcademique introuvable"));
@@ -498,11 +582,10 @@ public class StageServiceImpl implements StageService {
 
         stage.setSujetValidePar(encadrant);
         stage.setStatutSujet(StatutValidation.VALIDEE);
-        stage.setStatut(StatutStage.EN_COURS);
+        appliquerStatutMetier(stage);
 
-        Stage saved = stageRepository.save(stage);
-        genererConventionSiAbsente(saved);
-        return saved;
+        Stage saved = enregistrerStageAvecDeclenchement(stage, previousStatus);
+        return enrichStageSurveyStatus(saved);
     }
 
     @Override
@@ -535,9 +618,9 @@ public class StageServiceImpl implements StageService {
 
         stage.setSujetValidePar(encadrant);
         stage.setStatutSujet(StatutValidation.REFUSEE);
-        stage.setStatut(StatutStage.EN_ATTENTE);
+        stage.setStatut(StatutStage.REFUSE);
 
-        return stageRepository.save(stage);
+        return enrichStageSurveyStatus(stageRepository.save(stage));
     }
 
     @Override
@@ -555,6 +638,7 @@ public class StageServiceImpl implements StageService {
                 .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
 
         authorizeLinkedStageAccess(stage);
+        ensureStageEnCoursForTrello(stage);
 
         if (hasText(stage.getTrelloBoardId())) {
             if (!hasText(stage.getTrelloBoardUrl())) {
@@ -665,6 +749,339 @@ public class StageServiceImpl implements StageService {
         return value == null || value.get("id") == null ? null : String.valueOf(value.get("id"));
     }
 
+    private void appliquerStatutMetier(Stage stage) {
+        if (stage == null || stage.getStatut() == StatutStage.TERMINE
+                || stage.getStatut() == StatutStage.ANNULE
+                || stage.getStatut() == StatutStage.REFUSE) {
+            return;
+        }
+
+        resolveStageEndDate(stage);
+
+        if (hasReachedStageEnd(stage)) {
+            stage.setStatut(StatutStage.TERMINE);
+            return;
+        }
+
+        if (peutDeclencherStage(stage)) {
+            stage.setStatut(StatutStage.EN_COURS);
+            return;
+        }
+
+        stage.setStatut(StatutStage.PAS_COMMENCE);
+    }
+
+    private boolean peutDeclencherStage(Stage stage) {
+        return stage != null
+                && stage.getEncadrantProfessionnel() != null
+                && stage.getStatutSujet() == StatutValidation.VALIDEE;
+    }
+
+    private Stage enregistrerStageAvecDeclenchement(Stage stage, StatutStage previousStatus) {
+        resolveStageEndDate(stage);
+        initialiserStatutsSections(stage);
+        synchroniserEtatEspaces(stage);
+        appliquerStatutMetier(stage);
+
+        StatutStage oldStatus = previousStatus != null ? previousStatus : stage.getStatut();
+        Stage savedStage = stageRepository.save(stage);
+
+        if (savedStage.getStatut() == StatutStage.EN_COURS) {
+            if (!hasText(savedStage.getTrelloBoardId())) {
+                initialiserTrelloPourStage(savedStage);
+            }
+            if (oldStatus != StatutStage.EN_COURS) {
+                genererConventionSiAbsente(savedStage);
+            }
+            savedStage = stageRepository.save(savedStage);
+        }
+
+        savedStage = synchroniserAutomatisationReunionFinaleEtOuverture(savedStage);
+        enqueteSatisfactionService.creerEnquetesPourStageSiNecessaire(savedStage);
+
+        return savedStage;
+    }
+
+    private void initialiserStatutsSections(Stage stage) {
+        if (stage == null) {
+            return;
+        }
+        if (stage.getSectionEvaluationOuverte() == null) {
+            stage.setSectionEvaluationOuverte(Boolean.FALSE);
+        }
+        if (stage.getSectionEnqueteOuverte() == null) {
+            stage.setSectionEnqueteOuverte(Boolean.FALSE);
+        }
+        if (stage.getNotificationOuvertureEspacesEnvoyee() == null) {
+            stage.setNotificationOuvertureEspacesEnvoyee(Boolean.FALSE);
+        }
+    }
+
+    private void resolveStageEndDate(Stage stage) {
+        if (stage == null) {
+            return;
+        }
+
+        LocalDate computedDate = calculerDateFin(stage.getDateDebut(), stage.getDuree());
+        if (computedDate != null) {
+            stage.setDateFin(computedDate);
+        }
+
+        if (stage.getDateFin() == null) {
+            throw new IllegalStateException("La date de fin du stage est absente.");
+        }
+    }
+
+    private boolean hasReachedStageEnd(Stage stage) {
+        return stage != null
+                && stage.getDateFin() != null
+                && !LocalDate.now().isBefore(stage.getDateFin());
+    }
+
+    private Stage synchroniserAutomatisationReunionFinaleEtOuverture(Stage stage) {
+        if (stage == null) {
+            return null;
+        }
+
+        resolveStageEndDate(stage);
+        initialiserStatutsSections(stage);
+
+        boolean stageChanged = false;
+        ReunionFinale reunionFinale = ensureAutomaticFinalMeeting(stage);
+
+        if (hasReachedStageEnd(stage)) {
+            if (stage.getStatut() != StatutStage.TERMINE) {
+                stage.setStatut(StatutStage.TERMINE);
+                stageChanged = true;
+            }
+            if (ouvrirEspacesFinDeStage(stage)) {
+                stageChanged = true;
+            }
+            if (initialiserFicheEvaluationSiNecessaire(stage, reunionFinale)) {
+                stageChanged = true;
+            }
+        } else if (fermerEspacesAvantEcheance(stage)) {
+            stageChanged = true;
+        }
+
+        if (stageChanged) {
+            stage = stageRepository.save(stage);
+        }
+
+        if (Boolean.TRUE.equals(stage.getSectionEnqueteOuverte())) {
+            enqueteSatisfactionService.creerEnquetesPourStageSiNecessaire(stage);
+        }
+
+        if (shouldNotifyStageEndOpening(stage)) {
+            notifierOuvertureEspacesFinDeStage(stage);
+            stage.setNotificationOuvertureEspacesEnvoyee(Boolean.TRUE);
+            stage = stageRepository.save(stage);
+        }
+
+        return stage;
+    }
+
+    private ReunionFinale ensureAutomaticFinalMeeting(Stage stage) {
+        if (stage == null || stage.getId() == null) {
+            throw new EntityNotFoundException("Stage introuvable");
+        }
+
+        resolveStageEndDate(stage);
+
+        ReunionFinale reunionFinale = reunionFinaleRepository.findFirstByStageIdOrderByIdAsc(stage.getId())
+                .orElse(null);
+
+        if (reunionFinale == null) {
+            try {
+                ReunionFinale created = new ReunionFinale();
+                created.setStage(stage);
+                created.setCahierStage(stage.getCahierStage());
+                created.setNumReunion("RF-" + stage.getId());
+                created.setDate(stage.getDateFin());
+                created.setHeure(HEURE_REUNION_FINALE_PAR_DEFAUT);
+                created.setTypeEncadrantCreateur("SYSTEME");
+                created.setNomEncadrantCreateur("SYSTEME");
+                created.setParticipants(resolveAutomaticFinalMeetingParticipants(stage));
+                return reunionFinaleRepository.save(created);
+            } catch (RuntimeException ex) {
+                throw new IllegalStateException(
+                        "Erreur technique lors de la creation automatique de la reunion finale pour le stage " + stage.getId() + ".",
+                        ex
+                );
+            }
+        }
+
+        boolean changed = false;
+        if (!Objects.equals(reunionFinale.getDate(), stage.getDateFin())) {
+            reunionFinale.setDate(stage.getDateFin());
+            changed = true;
+        }
+        if (reunionFinale.getHeure() == null) {
+            reunionFinale.setHeure(HEURE_REUNION_FINALE_PAR_DEFAUT);
+            changed = true;
+        }
+
+        Set<Utilisateur> expectedParticipants = resolveAutomaticFinalMeetingParticipants(stage);
+        if (!Objects.equals(reunionFinale.getParticipants(), expectedParticipants)) {
+            reunionFinale.setParticipants(expectedParticipants);
+            changed = true;
+        }
+
+        if (changed) {
+            reunionFinale.setCahierStage(stage.getCahierStage());
+            reunionFinale = reunionFinaleRepository.save(reunionFinale);
+        }
+
+        return reunionFinale;
+    }
+
+    private Set<Utilisateur> resolveAutomaticFinalMeetingParticipants(Stage stage) {
+        Set<Utilisateur> participants = new LinkedHashSet<>();
+        if (stage == null) {
+            return participants;
+        }
+        if (stage.getStagiaire() != null) {
+            participants.add(stage.getStagiaire());
+        }
+        if (stage.getEncadrantAcademique() != null) {
+            participants.add(stage.getEncadrantAcademique());
+        }
+        if (stage.getEncadrantProfessionnel() != null) {
+            participants.add(stage.getEncadrantProfessionnel());
+        }
+        if (stage.getTuteurEntreprise() != null) {
+            participants.add(stage.getTuteurEntreprise());
+        }
+        return participants;
+    }
+
+    private boolean ouvrirEspacesFinDeStage(Stage stage) {
+        boolean changed = false;
+        if (!Boolean.TRUE.equals(stage.getSectionEvaluationOuverte())) {
+            stage.setSectionEvaluationOuverte(Boolean.TRUE);
+            changed = true;
+        }
+        if (!Boolean.TRUE.equals(stage.getSectionEnqueteOuverte())) {
+            stage.setSectionEnqueteOuverte(Boolean.TRUE);
+            changed = true;
+        }
+        return changed;
+    }
+
+    private boolean fermerEspacesAvantEcheance(Stage stage) {
+        boolean changed = false;
+        if (!Boolean.FALSE.equals(stage.getSectionEvaluationOuverte())) {
+            stage.setSectionEvaluationOuverte(Boolean.FALSE);
+            changed = true;
+        }
+        if (!Boolean.FALSE.equals(stage.getSectionEnqueteOuverte())) {
+            stage.setSectionEnqueteOuverte(Boolean.FALSE);
+            changed = true;
+        }
+        if (Boolean.TRUE.equals(stage.getNotificationOuvertureEspacesEnvoyee())) {
+            stage.setNotificationOuvertureEspacesEnvoyee(Boolean.FALSE);
+            changed = true;
+        }
+        return changed;
+    }
+
+    private void synchroniserEtatEspaces(Stage stage) {
+        if (stage == null) {
+            return;
+        }
+        if (hasReachedStageEnd(stage)) {
+            ouvrirEspacesFinDeStage(stage);
+            return;
+        }
+        fermerEspacesAvantEcheance(stage);
+    }
+
+    private boolean initialiserFicheEvaluationSiNecessaire(Stage stage, ReunionFinale reunionFinale) {
+        if (stage == null || stage.getId() == null || reunionFinale == null) {
+            return false;
+        }
+        if (stage.getStatut() != StatutStage.TERMINE) {
+            return false;
+        }
+        if (stage.getFicheEvaluation() != null || ficheEvaluationExiste(stage.getId())) {
+            return false;
+        }
+
+        FicheEvaluation ficheEvaluation = new FicheEvaluation();
+        ficheEvaluation.setStage(stage);
+        ficheEvaluation.setReunionFinale(reunionFinale);
+        ficheEvaluation.setPointFortEncadrantPro("");
+        ficheEvaluation.setAxeAmeliorationEncadrantPro("");
+        ficheEvaluation.setPointFortResponsableEntreprise("");
+        ficheEvaluation.setAxeAmeliorationResponsableEntreprise("");
+        ficheEvaluation.setNoteFinale(0.0);
+        stage.setFicheEvaluation(ficheEvaluation);
+        return true;
+    }
+
+    private boolean ficheEvaluationExiste(Long stageId) {
+        return stageId != null && ficheEvaluationRepository.existsByStageId(stageId);
+    }
+
+    private boolean shouldNotifyStageEndOpening(Stage stage) {
+        return stage != null
+                && Boolean.TRUE.equals(stage.getSectionEvaluationOuverte())
+                && Boolean.TRUE.equals(stage.getSectionEnqueteOuverte())
+                && !Boolean.TRUE.equals(stage.getNotificationOuvertureEspacesEnvoyee());
+    }
+
+    private void notifierOuvertureEspacesFinDeStage(Stage stage) {
+        if (stage == null || stage.getId() == null) {
+            return;
+        }
+
+        String titreStage = hasText(stage.getTitre()) ? stage.getTitre() : "votre stage";
+        String message = "Les espaces d'evaluation et d'enquete de satisfaction sont maintenant accessibles pour le stage "
+                + titreStage + ".";
+
+        for (Long destinataireId : resolveStageEndNotificationRecipients(stage)) {
+            notificationService.creerNotification(
+                    destinataireId,
+                    "Espaces de fin de stage ouverts",
+                    message,
+                    TYPE_NOTIFICATION_OUVERTURE_ESPACES,
+                    stage.getId(),
+                    "STAGE"
+            );
+        }
+    }
+
+    private Set<Long> resolveStageEndNotificationRecipients(Stage stage) {
+        Set<Long> destinataires = new LinkedHashSet<>();
+        if (stage.getStagiaire() != null && stage.getStagiaire().getId() != null) {
+            destinataires.add(stage.getStagiaire().getId());
+        }
+        if (stage.getEncadrantAcademique() != null && stage.getEncadrantAcademique().getId() != null) {
+            destinataires.add(stage.getEncadrantAcademique().getId());
+        }
+        if (stage.getEncadrantProfessionnel() != null && stage.getEncadrantProfessionnel().getId() != null) {
+            destinataires.add(stage.getEncadrantProfessionnel().getId());
+        }
+        if (stage.getTuteurEntreprise() != null && stage.getTuteurEntreprise().getId() != null) {
+            destinataires.add(stage.getTuteurEntreprise().getId());
+        }
+
+        List<Role> managementRoles = List.of(Role.RESPONSABLE_SERVICE_STAGES, Role.RESPONSABLE_UNIVERSITAIRE_STAGES);
+        for (Role role : managementRoles) {
+            utilisateurRepository.findByRole(role).stream()
+                    .map(Utilisateur::getId)
+                    .filter(Objects::nonNull)
+                    .forEach(destinataires::add);
+        }
+        return destinataires;
+    }
+
+    private void ensureStageEnCoursForTrello(Stage stage) {
+        if (stage == null || stage.getStatut() != StatutStage.EN_COURS) {
+            throw new IllegalStateException("Trello n'est disponible que pour un stage EN_COURS.");
+        }
+    }
+
     private boolean hasText(String value) {
         return value != null && !value.isBlank();
     }
@@ -700,5 +1117,231 @@ public class StageServiceImpl implements StageService {
         }
 
         return getResumeTrelloStage(stageId);
+    }
+
+    @Override
+    public StageEnqueteSectionStatusResponse getEnqueteSectionStatus(Long stageId) {
+        Stage stage = stageRepository.findById(stageId)
+                .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
+
+        authorizeSurveyActorsAndManagement(stage);
+
+        LocalDate dateReunionFinale = getDateReunionFinale(stage);
+        RapportEnqueteSatisfaction rapport = rapportEnqueteSatisfactionRepository.findByStageId(stageId).orElse(null);
+
+        return new StageEnqueteSectionStatusResponse(
+                stageId,
+                isSectionEnqueteOuverte(stage),
+                dateReunionFinale,
+                stage.getDateFin(),
+                rapport != null,
+                rapport != null ? rapport.getNomFichier() : null
+        );
+    }
+
+    @Override
+    public RapportEnqueteSatisfactionResponse uploadRapportEnquete(Long stageId, MultipartFile file) {
+        Stage stage = stageRepository.findById(stageId)
+                .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
+
+        Utilisateur utilisateur = getAuthenticatedUtilisateur();
+        ensureRepresentativeUploadAccess(stage, utilisateur);
+
+        if (!isSectionEnqueteOuverte(stage)) {
+            throw new AccessDeniedException("La section enquete de satisfaction sera accessible a partir du dernier jour du stage.");
+        }
+
+        if (file == null || file.isEmpty()) {
+            throw new IllegalArgumentException("Le fichier du rapport d'enquête est obligatoire.");
+        }
+
+        String originalFilename = sanitizeFilename(file.getOriginalFilename());
+        Path baseDir = Path.of(rapportEnqueteUploadDir).toAbsolutePath().normalize();
+        Path stageDir = baseDir.resolve("stage-" + stageId);
+
+        try {
+            Files.createDirectories(stageDir);
+            String storedFilename = System.currentTimeMillis() + "-" + originalFilename;
+            Path target = stageDir.resolve(storedFilename).normalize();
+            Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
+
+            RapportEnqueteSatisfaction rapport = rapportEnqueteSatisfactionRepository.findByStageId(stageId)
+                    .orElseGet(RapportEnqueteSatisfaction::new);
+            rapport.setStage(stage);
+            rapport.setUploadedBy(utilisateur);
+            rapport.setNomFichier(originalFilename);
+            rapport.setCheminFichier(target.toString());
+            rapport.setDateUpload(LocalDateTime.now());
+
+            RapportEnqueteSatisfaction saved = rapportEnqueteSatisfactionRepository.save(rapport);
+            notifierRapportEnqueteDisponible(stage);
+            return toRapportResponse(saved);
+        } catch (IOException ex) {
+            throw new RuntimeException("Impossible d'enregistrer le rapport d'enquête de satisfaction.", ex);
+        }
+    }
+
+    @Override
+    public Resource getRapportEnqueteResource(Long stageId) {
+        Stage stage = stageRepository.findById(stageId)
+                .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
+        authorizeSurveyActorsAndManagement(stage);
+
+        RapportEnqueteSatisfaction rapport = rapportEnqueteSatisfactionRepository.findByStageId(stageId)
+                .orElseThrow(() -> new EntityNotFoundException("Aucun rapport d'enquête de satisfaction n'est disponible pour ce stage."));
+
+        Path path = Path.of(rapport.getCheminFichier()).toAbsolutePath().normalize();
+        Resource resource = new PathResource(path);
+        if (!resource.exists() || !resource.isReadable()) {
+            throw new EntityNotFoundException("Le fichier du rapport d'enquête est introuvable.");
+        }
+
+        return resource;
+    }
+
+    @Override
+    public RapportEnqueteSatisfactionResponse getRapportEnqueteMetadata(Long stageId) {
+        Stage stage = stageRepository.findById(stageId)
+                .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
+        authorizeSurveyActorsAndManagement(stage);
+
+        RapportEnqueteSatisfaction rapport = rapportEnqueteSatisfactionRepository.findByStageId(stageId)
+                .orElseThrow(() -> new EntityNotFoundException("Aucun rapport d'enquête de satisfaction n'est disponible pour ce stage."));
+
+        return toRapportResponse(rapport);
+    }
+
+    private Stage enrichStageSurveyStatus(Stage stage) {
+        if (stage != null) {
+            stage.setSectionEvaluationOuverte(isSectionEvaluationOuverte(stage));
+            stage.setSectionEnqueteOuverte(isSectionEnqueteOuverte(stage));
+        }
+        return stage;
+    }
+
+    private boolean isSectionEvaluationOuverte(Stage stage) {
+        if (stage == null) {
+            return false;
+        }
+
+        if (stage.getSectionEvaluationOuverte() != null) {
+            return Boolean.TRUE.equals(stage.getSectionEvaluationOuverte());
+        }
+
+        return hasReachedStageEnd(stage);
+    }
+
+    private boolean isSectionEnqueteOuverte(Stage stage) {
+        if (stage == null) {
+            return false;
+        }
+
+        if (stage.getSectionEnqueteOuverte() != null) {
+            return Boolean.TRUE.equals(stage.getSectionEnqueteOuverte());
+        }
+
+        LocalDate dateReunionFinale = getDateReunionFinale(stage);
+        return dateReunionFinale != null && !LocalDate.now().isBefore(dateReunionFinale);
+    }
+
+    private LocalDate getDateReunionFinale(Stage stage) {
+        if (stage == null || stage.getId() == null) {
+            return null;
+        }
+
+        return reunionFinaleRepository.findFirstByStageIdOrderByIdAsc(stage.getId())
+                .map(ReunionFinale::getDate)
+                .orElse(stage.getDateFin());
+    }
+
+    private void authorizeSurveyActorsAndManagement(Stage stage) {
+        Utilisateur utilisateur = getAuthenticatedUtilisateur();
+        Long userId = utilisateur.getId();
+
+        boolean allowed = Set.of(
+                Role.ADMINISTRATEUR,
+                Role.RESPONSABLE_SERVICE_STAGES,
+                Role.RESPONSABLE_UNIVERSITAIRE_STAGES
+        ).contains(utilisateur.getRole())
+                || (stage.getStagiaire() != null && userId.equals(stage.getStagiaire().getId()))
+                || (stage.getEncadrantAcademique() != null && userId.equals(stage.getEncadrantAcademique().getId()))
+                || (stage.getEncadrantProfessionnel() != null && userId.equals(stage.getEncadrantProfessionnel().getId()))
+                || (utilisateur instanceof ResponsableEntreprise responsableEntreprise
+                    && responsableEntreprise.getEntreprise() != null
+                    && stage.getEntreprise() != null
+                    && Objects.equals(responsableEntreprise.getEntreprise().getId(), stage.getEntreprise().getId()));
+
+        if (!allowed) {
+            throw new AccessDeniedException("Vous n'êtes pas autorisé à consulter cette section d'enquête.");
+        }
+    }
+
+    private void ensureRepresentativeUploadAccess(Stage stage, Utilisateur utilisateur) {
+        if (!(utilisateur instanceof ResponsableEntreprise responsableEntreprise)
+                || utilisateur.getRole() != Role.RESPONSABLE_ENTREPRISE) {
+            throw new AccessDeniedException("Seul le représentant entreprise peut uploader le rapport d'enquête.");
+        }
+
+        Long userEntrepriseId = responsableEntreprise.getEntreprise() != null ? responsableEntreprise.getEntreprise().getId() : null;
+        Long stageEntrepriseId = stage.getEntreprise() != null ? stage.getEntreprise().getId() : null;
+        if (!Objects.equals(userEntrepriseId, stageEntrepriseId)) {
+            throw new AccessDeniedException("Vous ne pouvez pas uploader un rapport pour une autre entreprise.");
+        }
+    }
+
+    private RapportEnqueteSatisfactionResponse toRapportResponse(RapportEnqueteSatisfaction rapport) {
+        Utilisateur uploadedBy = rapport.getUploadedBy();
+        String uploadedByNomComplet = uploadedBy == null
+                ? null
+                : ((uploadedBy.getPrenom() == null ? "" : uploadedBy.getPrenom()) + " "
+                + (uploadedBy.getNom() == null ? "" : uploadedBy.getNom())).trim();
+
+        return new RapportEnqueteSatisfactionResponse(
+                rapport.getId(),
+                rapport.getNomFichier(),
+                rapport.getDateUpload(),
+                rapport.getStage() != null ? rapport.getStage().getId() : null,
+                uploadedBy != null ? uploadedBy.getId() : null,
+                uploadedByNomComplet == null || uploadedByNomComplet.isBlank() ? null : uploadedByNomComplet
+        );
+    }
+
+    private void notifierRapportEnqueteDisponible(Stage stage) {
+        java.util.LinkedHashSet<Long> destinataires = new java.util.LinkedHashSet<>();
+        if (stage.getStagiaire() != null && stage.getStagiaire().getId() != null) {
+            destinataires.add(stage.getStagiaire().getId());
+        }
+        if (stage.getEncadrantAcademique() != null && stage.getEncadrantAcademique().getId() != null) {
+            destinataires.add(stage.getEncadrantAcademique().getId());
+        }
+        if (stage.getEncadrantProfessionnel() != null && stage.getEncadrantProfessionnel().getId() != null) {
+            destinataires.add(stage.getEncadrantProfessionnel().getId());
+        }
+        if (stage.getTuteurEntreprise() != null && stage.getTuteurEntreprise().getId() != null) {
+            destinataires.add(stage.getTuteurEntreprise().getId());
+        }
+        utilisateurRepository.findByRole(Role.ADMINISTRATEUR).forEach(user -> destinataires.add(user.getId()));
+        utilisateurRepository.findByRole(Role.RESPONSABLE_SERVICE_STAGES).forEach(user -> destinataires.add(user.getId()));
+        utilisateurRepository.findByRole(Role.RESPONSABLE_UNIVERSITAIRE_STAGES).forEach(user -> destinataires.add(user.getId()));
+
+        for (Long destinataireId : destinataires) {
+            notificationService.creerNotification(
+                    destinataireId,
+                    "Rapport d'enquête disponible",
+                    "Le rapport d’enquête de satisfaction du stage est disponible.",
+                    "ENQUETE_SATISFACTION",
+                    stage.getId(),
+                    "STAGE"
+            );
+        }
+    }
+
+    private String sanitizeFilename(String originalFilename) {
+        if (originalFilename == null || originalFilename.isBlank()) {
+            return "rapport-enquete.pdf";
+        }
+
+        String normalized = Path.of(originalFilename).getFileName().toString().trim();
+        return normalized.isBlank() ? "rapport-enquete.pdf" : normalized.replaceAll("[\\r\\n]", "_");
     }
 }

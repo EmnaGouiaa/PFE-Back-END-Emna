@@ -5,6 +5,7 @@ import fsegs.pfebackendemnagouuiaa.entities.CahierStage;
 import fsegs.pfebackendemnagouuiaa.entities.ReunionHebdomadaire;
 import fsegs.pfebackendemnagouuiaa.entities.Role;
 import fsegs.pfebackendemnagouuiaa.entities.Stage;
+import fsegs.pfebackendemnagouuiaa.entities.StatutStage;
 import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
 import fsegs.pfebackendemnagouuiaa.mapper.ReunionHebdomadaireMapper;
 import fsegs.pfebackendemnagouuiaa.repository.CahierStageRepository;
@@ -46,12 +47,7 @@ public class ReunionHebdomadaireServiceImpl implements ReunionHebdomadaireServic
         entity.setStage(stage);
         validateMeetingWithinStagePeriod(stage, dto.getDate());
         validateNoDuplicateMeeting(stage.getId(), dto.getDate(), dto.getHeure(), null);
-
-        if (dto.getCahierStageId() != null) {
-            CahierStage cahierStage = cahierStageRepository.findById(dto.getCahierStageId())
-                    .orElseThrow(() -> new RuntimeException("CahierStage introuvable avec l'id : " + dto.getCahierStageId()));
-            entity.setCahierStage(cahierStage);
-        }
+        entity.setCahierStage(resolveOrCreateCahierStage(stage));
 
         if (dto.getParticipantIds() != null && !dto.getParticipantIds().isEmpty()) {
             Set<Utilisateur> participants = new HashSet<>(utilisateurRepository.findAllById(dto.getParticipantIds()));
@@ -65,7 +61,7 @@ public class ReunionHebdomadaireServiceImpl implements ReunionHebdomadaireServic
     @Override
     public ReunionHebdomadaireDto getById(Long id) {
         ReunionHebdomadaire entity = reunionHebdomadaireRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Réunion hebdomadaire introuvable avec l'id : " + id));
+                .orElseThrow(() -> new RuntimeException("Reunion hebdomadaire introuvable avec l'id : " + id));
 
         authorizeStageAccess(entity.getStage());
         return reunionHebdomadaireMapper.toDto(entity);
@@ -103,7 +99,7 @@ public class ReunionHebdomadaireServiceImpl implements ReunionHebdomadaireServic
     @Override
     public ReunionHebdomadaireDto update(Long id, ReunionHebdomadaireDto dto) {
         ReunionHebdomadaire entity = reunionHebdomadaireRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Réunion hebdomadaire introuvable avec l'id : " + id));
+                .orElseThrow(() -> new RuntimeException("Reunion hebdomadaire introuvable avec l'id : " + id));
 
         entity.setNumReunion(dto.getNumReunion());
         entity.setDate(dto.getDate());
@@ -127,13 +123,7 @@ public class ReunionHebdomadaireServiceImpl implements ReunionHebdomadaireServic
         validateMeetingWithinStagePeriod(stage, entity.getDate());
         validateNoDuplicateMeeting(stage.getId(), entity.getDate(), entity.getHeure(), entity.getId());
 
-        if (dto.getCahierStageId() != null) {
-            CahierStage cahierStage = cahierStageRepository.findById(dto.getCahierStageId())
-                    .orElseThrow(() -> new RuntimeException("CahierStage introuvable avec l'id : " + dto.getCahierStageId()));
-            entity.setCahierStage(cahierStage);
-        } else {
-            entity.setCahierStage(null);
-        }
+        entity.setCahierStage(resolveOrCreateCahierStage(stage));
 
         if (dto.getParticipantIds() != null) {
             Set<Utilisateur> participants = new HashSet<>(utilisateurRepository.findAllById(dto.getParticipantIds()));
@@ -147,21 +137,21 @@ public class ReunionHebdomadaireServiceImpl implements ReunionHebdomadaireServic
     @Override
     public void delete(Long id) {
         if (!reunionHebdomadaireRepository.existsById(id)) {
-            throw new RuntimeException("Réunion hebdomadaire introuvable avec l'id : " + id);
+            throw new RuntimeException("Reunion hebdomadaire introuvable avec l'id : " + id);
         }
 
-        throw new AccessDeniedException("La suppression d'une réunion de suivi est interdite.");
+        throw new AccessDeniedException("La suppression d'une reunion de suivi est interdite.");
     }
 
     private void validateMeetingWithinStagePeriod(Stage stage, LocalDate meetingDate) {
         if (stage.getDateDebut() == null || stage.getDateFin() == null) {
-            throw new RuntimeException("Les dates du stage sont obligatoires pour planifier une réunion.");
+            throw new RuntimeException("Les dates du stage sont obligatoires pour planifier une reunion.");
         }
 
         if (meetingDate == null
                 || meetingDate.isBefore(stage.getDateDebut())
                 || meetingDate.isAfter(stage.getDateFin())) {
-            throw new RuntimeException("La réunion hebdomadaire doit être planifiée pendant la période du stage.");
+            throw new RuntimeException("La reunion hebdomadaire doit etre planifiee pendant la periode du stage.");
         }
     }
 
@@ -175,23 +165,55 @@ public class ReunionHebdomadaireServiceImpl implements ReunionHebdomadaireServic
                 : reunionHebdomadaireRepository.existsByStageIdAndDateAndHeureAndIdNot(stageId, date, heure, currentMeetingId);
 
         if (exists) {
-            throw new RuntimeException("Une réunion existe déjà pour ce stage à cette date et cette heure.");
+            throw new RuntimeException("Une reunion existe deja pour ce stage a cette date et cette heure.");
         }
     }
 
     private void authorizeStageAccess(Stage stage) {
         if (stage == null || stage.getId() == null) {
-            throw new AccessDeniedException("Aucun stage n'est associé à cette réunion.");
+            throw new AccessDeniedException("Aucun stage n'est associe a cette reunion.");
         }
 
         Utilisateur utilisateur = jwtService.getAuthenticatedUtilisateur()
-                .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifié introuvable."));
+                .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifie introuvable."));
 
         if (utilisateur.getRole() == Role.STAGIAIRE) {
             Long stageOwnerId = stage.getStagiaire() != null ? stage.getStagiaire().getId() : null;
             if (stageOwnerId == null || !stageOwnerId.equals(utilisateur.getId())) {
-                throw new AccessDeniedException("Accès refusé à une réunion qui n'est pas liée à votre stage.");
+                throw new AccessDeniedException("Acces refuse a une reunion qui n'est pas liee a votre stage.");
             }
         }
+    }
+
+    private CahierStage resolveOrCreateCahierStage(Stage stage) {
+        if (stage == null || stage.getId() == null) {
+            return null;
+        }
+
+        if (stage.getCahierStage() != null) {
+            return stage.getCahierStage();
+        }
+
+        return cahierStageRepository.findByStageId(stage.getId())
+                .orElseGet(() -> {
+                    if (!canAutoCreateCahierStage(stage)) {
+                        return null;
+                    }
+
+                    CahierStage cahierStage = new CahierStage();
+                    cahierStage.setStage(stage);
+                    cahierStage.setDateGeneration(LocalDate.now());
+                    CahierStage saved = cahierStageRepository.save(cahierStage);
+                    stage.setCahierStage(saved);
+                    return saved;
+                });
+    }
+
+    private boolean canAutoCreateCahierStage(Stage stage) {
+        if (stage == null || stage.getStatut() == null) {
+            return false;
+        }
+
+        return stage.getStatut() == StatutStage.EN_COURS;
     }
 }

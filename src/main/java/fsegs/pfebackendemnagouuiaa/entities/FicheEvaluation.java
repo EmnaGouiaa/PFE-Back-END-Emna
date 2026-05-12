@@ -1,5 +1,6 @@
 package fsegs.pfebackendemnagouuiaa.entities;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -47,6 +48,10 @@ public class FicheEvaluation {
 
     @OneToMany(mappedBy = "ficheEvaluation", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<NoteAttribuee> notesAttribuees = new ArrayList<>();
+
+    @OneToMany(mappedBy = "ficheEvaluation", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnore
+    private List<Notification> notifications = new ArrayList<>();
 
     public Double calculerNoteFinale() {
         if (notesAttribuees == null || notesAttribuees.isEmpty()) {

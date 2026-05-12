@@ -7,11 +7,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 @Entity
 @Data
@@ -36,7 +33,7 @@ public class Entreprise {
     @Builder.Default
     @OneToMany(mappedBy = "entreprise", cascade = CascadeType.ALL, orphanRemoval= true)
     @JsonIgnore
-    private List<ResponsableEntreprise> tuteurs = new ArrayList<>();
+    private List<ResponsableEntreprise> responsables = new ArrayList<>();
 
     @Builder.Default
     @OneToMany(mappedBy = "entreprise", cascade = CascadeType.ALL, orphanRemoval= true)
@@ -46,21 +43,21 @@ public class Entreprise {
     @Builder.Default
     @OneToMany(mappedBy = "entreprise", cascade = CascadeType.ALL, orphanRemoval = true)
     @JsonIgnore
-    private Set<EncadrantProfessionnel> encadrantProfessionnels = new HashSet<>();
+    private List<EncadrantProfessionnel> encadrantsProfessionnels = new ArrayList<>();
 
     @Builder.Default
     @OneToMany(mappedBy = "entreprise",cascade=CascadeType.ALL,orphanRemoval= true)
     @JsonIgnore
     private List<Stage> stages = new ArrayList<>();
 
-    public void ajouterTuteur(ResponsableEntreprise tuteur) {
-        tuteur.setEntreprise(this);
-        this.tuteurs.add(tuteur);
+    public void ajouterResponsable(ResponsableEntreprise responsable) {
+        responsable.setEntreprise(this);
+        this.responsables.add(responsable);
     }
 
     public void ajouterEncadrantPro(EncadrantProfessionnel encadrant) {
         encadrant.setEntreprise(this);
-        this.encadrantProfessionnels.add(encadrant);
+        this.encadrantsProfessionnels.add(encadrant);
     }
 
     public void publierOffre(OffreStage offre) {

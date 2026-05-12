@@ -225,6 +225,7 @@ public class StagiaireServiceImpl implements StagiaireService {
         return stage != null
                 && stage.getStatut() != null
                 && stage.getStatut() != StatutStage.REFUSE
+                && stage.getStatut() != StatutStage.ANNULE
                 && stage.getStatut() != StatutStage.TERMINE;
     }
 
@@ -235,10 +236,9 @@ public class StagiaireServiceImpl implements StagiaireService {
 
         return switch (stage.getStatut()) {
             case EN_COURS -> 0;
-            case VALIDE_PAR_ENTREPRISE -> 1;
-            case VALIDE_PAR_RESPONSABLE -> 2;
-            case EN_ATTENTE -> 3;
+            case PAS_COMMENCE -> 1;
             case TERMINE -> 4;
+            case ANNULE -> 5;
             case REFUSE -> 5;
         };
     }

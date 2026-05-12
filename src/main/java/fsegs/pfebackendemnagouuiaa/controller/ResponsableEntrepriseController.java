@@ -6,6 +6,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -18,12 +19,14 @@ public class ResponsableEntrepriseController {
 
     private final ResponsableEntrepriseService responsableEntrepriseService;
 
+    @PreAuthorize("hasRole('ADMINISTRATEUR')")
     @PostMapping
     public ResponseEntity<ResponsableEntrepriseDto> create(@Valid @RequestBody ResponsableEntrepriseDto dto) {
         ResponsableEntrepriseDto created = responsableEntrepriseService.create(dto);
         return new ResponseEntity<>(created, HttpStatus.CREATED);
     }
 
+    @PreAuthorize("hasRole('ADMINISTRATEUR')")
     @PutMapping("/{id}")
     public ResponseEntity<ResponsableEntrepriseDto> update(@PathVariable Long id,
                                                            @Valid @RequestBody ResponsableEntrepriseDto dto) {
@@ -45,6 +48,7 @@ public class ResponsableEntrepriseController {
         return ResponseEntity.ok(responsableEntrepriseService.getByEntrepriseId(entrepriseId));
     }
 
+    @PreAuthorize("hasRole('ADMINISTRATEUR')")
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         responsableEntrepriseService.delete(id);

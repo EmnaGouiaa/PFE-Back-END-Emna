@@ -7,10 +7,17 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 public interface ReunionFinaleRepository extends JpaRepository<ReunionFinale, Long> {
 
     List<ReunionFinale> findByStageId(Long stageId);
+
+    Optional<ReunionFinale> findFirstByStageIdOrderByIdAsc(Long stageId);
+
+    Optional<ReunionFinale> findFirstByStageIdOrderByIdDesc(Long stageId);
+
+    boolean existsByStageId(Long stageId);
 
     @Query("""
             select rf

@@ -24,4 +24,5 @@ public interface UtilisateurService {
     List<UserResponse> getAllUsers();
     UserResponse deactivateUser(Long id);
     UserResponse activateUser(Long id);
+    void deleteUser(Long id);
 }

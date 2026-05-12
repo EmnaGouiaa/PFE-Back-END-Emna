@@ -55,6 +55,11 @@ public class OffreStage {
     @JsonIgnore
     private ResponsableServiceStages valideePar;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "stagiaire_affecte_id")
+    @JsonIgnore
+    private Stagiaire stagiaireAffecte;
+
     @OneToMany(mappedBy = "offreSource")
     @JsonIgnore
     private Set<Stage> stages = new HashSet<>();

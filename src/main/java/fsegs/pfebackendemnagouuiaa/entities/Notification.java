@@ -1,14 +1,17 @@
 package fsegs.pfebackendemnagouuiaa.entities;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
+import jakarta.persistence.CascadeType;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.OneToMany;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
@@ -17,9 +20,11 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Entity
-@Table(name = "notifications")
+@Table(name = "notification")
 @Data
 @Builder
 @NoArgsConstructor
@@ -30,39 +35,63 @@ public class Notification {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "utilisateur_id", nullable = false)
-    @JsonIgnore
-    private Utilisateur utilisateur;
-
     @Column(nullable = false)
     private String titre;
 
     @Column(nullable = false, length = 1200)
-    private String message;
+    private String body;
 
-    @Column(nullable = false)
-    private LocalDateTime creeLe;
+    @Column(name = "date_creation", nullable = false)
+    private LocalDateTime dateCreation;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "type_notification", nullable = false)
+    private TypeNotification typeNotification;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "stage_id")
+    private Stage stage;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "reunion_id")
+    private Reunion reunion;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "reunion_finale_id")
+    private ReunionFinale reunionFinale;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "reunion_hebdomadaire_id")
+    private ReunionHebdomadaire reunionHebdomadaire;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "cahier_stage_id")
+    private CahierStage cahierStage;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "fiche_evaluation_id")
+    private FicheEvaluation ficheEvaluation;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "convention_id")
+    private ConventionStage conventionStage;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "demande_id")
+    private DemandeCreationCompteEntreprise demandeCreationCompteEntreprise;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "parent_notification_id")
+    private Notification parentNotification;
 
     @Builder.Default
-    @Column(nullable = false)
-    private Boolean lu = false;
-
-    private LocalDateTime luLe;
-
-    private String type;
-
-    private Long entiteId;
-
-    private String entiteType;
+    @OneToMany(mappedBy = "notification", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<NotificationDestinataire> notificationDestinataires = new ArrayList<>();
 
     @PrePersist
     public void prePersist() {
-        if (creeLe == null) {
-            creeLe = LocalDateTime.now();
-        }
-        if (lu == null) {
-            lu = false;
+        if (dateCreation == null) {
+            dateCreation = LocalDateTime.now();
         }
     }
 }

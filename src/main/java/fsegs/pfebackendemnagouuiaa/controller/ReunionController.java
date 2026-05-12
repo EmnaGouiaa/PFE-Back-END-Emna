@@ -31,16 +31,19 @@ public class ReunionController {
         return ResponseEntity.ok(reunionService.update(id, dto));
     }
 
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/{id}")
     public ResponseEntity<ReunionDto> getById(@PathVariable Long id) {
         return ResponseEntity.ok(reunionService.getById(id));
     }
 
+    @PreAuthorize("isAuthenticated()")
     @GetMapping
     public ResponseEntity<List<ReunionDto>> getAll() {
         return ResponseEntity.ok(reunionService.getAll());
     }
 
+    @PreAuthorize("isAuthenticated()")
     @GetMapping("/stage/{stageId}")
     public ResponseEntity<List<ReunionDto>> getByStageId(@PathVariable Long stageId) {
         return ResponseEntity.ok(reunionService.getByStageId(stageId));
@@ -59,10 +62,17 @@ public class ReunionController {
     }
 
     @PreAuthorize("hasAnyRole('ENCADRANT_ACADEMIQUE','ENCADRANT_PROFESSIONNEL')")
-    @PatchMapping("/{id}/compte-rendu")
-    public ResponseEntity<ReunionDto> ajouterCompteRendu(@PathVariable Long id,
-                                                         @RequestBody String compteRendu) {
-        return ResponseEntity.ok(reunionService.ajouterCompteRendu(id, compteRendu));
+    @PutMapping("/{id}/observation")
+    public ResponseEntity<ReunionDto> updateObservation(@PathVariable Long id,
+                                                        @RequestBody String observation) {
+        return ResponseEntity.ok(reunionService.updateObservation(id, observation));
+    }
+
+    @PreAuthorize("hasRole('STAGIAIRE')")
+    @PutMapping("/{id}/compte-rendu")
+    public ResponseEntity<ReunionDto> updateCompteRendu(@PathVariable Long id,
+                                                        @RequestBody String compteRendu) {
+        return ResponseEntity.ok(reunionService.updateCompteRendu(id, compteRendu));
     }
 
     @PreAuthorize("isAuthenticated()")

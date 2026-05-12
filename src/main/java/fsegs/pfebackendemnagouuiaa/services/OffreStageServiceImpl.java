@@ -15,6 +15,7 @@ import fsegs.pfebackendemnagouuiaa.entities.StatutOffre;
 import fsegs.pfebackendemnagouuiaa.entities.Stagiaire;
 import fsegs.pfebackendemnagouuiaa.entities.StatutValidation;
 import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
+import fsegs.pfebackendemnagouuiaa.exception.TechnicalOperationException;
 import fsegs.pfebackendemnagouuiaa.repository.AbsenceRepository;
 import fsegs.pfebackendemnagouuiaa.repository.CahierStageRepository;
 import fsegs.pfebackendemnagouuiaa.repository.ConventionStageRepository;
@@ -86,37 +87,55 @@ public class OffreStageServiceImpl implements OffreStageService {
     public OffreStageResponse updateOffre(Long id, CreateOffreStageRequest request) {
         Utilisateur authenticatedUser = getAuthenticatedUser();
         OffreStage offre = findOffreById(id);
-        ensureOffreNotAssigned(offre, "modifier");
+        ensureRepresentativeCanAccessOffer(offre, authenticatedUser);
+        validateOfferRequest(request);
+        ensureOfferCanBeUpdated(offre, authenticatedUser);
 
-        offre.setTitre(request.getTitre());
-        offre.setDescriptionMissions(request.getDescriptionMissions());
-        offre.setDuree(request.getDuree());
-        offre.setProfilRecherche(request.getProfilRecherche());
-        offre.setDateDebutPrevue(request.getDateDebutPrevue());
-        offre.setMotifRefus(null);
-
-        if (isDirectOfferManagementRole(authenticatedUser)) {
-            offre.setStatut(StatutOffre.VALIDEE);
+        try {
+            offre.setTitre(normalizeRequiredField(request.getTitre(), "titre"));
+            offre.setDescriptionMissions(normalizeRequiredField(request.getDescriptionMissions(), "descriptionMissions"));
+            offre.setDuree(request.getDuree());
+            offre.setProfilRecherche(normalizeOptionalText(request.getProfilRecherche()));
+            offre.setDateDebutPrevue(request.getDateDebutPrevue());
             offre.setMotifRefus(null);
-            assignValidatedBy(offre, authenticatedUser);
-        } else if (offre.getStatut() == StatutOffre.REFUSEE) {
-            offre.setStatut(StatutOffre.EN_ATTENTE);
-            offre.setValideePar(null);
-            offre.setDatePublication(null);
+
+            applyOfferWorkflowOnUpdate(offre, authenticatedUser);
+            remplirRelations(offre, request, authenticatedUser);
+
+            return toResponse(offreStageRepository.save(offre));
+        } catch (TechnicalOperationException | IllegalArgumentException | IllegalStateException
+                 | AccessDeniedException | EntityNotFoundException ex) {
+            throw ex;
+        } catch (RuntimeException ex) {
+            log.error("Erreur technique lors de la modification de l'offre {}", id, ex);
+            throw new TechnicalOperationException(
+                    "Une erreur technique est survenue lors de l'enregistrement.",
+                    ex
+            );
         }
-
-        remplirRelations(offre, request, authenticatedUser);
-
-        return toResponse(offreStageRepository.save(offre));
     }
 
     @Override
     public OffreStageResponse getOffreById(Long id) {
-        return toResponse(findOffreById(id));
+        OffreStage offre = findOffreById(id);
+        ensureRepresentativeCanAccessOffer(offre, getOptionalAuthenticatedUser());
+        return toResponse(offre);
     }
 
     @Override
     public List<OffreStageResponse> getAllOffres() {
+        Utilisateur authenticatedUser = getOptionalAuthenticatedUser();
+        if (authenticatedUser != null && authenticatedUser.getRole() == Role.RESPONSABLE_ENTREPRISE) {
+            ResponsableEntreprise responsableEntreprise = getAuthenticatedResponsableEntreprise();
+            Long entrepriseId = requireEntrepriseId(responsableEntreprise);
+
+            return offreStageRepository.findByEntrepriseId(entrepriseId)
+                    .stream()
+                    .filter(this::isVisibleToCompanyRepresentative)
+                    .map(this::toResponse)
+                    .toList();
+        }
+
         return offreStageRepository.findAll()
                 .stream()
                 .map(this::toResponse)
@@ -142,9 +161,18 @@ public class OffreStageServiceImpl implements OffreStageService {
     public OffreStageResponse publierOffre(Long offreId, Long responsableEntrepriseId) {
         OffreStage offre = findOffreById(offreId);
         ensureOffreNotAssigned(offre, "publier");
+        Utilisateur authenticatedUser = getOptionalAuthenticatedUser();
+        ResponsableEntreprise responsable;
 
-        ResponsableEntreprise responsable = responsableEntrepriseRepository.findById(responsableEntrepriseId)
-                .orElseThrow(() -> new EntityNotFoundException("Responsable entreprise introuvable"));
+        if (authenticatedUser != null && authenticatedUser.getRole() == Role.RESPONSABLE_ENTREPRISE) {
+            responsable = getAuthenticatedResponsableEntreprise();
+            if (!canManageOffer(offre, responsable)) {
+                throw new AccessDeniedException("Vous ne pouvez voir que les offres de votre entreprise.");
+            }
+        } else {
+            responsable = responsableEntrepriseRepository.findById(responsableEntrepriseId)
+                    .orElseThrow(() -> new EntityNotFoundException("Responsable entreprise introuvable"));
+        }
 
         if (offre.getStatut() == StatutOffre.EN_ATTENTE) {
             throw new IllegalStateException("L'offre doit d'abord etre validee par le responsable universitaire.");
@@ -220,6 +248,7 @@ public class OffreStageServiceImpl implements OffreStageService {
     @Override
     public OffreStageResponse fermerOffre(Long offreId) {
         OffreStage offre = findOffreById(offreId);
+        ensureRepresentativeCanAccessOffer(offre, getOptionalAuthenticatedUser());
         ensureOffreNotAssigned(offre, "fermer");
         offre.setStatut(StatutOffre.FERMEE);
         return toResponse(offreStageRepository.save(offre));
@@ -227,8 +256,21 @@ public class OffreStageServiceImpl implements OffreStageService {
 
     @Override
     public List<OffreStageResponse> getOffresByEntreprise(Long entrepriseId) {
+        Utilisateur authenticatedUser = getOptionalAuthenticatedUser();
+        if (authenticatedUser != null && authenticatedUser.getRole() == Role.RESPONSABLE_ENTREPRISE) {
+            ResponsableEntreprise responsableEntreprise = getAuthenticatedResponsableEntreprise();
+            Long authenticatedEntrepriseId = requireEntrepriseId(responsableEntreprise);
+
+            if (entrepriseId == null || !authenticatedEntrepriseId.equals(entrepriseId)) {
+                throw new AccessDeniedException("Vous ne pouvez voir que les offres de votre entreprise.");
+            }
+        }
+
         return offreStageRepository.findByEntrepriseId(entrepriseId)
                 .stream()
+                .filter(offre -> authenticatedUser == null
+                        || authenticatedUser.getRole() != Role.RESPONSABLE_ENTREPRISE
+                        || isVisibleToCompanyRepresentative(offre))
                 .map(this::toResponse)
                 .toList();
     }
@@ -240,6 +282,7 @@ public class OffreStageServiceImpl implements OffreStageService {
         List<OffreStageResponse> offers = offreStageRepository.findByStatutInOrderByDatePublicationDescIdDesc(visibleStatuses)
                 .stream()
                 .filter(offre -> offre.getStatut() != StatutOffre.AFFECTEE)
+                .filter(offre -> offre.getStatut() != StatutOffre.REFUSEE)
                 .filter(offre -> !hasCreatedStage(offre))
                 .map(this::toResponse)
                 .toList();
@@ -281,7 +324,7 @@ public class OffreStageServiceImpl implements OffreStageService {
                     responsableAuthentifie.getEmail(),
                     responsableAuthentifie.getEntreprise() != null ? responsableAuthentifie.getEntreprise().getId() : null
             );
-            throw new AccessDeniedException("Vous ne pouvez affecter un etudiant qu'aux offres de votre entreprise.");
+            throw new AccessDeniedException("Vous ne pouvez affecter un étudiant qu’à une offre de votre entreprise.");
         }
 
         if (hasCreatedStage(offre) || offre.getStatut() == StatutOffre.AFFECTEE) {
@@ -294,31 +337,36 @@ public class OffreStageServiceImpl implements OffreStageService {
             throw new IllegalStateException("Offre non validee.");
         }
 
+        if (offre.getStatut() == StatutOffre.REFUSEE) {
+            throw new IllegalStateException("Offre refusée non disponible.");
+        }
+
         Stagiaire stagiaire = stagiaireResolutionService.findByEmail(normalizedEmail);
         log.info("Affectation etudiant - stagiaire resolu: id={}, email={}", stagiaire.getId(), stagiaire.getEmail());
         existsStageActifByStagiaire(stagiaire, offre);
 
-        Stage stage = stageService.creerStageDepuisOffrePourEntreprise(offre, stagiaire, responsableAuthentifie);
-
+        offre.setStagiaireAffecte(stagiaire);
         offre.setStatut(StatutOffre.AFFECTEE);
         offreStageRepository.save(offre);
         notificationService.notifierStageAffecte(
                 stagiaire.getId(),
-                stage.getId(),
-                stage.getTitre(),
+                null,
+                offre.getTitre(),
                 offre.getEntreprise() != null ? offre.getEntreprise().getNom() : null
         );
 
-        log.info("Offre {} affectee au stagiaire {} par responsable entreprise {}", offreId, stagiaire.getId(), responsableAuthentifie.getId());
+        log.info("Offre {} affectee au stagiaire {} sans declenchement du stage", offreId, stagiaire.getId());
 
         return AffecterEtudiantOffreResponse.builder()
-                .message("Stage cree avec succes.")
+                .message("Etudiant affecte a l'offre avec succes.")
                 .offreId(offre.getId())
                 .offreStatut(offre.getStatut().name())
-                .stageId(stage.getId())
-                .stageTitre(stage.getTitre())
+                .stageId(null)
+                .stageTitre(null)
                 .stagiaireId(stagiaire.getId())
                 .stagiaireEmail(stagiaire.getEmail())
+                .stageDeclenche(false)
+                .trelloEnabled(false)
                 .build();
     }
 
@@ -339,50 +387,41 @@ public class OffreStageServiceImpl implements OffreStageService {
             throw new AccessDeniedException("Action non autorisee pour cette offre.");
         }
 
-        Stage stage = stageRepository.findFirstByOffreSourceIdOrderByIdDesc(offreId)
-                .orElseThrow(() -> {
-                    log.warn("Annulation affectation impossible - aucune affectation active trouvee pour l'offre {}", offreId);
-                    return new IllegalStateException("Aucune affectation active trouvee pour cette offre.");
-                });
-
-        String cancellationMode;
-        if (canDeleteStagePhysically(stage)) {
-            stageRepository.delete(stage);
-            cancellationMode = "SUPPRESSION_PHYSIQUE";
-            log.info("Affectation annulee avec suppression physique du stage {} pour l'offre {}", stage.getId(), offreId);
-        } else {
-            cancellationMode = "ANNULATION_LOGIQUE";
-            stage.setStatut(StatutStage.REFUSE);
-            if (stage.getStatutSujet() == null) {
-                stage.setStatutSujet(StatutValidation.REFUSEE);
-            }
-            stage.setOffreSource(null);
-            stageRepository.save(stage);
-            log.info(
-                    "Affectation annulee logiquement pour le stage {} et l'offre {}. Causes: {}",
-                    stage.getId(),
-                    offreId,
-                    buildStageCancellationReasons(stage)
-            );
+        Stagiaire stagiaireAffecte = offre.getStagiaireAffecte();
+        if (stagiaireAffecte == null || stagiaireAffecte.getId() == null) {
+            log.warn("Annulation affectation impossible - aucune affectation active trouvee pour l'offre {}", offreId);
+            throw new IllegalStateException("Aucune affectation active trouvee pour cette offre.");
         }
 
+        Long stagiaireId = stagiaireAffecte.getId();
+        Stage linkedStage = findLatestStageForOffer(offreId);
+        if (linkedStage != null) {
+            if (linkedStage.getStatut() != StatutStage.PAS_COMMENCE) {
+                throw new IllegalStateException("Impossible d\u2019annuler l\u2019affectation : le stage est d\u00e9j\u00e0 d\u00e9clench\u00e9.");
+            }
+            linkedStage.setStatut(StatutStage.ANNULE);
+            stageRepository.save(linkedStage);
+        }
+
+        offre.setStagiaireAffecte(null);
         offre.setStatut(StatutOffre.VALIDEE);
         offre.setMotifRefus(null);
         offreStageRepository.save(offre);
+
+        log.info("Affectation stagiaire/offre annulee avant declenchement du stage. offreId={}, stagiaireId={}", offreId, stagiaireId);
 
         return AnnulerAffectationOffreResponse.builder()
                 .message("Affectation annulee avec succes.")
                 .offreId(offre.getId())
                 .offreStatut(offre.getStatut().name())
-                .stageId(stage.getId())
-                .stageStatut("SUPPRESSION_PHYSIQUE".equals(cancellationMode) ? "SUPPRIME" : StatutStage.REFUSE.name())
-                .modeAnnulation(cancellationMode)
+                .stageId(linkedStage != null ? linkedStage.getId() : null)
+                .stageStatut(linkedStage != null && linkedStage.getStatut() != null ? linkedStage.getStatut().name() : null)
+                .modeAnnulation(linkedStage != null ? "ANNULATION_STAGE" : "ANNULATION_AFFECTATION")
                 .build();
     }
 
     private void remplirRelations(OffreStage offre, CreateOffreStageRequest request, Utilisateur authenticatedUser) {
-        Entreprise entreprise = entrepriseRepository.findById(request.getEntrepriseId())
-                .orElseThrow(() -> new EntityNotFoundException("Entreprise introuvable"));
+        Entreprise entreprise = resolveEntrepriseForOfferRequest(request, authenticatedUser);
         offre.setEntreprise(entreprise);
 
         if (authenticatedUser.getRole() == Role.RESPONSABLE_ENTREPRISE && request.getPublieeParId() != null) {
@@ -413,6 +452,24 @@ public class OffreStageServiceImpl implements OffreStageService {
         offre.setValideePar(null);
     }
 
+    private void applyOfferWorkflowOnUpdate(OffreStage offre, Utilisateur authenticatedUser) {
+        if (isDirectOfferManagementRole(authenticatedUser)) {
+            offre.setStatut(StatutOffre.VALIDEE);
+            offre.setDatePublication(null);
+            offre.setMotifRefus(null);
+            assignValidatedBy(offre, authenticatedUser);
+            return;
+        }
+
+        if (offre.getStatut() == StatutOffre.VALIDEE
+                || offre.getStatut() == StatutOffre.PUBLIEE
+                || offre.getStatut() == StatutOffre.REFUSEE) {
+            offre.setStatut(StatutOffre.EN_ATTENTE);
+            offre.setValideePar(null);
+            offre.setDatePublication(null);
+        }
+    }
+
     private void assignValidatedBy(OffreStage offre, Utilisateur authenticatedUser) {
         if (authenticatedUser instanceof ResponsableServiceStages responsableServiceStages) {
             offre.setValideePar(responsableServiceStages);
@@ -433,9 +490,13 @@ public class OffreStageServiceImpl implements OffreStageService {
                 .orElseThrow(() -> new IllegalStateException("Utilisateur authentifie introuvable."));
     }
 
+    private Utilisateur getOptionalAuthenticatedUser() {
+        return jwtService.getAuthenticatedUtilisateur().orElse(null);
+    }
+
     private OffreStage findOffreById(Long id) {
         return offreStageRepository.findById(id)
-                .orElseThrow(() -> new EntityNotFoundException("Offre introuvable"));
+                .orElseThrow(() -> new EntityNotFoundException("Offre de stage introuvable."));
     }
 
     private OffreStageResponse toResponse(OffreStage offre) {
@@ -443,7 +504,9 @@ public class OffreStageServiceImpl implements OffreStageService {
     }
 
     private OffreStageResponse toResponse(OffreStage offre, String approvedByName) {
-        boolean stageCree = hasCreatedStage(offre);
+        Stage linkedStage = findLatestStageForOffer(offre.getId());
+        boolean stageCree = linkedStage != null;
+        boolean stageDeclenche = isStageDeclenche(linkedStage);
         return OffreStageResponse.builder()
                 .id(offre.getId())
                 .titre(offre.getTitre())
@@ -461,7 +524,9 @@ public class OffreStageServiceImpl implements OffreStageService {
                 .valideeParId(offre.getValideePar() != null ? offre.getValideePar().getId() : null)
                 .valideeParNomComplet(approvedByName)
                 .stageCree(stageCree)
-                .affectable(isOfferAssignable(offre, stageCree))
+                .stageDeclenche(stageDeclenche)
+                .trelloEnabled(linkedStage != null && linkedStage.getStatut() == StatutStage.EN_COURS)
+                .affectable(isOfferAssignable(offre, hasCreatedStage(offre)))
                 .build();
     }
 
@@ -480,6 +545,18 @@ public class OffreStageServiceImpl implements OffreStageService {
 
         String normalized = value.trim();
         return normalized.isEmpty() ? null : normalized;
+    }
+
+    private String normalizeOptionalText(String value) {
+        return normalizeText(value);
+    }
+
+    private String normalizeRequiredField(String value, String fieldName) {
+        String normalized = normalizeText(value);
+        if (normalized == null) {
+            throw new IllegalArgumentException("Tous les champs obligatoires doivent être renseignés.");
+        }
+        return normalized;
     }
 
     private boolean isOfferApprovalAuthorizedRole(Role role) {
@@ -512,9 +589,74 @@ public class OffreStageServiceImpl implements OffreStageService {
         return normalized;
     }
 
+    private Entreprise resolveEntrepriseForOfferRequest(CreateOffreStageRequest request, Utilisateur authenticatedUser) {
+        if (authenticatedUser != null && authenticatedUser.getRole() == Role.RESPONSABLE_ENTREPRISE) {
+            ResponsableEntreprise responsableEntreprise = getAuthenticatedResponsableEntreprise();
+            Entreprise entreprise = responsableEntreprise.getEntreprise();
+            if (entreprise == null || entreprise.getId() == null) {
+                throw new IllegalStateException("Aucune entreprise n'est rattachée au représentant connecté.");
+            }
+            return entreprise;
+        }
+
+        if (request.getEntrepriseId() == null) {
+            throw new EntityNotFoundException("Entreprise introuvable");
+        }
+
+        return entrepriseRepository.findById(request.getEntrepriseId())
+                .orElseThrow(() -> new EntityNotFoundException("Entreprise introuvable"));
+    }
+
     private void ensureOffreNotAssigned(OffreStage offre, String action) {
         if (offre.getStatut() == StatutOffre.AFFECTEE || hasCreatedStage(offre)) {
             throw new IllegalStateException("Cette offre est deja affectee et ne peut plus etre " + action + ".");
+        }
+    }
+
+    private void ensureOfferCanBeUpdated(OffreStage offre, Utilisateur authenticatedUser) {
+        ensureOffreNotAssigned(offre, "modifiee");
+
+        if (authenticatedUser == null || authenticatedUser.getRole() != Role.RESPONSABLE_ENTREPRISE) {
+            return;
+        }
+
+        if (offre.getStatut() == StatutOffre.FERMEE) {
+            throw new IllegalStateException("Cette offre n'est pas modifiable selon son statut actuel.");
+        }
+
+        if (offre.getStatut() == null) {
+            throw new IllegalStateException("Cette offre n'est pas modifiable selon son statut actuel.");
+        }
+    }
+
+    private void validateOfferRequest(CreateOffreStageRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("Tous les champs obligatoires doivent être renseignés.");
+        }
+
+        if (normalizeText(request.getTitre()) == null
+                || normalizeText(request.getDescriptionMissions()) == null
+                || request.getDateDebutPrevue() == null) {
+            throw new IllegalArgumentException("Tous les champs obligatoires doivent être renseignés.");
+        }
+
+        if (normalizeText(request.getTitre()).length() < 3
+                || normalizeText(request.getDescriptionMissions()).length() < 10) {
+            throw new IllegalArgumentException("Les données saisies sont invalides.");
+        }
+
+        Integer duree = request.getDuree();
+        if (duree != null && duree <= 0) {
+            throw new IllegalArgumentException("Les données saisies sont invalides.");
+        }
+
+        if (request.getDateDebutPrevue().isBefore(LocalDate.now())) {
+            throw new IllegalArgumentException("Les données saisies sont invalides.");
+        }
+
+        String profilRecherche = normalizeText(request.getProfilRecherche());
+        if (profilRecherche != null && profilRecherche.length() < 2) {
+            throw new IllegalArgumentException("Les données saisies sont invalides.");
         }
     }
 
@@ -524,8 +666,24 @@ public class OffreStageServiceImpl implements OffreStageService {
         }
     }
 
+    private void ensureRepresentativeCanAccessOffer(OffreStage offre, Utilisateur authenticatedUser) {
+        if (authenticatedUser == null || authenticatedUser.getRole() != Role.RESPONSABLE_ENTREPRISE) {
+            return;
+        }
+
+        ResponsableEntreprise responsableEntreprise = getAuthenticatedResponsableEntreprise();
+        if (!canManageOffer(offre, responsableEntreprise)) {
+            throw new AccessDeniedException("Action non autorisée sur cette offre.");
+        }
+    }
+
     private boolean hasCreatedStage(OffreStage offre) {
-        return offre.getId() != null && stageRepository.existsByOffreSourceId(offre.getId());
+        if (offre.getId() == null) {
+            return false;
+        }
+
+        Stage linkedStage = findLatestStageForOffer(offre.getId());
+        return linkedStage != null && linkedStage.getStatut() != StatutStage.ANNULE;
     }
 
     private boolean isOfferAssignable(OffreStage offre, boolean stageCree) {
@@ -544,6 +702,7 @@ public class OffreStageServiceImpl implements OffreStageService {
                 .stream()
                 .filter(stage -> stage.getStatut() != null)
                 .filter(stage -> stage.getStatut() != StatutStage.REFUSE)
+                .filter(stage -> stage.getStatut() != StatutStage.ANNULE)
                 .anyMatch(stage -> periodsOverlap(
                         requestedStart,
                         requestedEnd,
@@ -603,19 +762,48 @@ public class OffreStageServiceImpl implements OffreStageService {
         }
 
         Long offerEntrepriseId = offre.getEntreprise() != null ? offre.getEntreprise().getId() : null;
-        Long responsableEntrepriseId = responsable.getEntreprise() != null ? responsable.getEntreprise().getId() : null;
-        if (offerEntrepriseId != null && offerEntrepriseId.equals(responsableEntrepriseId)) {
-            return true;
+        Long responsableEntrepriseId = requireEntrepriseId(responsable);
+        return offerEntrepriseId != null && offerEntrepriseId.equals(responsableEntrepriseId);
+    }
+
+    private Stage findTriggeredStage(Long offreId, Long stagiaireId) {
+        if (offreId == null || stagiaireId == null) {
+            return null;
         }
 
-        if (offre.getPublieePar() != null && responsable.getId() != null && responsable.getId().equals(offre.getPublieePar().getId())) {
-            return true;
+        return stageRepository.findFirstByStagiaireIdAndOffreSourceId(stagiaireId, offreId)
+                .orElse(null);
+    }
+
+    private Stage findLatestStageForOffer(Long offreId) {
+        if (offreId == null) {
+            return null;
         }
 
-        return offre.getPublieePar() != null
-                && offre.getPublieePar().getEmail() != null
-                && responsable.getEmail() != null
-                && offre.getPublieePar().getEmail().equalsIgnoreCase(responsable.getEmail());
+        return stageRepository.findFirstByOffreSourceIdOrderByIdDesc(offreId)
+                .orElse(null);
+    }
+
+    private boolean isStageDeclenche(Stage stage) {
+        return stage != null
+                && stage.getStatut() != null
+                && stage.getStatut() != StatutStage.PAS_COMMENCE
+                && stage.getStatut() != StatutStage.ANNULE
+                && stage.getStatut() != StatutStage.REFUSE;
+    }
+
+    private boolean isVisibleToCompanyRepresentative(OffreStage offre) {
+        return offre != null && offre.getStatut() != StatutOffre.REFUSEE;
+    }
+
+    private Long requireEntrepriseId(ResponsableEntreprise responsable) {
+        Long entrepriseId = responsable != null && responsable.getEntreprise() != null
+                ? responsable.getEntreprise().getId()
+                : null;
+        if (entrepriseId == null) {
+            throw new IllegalStateException("Aucune entreprise n'est rattachée au représentant connecté.");
+        }
+        return entrepriseId;
     }
 
     private boolean canDeleteStagePhysically(Stage stage) {

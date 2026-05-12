@@ -1,12 +1,15 @@
 package fsegs.pfebackendemnagouuiaa.entities;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 
 @Entity
@@ -15,7 +18,7 @@ import java.util.Set;
 @Getter
 @Setter
 
-@ToString(exclude = {"participants", "stage"})
+@ToString(exclude = {"participants", "stage", "cahierStage"})
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @NoArgsConstructor
 @AllArgsConstructor
@@ -32,7 +35,7 @@ public class Reunion {
 
     private String observation;
 
-    @Column(columnDefinition = "TEXT")
+    @Column(length = 5000)
     private String compteRendu;
 
     private Long encadrantCreateurId;
@@ -45,6 +48,10 @@ public class Reunion {
     @JoinColumn(name = "stage_id", nullable = false)
     private Stage stage;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "cahier_stage_id")
+    private CahierStage cahierStage;
+
     @ManyToMany
     @JoinTable(
             name = "reunion_participants",
@@ -52,6 +59,10 @@ public class Reunion {
             inverseJoinColumns = @JoinColumn(name = "utilisateur_id")
     )
     private Set<Utilisateur> participants = new HashSet<>();
+
+    @OneToMany(mappedBy = "reunion", cascade = CascadeType.ALL, orphanRemoval = true)
+    @JsonIgnore
+    private List<Notification> notifications = new ArrayList<>();
 
 
 

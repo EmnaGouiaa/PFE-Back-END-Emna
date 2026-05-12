@@ -3,6 +3,7 @@ package fsegs.pfebackendemnagouuiaa.mapper;
 import fsegs.pfebackendemnagouuiaa.dto.ReunionDto;
 import fsegs.pfebackendemnagouuiaa.entities.Reunion;
 import fsegs.pfebackendemnagouuiaa.entities.ReunionFinale;
+import fsegs.pfebackendemnagouuiaa.entities.ReunionHebdomadaire;
 import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
 import fsegs.pfebackendemnagouuiaa.mapper.ReunionMapper;
 import org.springframework.stereotype.Component;
@@ -48,6 +49,13 @@ public class ReunionMapperImpl implements ReunionMapper {
                     .map(Utilisateur::getId)
                     .collect(Collectors.toSet());
             dto.setParticipantIds(participantIds);
+
+            Set<String> participantNoms = entity.getParticipants()
+                    .stream()
+                    .map(utilisateur -> ((utilisateur.getPrenom() != null ? utilisateur.getPrenom() : "") + " "
+                            + (utilisateur.getNom() != null ? utilisateur.getNom() : "")).trim())
+                    .collect(Collectors.toSet());
+            dto.setParticipantNoms(participantNoms);
         }
 
         return dto;
@@ -59,7 +67,7 @@ public class ReunionMapperImpl implements ReunionMapper {
             return null;
         }
 
-        Reunion entity = new Reunion();
+        Reunion entity = new ReunionHebdomadaire();
         entity.setId(dto.getId());
         entity.setNumReunion(dto.getNumReunion());
         entity.setDate(dto.getDate());

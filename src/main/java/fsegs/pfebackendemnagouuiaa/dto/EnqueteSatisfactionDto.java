@@ -20,4 +20,5 @@ public class EnqueteSatisfactionDto {
     private Boolean disponible;
     private Boolean dateAtteinte;
     private String message;
+    private Boolean sectionEnqueteOuverte;
 }

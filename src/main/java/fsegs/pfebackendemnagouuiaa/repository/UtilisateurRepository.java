@@ -25,4 +25,10 @@ public interface UtilisateurRepository extends JpaRepository<Utilisateur, Long> 
     boolean existsByEmailIgnoreCaseAndIdNot(String email, Long id);
     Optional<Utilisateur> findByTelephone(String telephone);
     Optional<Utilisateur> findByMatricule(String matricule);
+
+    @Query("select u from Utilisateur u where u.supprime = false or u.supprime is null")
+    List<Utilisateur> findVisibleUsers();
+
+    @Query("select u from Utilisateur u where u.id = :id and (u.supprime = false or u.supprime is null)")
+    Optional<Utilisateur> findVisibleUserById(@Param("id") Long id);
 }

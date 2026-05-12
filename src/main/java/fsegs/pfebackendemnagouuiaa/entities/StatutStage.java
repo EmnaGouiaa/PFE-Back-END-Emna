@@ -1,9 +1,8 @@
 package fsegs.pfebackendemnagouuiaa.entities;
 
 public enum StatutStage {
-    EN_ATTENTE,
-    VALIDE_PAR_ENTREPRISE,
-    VALIDE_PAR_RESPONSABLE,
+    PAS_COMMENCE,
+    ANNULE,
     REFUSE,
     EN_COURS,
     TERMINE

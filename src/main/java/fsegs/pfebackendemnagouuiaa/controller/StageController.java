@@ -1,13 +1,19 @@
 package fsegs.pfebackendemnagouuiaa.controller;
 
 import fsegs.pfebackendemnagouuiaa.dto.CreateStageRequest;
+import fsegs.pfebackendemnagouuiaa.dto.RapportEnqueteSatisfactionResponse;
+import fsegs.pfebackendemnagouuiaa.dto.StageEnqueteSectionStatusResponse;
 import fsegs.pfebackendemnagouuiaa.entities.Stage;
 import fsegs.pfebackendemnagouuiaa.services.StageService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
@@ -177,5 +183,36 @@ public class StageController {
     @GetMapping("/{stageId:\\d+}/generer-rapport")
     public ResponseEntity<Map<String, Object>> genererRapportStage(@PathVariable Long stageId) {
         return ResponseEntity.ok(stageService.genererRapportStage(stageId));
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/{stageId:\\d+}/enquete-section-status")
+    public ResponseEntity<StageEnqueteSectionStatusResponse> getEnqueteSectionStatus(@PathVariable Long stageId) {
+        return ResponseEntity.ok(stageService.getEnqueteSectionStatus(stageId));
+    }
+
+    @PreAuthorize("hasRole('RESPONSABLE_ENTREPRISE')")
+    @PostMapping(value = "/{stageId:\\d+}/rapport-enquete/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<RapportEnqueteSatisfactionResponse> uploadRapportEnquete(@PathVariable Long stageId,
+                                                                                   @RequestParam("file") MultipartFile file) {
+        return ResponseEntity.ok(stageService.uploadRapportEnquete(stageId, file));
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/{stageId:\\d+}/rapport-enquete/metadata")
+    public ResponseEntity<RapportEnqueteSatisfactionResponse> getRapportEnqueteMetadata(@PathVariable Long stageId) {
+        return ResponseEntity.ok(stageService.getRapportEnqueteMetadata(stageId));
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/{stageId:\\d+}/rapport-enquete")
+    public ResponseEntity<Resource> getRapportEnquete(@PathVariable Long stageId) {
+        RapportEnqueteSatisfactionResponse metadata = stageService.getRapportEnqueteMetadata(stageId);
+        Resource resource = stageService.getRapportEnqueteResource(stageId);
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + metadata.getNomFichier() + "\"")
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .body(resource);
     }
 }

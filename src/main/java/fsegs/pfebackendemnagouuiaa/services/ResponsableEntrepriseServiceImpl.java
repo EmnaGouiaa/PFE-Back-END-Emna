@@ -30,21 +30,17 @@ public class ResponsableEntrepriseServiceImpl implements ResponsableEntrepriseSe
         String email = contactUniquenessService.normalizeAndValidateRequiredEmail(dto.getEmail(), "emailResponsable");
         String telephone = contactUniquenessService.normalizeAndValidateOptionalPhone(dto.getTelephone(), "telephoneResponsable");
         contactUniquenessService.validateUserContactForCreate(email, telephone);
+        Entreprise entreprise = loadRequiredEntreprise(dto.getEntrepriseId());
 
         ResponsableEntreprise entity = responsableEntrepriseMapper.toEntity(dto);
         entity.setEmail(email);
         entity.setTelephone(telephone);
         entity.setRole(Role.RESPONSABLE_ENTREPRISE);
+        entity.setEntreprise(entreprise);
 
         String generatedPassword = credentialPolicyService.generateStrongPassword();
         credentialPolicyService.validatePasswordStrength(generatedPassword);
         entity.setMotDePasse(passwordEncoder.encode(generatedPassword));
-
-        if (dto.getEntrepriseId() != null) {
-            Entreprise entreprise = entrepriseRepository.findById(dto.getEntrepriseId())
-                    .orElseThrow(() -> new RuntimeException("Entreprise introuvable avec l'id : " + dto.getEntrepriseId()));
-            entity.setEntreprise(entreprise);
-        }
 
         ResponsableEntreprise saved = responsableEntrepriseRepository.save(entity);
         accountEmailService.sendAccountCreatedEmail(saved.getPrenom(), saved.getEmail(), generatedPassword);
@@ -59,6 +55,7 @@ public class ResponsableEntrepriseServiceImpl implements ResponsableEntrepriseSe
         String email = contactUniquenessService.normalizeAndValidateRequiredEmail(dto.getEmail(), "emailResponsable");
         String telephone = contactUniquenessService.normalizeAndValidateOptionalPhone(dto.getTelephone(), "telephoneResponsable");
         contactUniquenessService.validateUserContactForUpdate(id, email, telephone);
+        Entreprise entreprise = loadRequiredEntreprise(dto.getEntrepriseId());
 
         entity.setNom(dto.getNom());
         entity.setPrenom(dto.getPrenom());
@@ -67,14 +64,7 @@ public class ResponsableEntrepriseServiceImpl implements ResponsableEntrepriseSe
         entity.setPoste(dto.getPoste());
         entity.setService(dto.getService());
         entity.setRole(Role.RESPONSABLE_ENTREPRISE);
-
-        if (dto.getEntrepriseId() != null) {
-            Entreprise entreprise = entrepriseRepository.findById(dto.getEntrepriseId())
-                    .orElseThrow(() -> new RuntimeException("Entreprise introuvable avec l'id : " + dto.getEntrepriseId()));
-            entity.setEntreprise(entreprise);
-        } else {
-            entity.setEntreprise(null);
-        }
+        entity.setEntreprise(entreprise);
 
         ResponsableEntreprise updated = responsableEntrepriseRepository.save(entity);
         return responsableEntrepriseMapper.toDto(updated);
@@ -110,5 +100,14 @@ public class ResponsableEntrepriseServiceImpl implements ResponsableEntrepriseSe
                 .orElseThrow(() -> new RuntimeException("Responsable entreprise introuvable avec l'id : " + id));
 
         responsableEntrepriseRepository.delete(entity);
+    }
+
+    private Entreprise loadRequiredEntreprise(Long entrepriseId) {
+        if (entrepriseId == null) {
+            throw new IllegalArgumentException("Le responsable entreprise doit etre rattache a une entreprise.");
+        }
+
+        return entrepriseRepository.findById(entrepriseId)
+                .orElseThrow(() -> new RuntimeException("Entreprise introuvable avec l'id : " + entrepriseId));
     }
 }

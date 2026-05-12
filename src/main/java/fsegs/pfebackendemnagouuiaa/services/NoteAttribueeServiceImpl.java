@@ -5,13 +5,19 @@ import fsegs.pfebackendemnagouuiaa.entities.CleNoteAttribuee;
 import fsegs.pfebackendemnagouuiaa.entities.CritereEvaluation;
 import fsegs.pfebackendemnagouuiaa.entities.FicheEvaluation;
 import fsegs.pfebackendemnagouuiaa.entities.NoteAttribuee;
+import fsegs.pfebackendemnagouuiaa.entities.Role;
+import fsegs.pfebackendemnagouuiaa.entities.Stage;
+import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
 import fsegs.pfebackendemnagouuiaa.mapper.NoteAttribueeMapper;
 import fsegs.pfebackendemnagouuiaa.repository.CritereEvaluationRepository;
 import fsegs.pfebackendemnagouuiaa.repository.FicheEvaluationRepository;
 import fsegs.pfebackendemnagouuiaa.repository.NoteAttribueeRepository;
-import fsegs.pfebackendemnagouuiaa.services.NoteAttribueeService;
+import fsegs.pfebackendemnagouuiaa.security.JwtService;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -23,194 +29,204 @@ public class NoteAttribueeServiceImpl implements NoteAttribueeService {
     private final FicheEvaluationRepository ficheEvaluationRepository;
     private final CritereEvaluationRepository critereEvaluationRepository;
     private final NoteAttribueeMapper noteAttribueeMapper;
+    private final JwtService jwtService;
 
     @Override
+    @Transactional
     public NoteAttribueeDto create(NoteAttribueeDto dto) {
         validerDonnees(dto);
 
         FicheEvaluation fiche = ficheEvaluationRepository.findById(dto.getFicheEvaluationId())
-                .orElseThrow(() -> new RuntimeException("FicheEvaluation introuvable avec l'id : " + dto.getFicheEvaluationId()));
+                .orElseThrow(() -> new EntityNotFoundException("Fiche d'evaluation introuvable."));
+        ensureProfessionalSupervisorEditor(fiche);
 
         CritereEvaluation critere = critereEvaluationRepository.findById(dto.getCritereEvaluationId())
-                .orElseThrow(() -> new RuntimeException("CritereEvaluation introuvable avec l'id : " + dto.getCritereEvaluationId()));
+                .orElseThrow(() -> new EntityNotFoundException("Critere d'evaluation introuvable."));
 
         CleNoteAttribuee id = new CleNoteAttribuee(dto.getCritereEvaluationId(), dto.getFicheEvaluationId());
-
         if (noteAttribueeRepository.findById(id).isPresent()) {
-            throw new RuntimeException("Une note existe déjà pour cette fiche et ce critère");
+            throw new IllegalArgumentException("Une note existe deja pour cette fiche et ce critere.");
         }
         if (fiche.estVerrouillee()) {
-            throw new RuntimeException("Impossible d'ajouter une note : la fiche d'évaluation est verrouillée");
+            throw new IllegalStateException("Impossible d'ajouter une note : la fiche d'evaluation est verrouillee.");
         }
+
         NoteAttribuee entity = noteAttribueeMapper.toEntity(dto);
         entity.setId(id);
         entity.setFicheEvaluation(fiche);
         entity.setCritereEvaluation(critere);
+        entity.setBareme(dto.getBareme() == null ? 5 : dto.getBareme());
 
         NoteAttribuee saved = noteAttribueeRepository.save(entity);
+        recalculerNoteFinale(fiche);
         return noteAttribueeMapper.toDto(saved);
     }
 
     @Override
+    @Transactional(readOnly = true)
     public NoteAttribueeDto getById(Long ficheEvaluationId, Long critereEvaluationId) {
         CleNoteAttribuee id = new CleNoteAttribuee(critereEvaluationId, ficheEvaluationId);
-
         NoteAttribuee entity = noteAttribueeRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("NoteAttribuee introuvable"));
-
+                .orElseThrow(() -> new EntityNotFoundException("Note attribuee introuvable."));
+        ensureCanView(entity.getFicheEvaluation());
         return noteAttribueeMapper.toDto(entity);
     }
 
     @Override
+    @Transactional(readOnly = true)
     public List<NoteAttribueeDto> getAll() {
-        return noteAttribueeRepository.findAll()
-                .stream()
+        Utilisateur utilisateur = getAuthenticatedUtilisateur();
+        return noteAttribueeRepository.findAll().stream()
+                .filter(item -> canView(item.getFicheEvaluation(), utilisateur))
                 .map(noteAttribueeMapper::toDto)
                 .toList();
     }
 
     @Override
+    @Transactional(readOnly = true)
     public List<NoteAttribueeDto> getByFicheEvaluationId(Long ficheEvaluationId) {
-        return noteAttribueeRepository.findByFicheEvaluationId(ficheEvaluationId)
-                .stream()
+        FicheEvaluation fiche = ficheEvaluationRepository.findById(ficheEvaluationId)
+                .orElseThrow(() -> new EntityNotFoundException("Fiche d'evaluation introuvable."));
+        ensureCanView(fiche);
+        return noteAttribueeRepository.findByFicheEvaluationId(ficheEvaluationId).stream()
                 .map(noteAttribueeMapper::toDto)
                 .toList();
     }
 
     @Override
+    @Transactional(readOnly = true)
     public List<NoteAttribueeDto> getByCritereEvaluationId(Long critereEvaluationId) {
-        return noteAttribueeRepository.findByCritereEvaluationId(critereEvaluationId)
-                .stream()
+        Utilisateur utilisateur = getAuthenticatedUtilisateur();
+        return noteAttribueeRepository.findByCritereEvaluationId(critereEvaluationId).stream()
+                .filter(item -> canView(item.getFicheEvaluation(), utilisateur))
                 .map(noteAttribueeMapper::toDto)
                 .toList();
     }
 
     @Override
+    @Transactional
     public NoteAttribueeDto update(Long ficheEvaluationId, Long critereEvaluationId, NoteAttribueeDto dto) {
         CleNoteAttribuee id = new CleNoteAttribuee(critereEvaluationId, ficheEvaluationId);
-
         NoteAttribuee entity = noteAttribueeRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("NoteAttribuee introuvable"));
+                .orElseThrow(() -> new EntityNotFoundException("Note attribuee introuvable."));
 
+        ensureProfessionalSupervisorEditor(entity.getFicheEvaluation());
         if (entity.getFicheEvaluation() != null && entity.getFicheEvaluation().estVerrouillee()) {
-            throw new RuntimeException("Impossible de modifier une note : la fiche d'évaluation est verrouillée");
+            throw new IllegalStateException("Impossible de modifier une note : la fiche d'evaluation est verrouillee.");
         }
-
         if (dto.getFicheEvaluationId() != null && !dto.getFicheEvaluationId().equals(ficheEvaluationId)) {
-            throw new RuntimeException("La fiche d'évaluation d'une note ne peut pas être modifiée");
+            throw new IllegalArgumentException("La fiche d'evaluation d'une note ne peut pas etre modifiee.");
         }
-
         if (dto.getCritereEvaluationId() != null && !dto.getCritereEvaluationId().equals(critereEvaluationId)) {
-            throw new RuntimeException("Le critère d'évaluation d'une note ne peut pas être modifié");
+            throw new IllegalArgumentException("Le critere d'evaluation d'une note ne peut pas etre modifie.");
         }
 
-        if (dto.getPoids() == null) {
-            throw new RuntimeException("Le poids est obligatoire");
-        }
-
-        if (dto.getBareme() == null) {
-            throw new RuntimeException("Le barème est obligatoire");
-        }
-
-        if (dto.getNote() == null) {
-            throw new RuntimeException("La note est obligatoire");
-        }
-
-        if (dto.getPoids() <= 0) {
-            throw new RuntimeException("Le poids doit être supérieur à 0");
-        }
-
-        if (dto.getBareme() <= 0) {
-            throw new RuntimeException("Le barème doit être supérieur à 0");
-        }
-
-        if (dto.getNote() < 0) {
-            throw new RuntimeException("La note ne peut pas être négative");
-        }
-
-        if (dto.getNote() > dto.getBareme()) {
-            throw new RuntimeException("La note ne peut pas dépasser le barème");
-        }
-
+        validerDonnees(dto);
         entity.setPoids(dto.getPoids());
-        entity.setBareme(dto.getBareme());
+        entity.setBareme(dto.getBareme() == null ? 5 : dto.getBareme());
         entity.setNote(dto.getNote());
         entity.setCommentaire(dto.getCommentaire());
 
         NoteAttribuee updated = noteAttribueeRepository.save(entity);
+        recalculerNoteFinale(entity.getFicheEvaluation());
         return noteAttribueeMapper.toDto(updated);
     }
+
     @Override
+    @Transactional
     public void delete(Long ficheEvaluationId, Long critereEvaluationId) {
         CleNoteAttribuee id = new CleNoteAttribuee(critereEvaluationId, ficheEvaluationId);
-
         NoteAttribuee entity = noteAttribueeRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("NoteAttribuee introuvable"));
+                .orElseThrow(() -> new EntityNotFoundException("Note attribuee introuvable."));
+
+        ensureProfessionalSupervisorEditor(entity.getFicheEvaluation());
+        if (entity.getFicheEvaluation() != null && entity.getFicheEvaluation().estVerrouillee()) {
+            throw new IllegalStateException("Impossible de supprimer une note : la fiche d'evaluation est verrouillee.");
+        }
 
         noteAttribueeRepository.delete(entity);
+        recalculerNoteFinale(entity.getFicheEvaluation());
     }
+
     private void validerDonnees(NoteAttribueeDto dto) {
+        if (dto == null) {
+            throw new IllegalArgumentException("Les donnees de note sont obligatoires.");
+        }
         if (dto.getFicheEvaluationId() == null) {
-            throw new RuntimeException("La fiche d'évaluation est obligatoire");
+            throw new IllegalArgumentException("La fiche d'evaluation est obligatoire.");
         }
-
         if (dto.getCritereEvaluationId() == null) {
-            throw new RuntimeException("Le critère d'évaluation est obligatoire");
+            throw new IllegalArgumentException("Le critere d'evaluation est obligatoire.");
         }
-
-        if (dto.getPoids() == null) {
-            throw new RuntimeException("Le poids est obligatoire");
+        if (dto.getPoids() == null || dto.getPoids() <= 0) {
+            throw new IllegalArgumentException("Le coefficient doit etre superieur a zero.");
         }
-
         if (dto.getBareme() == null) {
-            throw new RuntimeException("Le barème est obligatoire");
+            dto.setBareme(5);
         }
-
-        if (dto.getNote() == null) {
-            throw new RuntimeException("La note est obligatoire");
-        }
-
-        if (dto.getPoids() <= 0) {
-            throw new RuntimeException("Le poids doit être supérieur à 0");
-        }
-
         if (dto.getBareme() <= 0) {
-            throw new RuntimeException("Le barème doit être supérieur à 0");
+            throw new IllegalArgumentException("Le bareme doit etre superieur a zero.");
         }
-
+        if (dto.getNote() == null) {
+            throw new IllegalArgumentException("La note est obligatoire.");
+        }
         if (dto.getNote() < 0) {
-            throw new RuntimeException("La note ne peut pas être négative");
+            throw new IllegalArgumentException("La note ne peut pas etre negative.");
         }
-
         if (dto.getNote() > dto.getBareme()) {
-            throw new RuntimeException("La note ne peut pas dépasser le barème");
+            throw new IllegalArgumentException("La note ne peut pas depasser le bareme.");
         }
     }
-    private void validerValeursNote(Integer poids, Integer bareme, Integer note) {
-        if (poids == null) {
-            throw new RuntimeException("Le poids est obligatoire");
-        }
-        if (bareme == null) {
-            throw new RuntimeException("Le barème est obligatoire");
-        }
-        if (note == null) {
-            throw new RuntimeException("La note est obligatoire");
-        }
-        if (poids <= 0) {
-            throw new RuntimeException("Le poids doit être supérieur à 0");
-        }
-        if (bareme <= 0) {
-            throw new RuntimeException("Le barème doit être supérieur à 0");
-        }
-        if (note < 0) {
-            throw new RuntimeException("La note ne peut pas être négative");
-        }
-        if (note > bareme) {
-            throw new RuntimeException("La note ne peut pas dépasser le barème");
-        }
-    }
+
     private void recalculerNoteFinale(FicheEvaluation fiche) {
+        if (fiche == null) {
+            return;
+        }
         fiche.setNoteFinale(fiche.calculerNoteFinale());
         ficheEvaluationRepository.save(fiche);
+    }
+
+    private void ensureProfessionalSupervisorEditor(FicheEvaluation fiche) {
+        Utilisateur utilisateur = getAuthenticatedUtilisateur();
+        Stage stage = fiche == null ? null : fiche.getStage();
+        boolean authorized = utilisateur.getRole() == Role.ENCADRANT_PROFESSIONNEL
+                && stage != null
+                && stage.getEncadrantProfessionnel() != null
+                && stage.getEncadrantProfessionnel().getId().equals(utilisateur.getId());
+        if (!authorized) {
+            throw new AccessDeniedException("Seul l'encadrant professionnel affecte au stage peut modifier les notes.");
+        }
+    }
+
+    private void ensureCanView(FicheEvaluation fiche) {
+        if (!canView(fiche, getAuthenticatedUtilisateur())) {
+            throw new AccessDeniedException("Acces non autorise a cette fiche d'evaluation.");
+        }
+    }
+
+    private boolean canView(FicheEvaluation fiche, Utilisateur utilisateur) {
+        if (fiche == null || utilisateur == null || fiche.getStage() == null) {
+            return false;
+        }
+        Stage stage = fiche.getStage();
+        return switch (utilisateur.getRole()) {
+            case ADMINISTRATEUR,
+                    RESPONSABLE_SERVICE_STAGES,
+                    RESPONSABLE_UNIVERSITAIRE_STAGES -> true;
+            case ENCADRANT_PROFESSIONNEL -> stage.getEncadrantProfessionnel() != null
+                    && stage.getEncadrantProfessionnel().getId().equals(utilisateur.getId());
+            case RESPONSABLE_ENTREPRISE -> stage.getTuteurEntreprise() != null
+                    && stage.getTuteurEntreprise().getId().equals(utilisateur.getId());
+            case ENCADRANT_ACADEMIQUE -> stage.getEncadrantAcademique() != null
+                    && stage.getEncadrantAcademique().getId().equals(utilisateur.getId());
+            case STAGIAIRE -> stage.getStagiaire() != null
+                    && stage.getStagiaire().getId().equals(utilisateur.getId());
+            default -> false;
+        };
+    }
+
+    private Utilisateur getAuthenticatedUtilisateur() {
+        return jwtService.getAuthenticatedUtilisateur()
+                .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifie introuvable."));
     }
 }

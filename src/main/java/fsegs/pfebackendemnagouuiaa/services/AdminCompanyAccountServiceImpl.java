@@ -2,6 +2,9 @@ package fsegs.pfebackendemnagouuiaa.services;
 
 import fsegs.pfebackendemnagouuiaa.dto.AdminCompanyAccountRequest;
 import fsegs.pfebackendemnagouuiaa.dto.AdminCompanyAccountResponse;
+import fsegs.pfebackendemnagouuiaa.dto.CreateRepresentantEntrepriseRequest;
+import fsegs.pfebackendemnagouuiaa.dto.EntrepriseDto;
+import fsegs.pfebackendemnagouuiaa.dto.RepresentantEntrepriseResponse;
 import fsegs.pfebackendemnagouuiaa.entities.Entreprise;
 import fsegs.pfebackendemnagouuiaa.entities.ResponsableEntreprise;
 import fsegs.pfebackendemnagouuiaa.entities.Role;
@@ -10,6 +13,7 @@ import fsegs.pfebackendemnagouuiaa.exception.AccountEmailDeliveryException;
 import fsegs.pfebackendemnagouuiaa.exception.DuplicateFieldException;
 import fsegs.pfebackendemnagouuiaa.repository.EntrepriseRepository;
 import fsegs.pfebackendemnagouuiaa.repository.ResponsableEntrepriseRepository;
+import fsegs.pfebackendemnagouuiaa.services.EntrepriseService;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,6 +37,7 @@ public class AdminCompanyAccountServiceImpl implements AdminCompanyAccountServic
     private final AccountEmailService accountEmailService;
     private final PasswordEncoder passwordEncoder;
     private final PlatformTransactionManager transactionManager;
+    private final EntrepriseService entrepriseService;
 
     @Override
     public List<AdminCompanyAccountResponse> getAll() {
@@ -45,69 +50,9 @@ public class AdminCompanyAccountServiceImpl implements AdminCompanyAccountServic
 
     @Override
     public AdminCompanyAccountResponse create(AdminCompanyAccountRequest request) {
-        NormalizedCompanyAccountRequest normalized = normalizeForCreate(request);
-        String generatedPassword = generatePassword();
-
-        PersistedCompanyAccount persisted;
-        try {
-            persisted = transactionTemplate().execute(status -> {
-                Entreprise savedEntreprise = entrepriseRepository.saveAndFlush(Entreprise.builder()
-                        .nom(normalized.nomEntreprise())
-                        .email(normalized.emailEntreprise())
-                        .telephone(normalized.telephoneEntreprise())
-                        .adresse(normalized.adresse())
-                        .secteurActivite(normalized.secteurActivite())
-                        .build());
-
-                ResponsableEntreprise savedRepresentant = responsableEntrepriseRepository.saveAndFlush(ResponsableEntreprise.builder()
-                        .nom(normalized.nomResponsable())
-                        .prenom(normalized.prenomResponsable())
-                        .email(normalized.emailResponsable())
-                        .telephone(normalized.telephoneResponsable())
-                        .motDePasse(passwordEncoder.encode(generatedPassword))
-                        .doitChangerMotDePasse(true)
-                        .role(Role.RESPONSABLE_ENTREPRISE)
-                        .actif(true)
-                        .entreprise(savedEntreprise)
-                        .build());
-
-                return new PersistedCompanyAccount(savedEntreprise, savedRepresentant, generatedPassword, true);
-            });
-        } catch (RuntimeException ex) {
-            log.error(
-                    "Echec de sauvegarde du compte entreprise. entreprise={}, emailResponsable={}",
-                    safeValue(request.getNomEntreprise()),
-                    safeValue(request.getEmailResponsable()),
-                    ex
-            );
-            throw new AccountCreationException("Echec de la creation du compte.", ex);
-        }
-
-        if (persisted == null) {
-            log.error(
-                    "Echec de creation du compte entreprise sans exception explicite. entreprise={}, emailResponsable={}",
-                    safeValue(request.getNomEntreprise()),
-                    safeValue(request.getEmailResponsable())
-            );
-            throw new AccountCreationException("Echec de la creation du compte.");
-        }
-
-        log.info(
-                "Compte entreprise enregistre en base. entrepriseId={}, representantId={}, emailResponsable={}",
-                persisted.entreprise().getId(),
-                persisted.representant().getId(),
-                persisted.representant().getEmail()
+        throw new IllegalArgumentException(
+                "La creation du representant doit se faire depuis une entreprise existante."
         );
-
-        AdminCompanyAccountResponse response = toResponse(persisted.entreprise(), persisted.representant());
-        applyEmailOutcome(
-                response,
-                persisted.representant(),
-                persisted.generatedPassword(),
-                "Compte cree et email envoye avec succes.",
-                "Compte cree, mais l'envoi de l'email a echoue."
-        );
-        return response;
     }
 
     @Override
@@ -118,8 +63,8 @@ public class AdminCompanyAccountServiceImpl implements AdminCompanyAccountServic
         ResponsableEntreprise representant = resolveRepresentant(entrepriseId, request.getRepresentantId());
         NormalizedCompanyAccountRequest normalized = normalizeForUpdate(request, entrepriseId, representant != null ? representant.getId() : null);
 
-        boolean createdRepresentative = representant == null;
-        String generatedPassword = createdRepresentative ? generatePassword() : null;
+        boolean createdRepresentative = false;
+        String generatedPassword = null;
 
         PersistedCompanyAccount persisted;
         try {
@@ -132,24 +77,16 @@ public class AdminCompanyAccountServiceImpl implements AdminCompanyAccountServic
                 entreprise.setSecteurActivite(normalized.secteurActivite());
                 Entreprise updatedEntreprise = entrepriseRepository.saveAndFlush(entreprise);
 
-                ResponsableEntreprise representantToSave = existingRepresentant;
-                if (representantToSave == null) {
-                    representantToSave = ResponsableEntreprise.builder()
-                            .motDePasse(passwordEncoder.encode(generatedPassword))
-                            .doitChangerMotDePasse(true)
-                            .role(Role.RESPONSABLE_ENTREPRISE)
-                            .actif(true)
-                            .entreprise(updatedEntreprise)
-                            .build();
+                ResponsableEntreprise savedRepresentant = null;
+                if (existingRepresentant != null) {
+                    existingRepresentant.setNom(normalized.nomResponsable());
+                    existingRepresentant.setPrenom(normalized.prenomResponsable());
+                    existingRepresentant.setEmail(normalized.emailResponsable());
+                    existingRepresentant.setTelephone(normalized.telephoneResponsable());
+                    existingRepresentant.setRole(Role.RESPONSABLE_ENTREPRISE);
+                    existingRepresentant.setEntreprise(updatedEntreprise);
+                    savedRepresentant = responsableEntrepriseRepository.saveAndFlush(existingRepresentant);
                 }
-
-                representantToSave.setNom(normalized.nomResponsable());
-                representantToSave.setPrenom(normalized.prenomResponsable());
-                representantToSave.setEmail(normalized.emailResponsable());
-                representantToSave.setTelephone(normalized.telephoneResponsable());
-                representantToSave.setRole(Role.RESPONSABLE_ENTREPRISE);
-                representantToSave.setEntreprise(updatedEntreprise);
-                ResponsableEntreprise savedRepresentant = responsableEntrepriseRepository.saveAndFlush(representantToSave);
 
                 return new PersistedCompanyAccount(updatedEntreprise, savedRepresentant, generatedPassword, createdRepresentative);
             });
@@ -174,7 +111,7 @@ public class AdminCompanyAccountServiceImpl implements AdminCompanyAccountServic
 
         AdminCompanyAccountResponse response = toResponse(persisted.entreprise(), persisted.representant());
 
-        if (persisted.createdRepresentative() && persisted.generatedPassword() != null) {
+        if (persisted.createdRepresentative() && persisted.representant() != null && persisted.generatedPassword() != null) {
             applyEmailOutcome(
                     response,
                     persisted.representant(),
@@ -185,6 +122,47 @@ public class AdminCompanyAccountServiceImpl implements AdminCompanyAccountServic
         }
 
         return response;
+    }
+
+    @Override
+    public List<EntrepriseDto> getAllEntreprisesForAdmin() {
+        return entrepriseService.getAll();
+    }
+
+    @Override
+    public RepresentantEntrepriseResponse createRepresentantEntreprise(CreateRepresentantEntrepriseRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("La requête de création du représentant est obligatoire.");
+        }
+
+        String nom = requireText(request.getNom(), "Le nom est obligatoire.");
+        String prenom = requireText(request.getPrenom(), "Le prénom est obligatoire.");
+        String email = contactUniquenessService.normalizeAndValidateRequiredEmail(request.getEmail(), "email");
+        String telephone = contactUniquenessService.normalizeAndValidateOptionalPhone(request.getTelephone(), "telephone");
+        contactUniquenessService.validateUserContactForCreate(email, telephone);
+        credentialPolicyService.validatePasswordStrength(request.getMotDePasse());
+
+        if (request.getEntrepriseId() == null) {
+            throw new IllegalArgumentException("L'entreprise existante est obligatoire pour creer un representant.");
+        }
+
+        Entreprise entreprise = entrepriseRepository.findById(request.getEntrepriseId())
+                .orElseThrow(() -> new EntityNotFoundException("Entreprise introuvable avec l'id : " + request.getEntrepriseId()));
+
+        ResponsableEntreprise representant = ResponsableEntreprise.builder()
+                .nom(nom)
+                .prenom(prenom)
+                .email(email)
+                .telephone(telephone)
+                .motDePasse(passwordEncoder.encode(request.getMotDePasse()))
+                .doitChangerMotDePasse(false)
+                .role(Role.RESPONSABLE_ENTREPRISE)
+                .actif(true)
+                .entreprise(entreprise)
+                .build();
+
+        ResponsableEntreprise saved = responsableEntrepriseRepository.save(representant);
+        return toRepresentantResponse(saved);
     }
 
     private ResponsableEntreprise resolveRepresentant(Long entrepriseId, Long representantId) {
@@ -389,6 +367,72 @@ public class AdminCompanyAccountServiceImpl implements AdminCompanyAccountServic
 
     private TransactionTemplate transactionTemplate() {
         return new TransactionTemplate(transactionManager);
+    }
+
+    private Entreprise resolveOrCreateEntreprise(CreateRepresentantEntrepriseRequest request) {
+        if (request.getEntrepriseId() != null) {
+            return entrepriseRepository.findById(request.getEntrepriseId())
+                    .orElseThrow(() -> new EntityNotFoundException("Entreprise introuvable avec l'id : " + request.getEntrepriseId()));
+        }
+
+        String nomEntreprise = trimToNull(request.getNomEntreprise());
+        String emailEntreprise = contactUniquenessService.normalizeAndValidateOptionalEmail(
+                request.getEmailEntreprise(),
+                "emailEntreprise"
+        );
+        String telephoneEntreprise = contactUniquenessService.normalizeAndValidateOptionalPhone(
+                request.getTelephoneEntreprise(),
+                "telephoneEntreprise"
+        );
+
+        if (nomEntreprise == null) {
+            throw new IllegalArgumentException("L'entreprise est obligatoire soit par entrepriseId soit par nomEntreprise.");
+        }
+
+        Entreprise existingByEmail = emailEntreprise == null
+                ? null
+                : entrepriseRepository.findByEmailIgnoreCase(emailEntreprise).orElse(null);
+        Entreprise existingByNom = entrepriseRepository.findByNomIgnoreCase(nomEntreprise).orElse(null);
+
+        if (existingByEmail != null && existingByNom != null && !existingByEmail.getId().equals(existingByNom.getId())) {
+            throw new DuplicateFieldException("entreprise", "Une incohérence a été détectée entre le nom et l'email de l'entreprise.");
+        }
+
+        Entreprise existing = existingByEmail != null ? existingByEmail : existingByNom;
+        if (existing != null) {
+            return existing;
+        }
+
+        contactUniquenessService.validateEntrepriseContactForCreate(emailEntreprise, telephoneEntreprise);
+
+        Entreprise entreprise = Entreprise.builder()
+                .nom(nomEntreprise)
+                .adresse(trimToNull(request.getAdresseEntreprise()))
+                .secteurActivite(trimToNull(request.getSecteurActivite()))
+                .email(emailEntreprise)
+                .telephone(telephoneEntreprise)
+                .build();
+        return entrepriseRepository.save(entreprise);
+    }
+
+    private RepresentantEntrepriseResponse toRepresentantResponse(ResponsableEntreprise representant) {
+        return new RepresentantEntrepriseResponse(
+                representant.getId(),
+                representant.getNom(),
+                representant.getPrenom(),
+                representant.getEmail(),
+                representant.getTelephone(),
+                representant.getEntreprise() != null ? representant.getEntreprise().getId() : null,
+                representant.getEntreprise() != null ? representant.getEntreprise().getNom() : null
+        );
+    }
+
+    private String requireText(String value, String message) {
+        String normalized = trimToNull(value);
+        if (normalized == null) {
+            throw new IllegalArgumentException(message);
+        }
+        return normalized;
     }
 
     private String safeValue(String value) {

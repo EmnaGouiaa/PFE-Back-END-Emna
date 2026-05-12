@@ -20,7 +20,9 @@ public interface ReunionService {
 
     ReunionDto update(Long id, ReunionDto dto);
 
-    ReunionDto ajouterCompteRendu(Long id, String compteRendu);
+    ReunionDto updateObservation(Long id, String observation);
+
+    ReunionDto updateCompteRendu(Long id, String compteRendu);
 
     void delete(Long id);
 }

@@ -3,15 +3,19 @@ package fsegs.pfebackendemnagouuiaa.services;
 import fsegs.pfebackendemnagouuiaa.dto.EnqueteSatisfactionDto;
 import fsegs.pfebackendemnagouuiaa.dto.ReunionFinaleDto;
 import fsegs.pfebackendemnagouuiaa.dto.ReunionFinaleFormulairesUpdateRequest;
+import fsegs.pfebackendemnagouuiaa.entities.CahierStage;
+import fsegs.pfebackendemnagouuiaa.entities.EnqueteSatisfaction;
 import fsegs.pfebackendemnagouuiaa.entities.FicheEvaluation;
 import fsegs.pfebackendemnagouuiaa.entities.ReunionFinale;
 import fsegs.pfebackendemnagouuiaa.entities.Role;
 import fsegs.pfebackendemnagouuiaa.entities.Stage;
+import fsegs.pfebackendemnagouuiaa.entities.StatutEnqueteSatisfaction;
 import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
 import fsegs.pfebackendemnagouuiaa.mapper.ReunionFinaleMapper;
+import fsegs.pfebackendemnagouuiaa.repository.CahierStageRepository;
+import fsegs.pfebackendemnagouuiaa.repository.EnqueteSatisfactionRepository;
 import fsegs.pfebackendemnagouuiaa.repository.ReunionFinaleRepository;
 import fsegs.pfebackendemnagouuiaa.repository.StageRepository;
-import fsegs.pfebackendemnagouuiaa.repository.UtilisateurRepository;
 import fsegs.pfebackendemnagouuiaa.security.JwtService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,9 +28,7 @@ import java.net.URISyntaxException;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 @Service
 @Slf4j
@@ -44,73 +46,15 @@ public class ReunionFinaleServiceImpl implements ReunionFinaleService {
 
     private final ReunionFinaleRepository reunionFinaleRepository;
     private final StageRepository stageRepository;
-    private final UtilisateurRepository utilisateurRepository;
+    private final CahierStageRepository cahierStageRepository;
+    private final EnqueteSatisfactionRepository enqueteSatisfactionRepository;
     private final ReunionFinaleMapper reunionFinaleMapper;
     private final NotificationService notificationService;
     private final JwtService jwtService;
 
     @Override
     public ReunionFinaleDto create(ReunionFinaleDto dto) {
-        if (dto == null) {
-            throw new RuntimeException("Les donnees de la reunion finale sont obligatoires");
-        }
-
-        if (dto.getStageId() == null) {
-            throw new RuntimeException("Le stage est obligatoire");
-        }
-
-        if (dto.getDate() == null) {
-            throw new RuntimeException("La date est obligatoire");
-        }
-
-        if (dto.getHeure() == null) {
-            throw new RuntimeException("L'heure est obligatoire");
-        }
-
-        Stage stage = stageRepository.findById(dto.getStageId())
-                .orElseThrow(() -> new RuntimeException("Stage introuvable avec l'id : " + dto.getStageId()));
-
-        if (stage.getStatut() == null || !stage.getStatut().name().equals("TERMINE")) {
-            throw new RuntimeException("La reunion finale ne peut etre planifiee que pour un stage termine");
-        }
-
-        if (stage.getEncadrantProfessionnel() == null) {
-            throw new RuntimeException("Le stage ne possede pas d'encadrant professionnel");
-        }
-
-        if (stage.getTuteurEntreprise() == null) {
-            throw new RuntimeException("Le stage ne possede pas de representant de l'entreprise");
-        }
-
-        validateFinalMeetingDate(stage, dto.getDate());
-
-        boolean reunionExiste = reunionFinaleRepository.findByStageId(dto.getStageId())
-                .stream()
-                .findAny()
-                .isPresent();
-
-        if (reunionExiste) {
-            throw new RuntimeException("Une reunion finale existe deja pour ce stage");
-        }
-
-        ReunionFinale entity = new ReunionFinale();
-        entity.setNumReunion(dto.getNumReunion());
-        entity.setDate(dto.getDate());
-        entity.setHeure(dto.getHeure());
-        entity.setObservation(dto.getObservation());
-        entity.setCompteRendu(dto.getCompteRendu());
-        entity.setNote(dto.getNote());
-        entity.setUrlFormEvaluation(normalizeUrl(dto.getUrlFormEvaluation(), "Le lien du formulaire d'evaluation est invalide"));
-        entity.setUrlFormSatisfaction(normalizeUrl(dto.getUrlFormSatisfaction(), "Le lien du formulaire de satisfaction est invalide"));
-        entity.setTitreEnqueteSatisfaction(normalizeText(dto.getTitreEnqueteSatisfaction()));
-        entity.setDescriptionEnqueteSatisfaction(normalizeText(dto.getDescriptionEnqueteSatisfaction()));
-        entity.setStage(stage);
-        entity.setParticipants(new HashSet<>());
-
-        ReunionFinale saved = reunionFinaleRepository.save(entity);
-        notifierStagiaireReunionFinale(saved);
-        log.info("Reunion finale creee avec succes. id={}, stageId={}", saved.getId(), stage.getId());
-        return reunionFinaleMapper.toDto(saved);
+        throw new AccessDeniedException("La reunion finale est creee automatiquement par le systeme.");
     }
 
     @Override
@@ -155,7 +99,7 @@ public class ReunionFinaleServiceImpl implements ReunionFinaleService {
         ReunionFinale entity = reunionFinaleRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Reunion finale introuvable avec l'id : " + id));
 
-        ensureFinalMeetingCanBeModified(entity.getDate(), entity.getHeure());
+        authorizeFinalMeetingManagement(entity.getStage());
 
         if (entity.getFicheEvaluation() != null
                 && entity.getFicheEvaluation().stream().anyMatch(FicheEvaluation::estVerrouillee)) {
@@ -175,35 +119,31 @@ public class ReunionFinaleServiceImpl implements ReunionFinaleService {
             throw new RuntimeException("Le stage ne possede pas de representant de l'entreprise");
         }
 
-        if (dto.getStageId() != null && !dto.getStageId().equals(stage.getId())) {
-            throw new RuntimeException("Le stage d'une reunion finale ne peut pas etre modifie");
+        if (dto != null) {
+            if (dto.getStageId() != null && !dto.getStageId().equals(stage.getId())) {
+                throw new AccessDeniedException("Le stage associe a une reunion finale automatique ne peut pas etre modifie.");
+            }
+            if (dto.getDate() != null && !dto.getDate().equals(entity.getDate())) {
+                throw new AccessDeniedException("La date de la reunion finale est geree automatiquement par le systeme.");
+            }
+            if (dto.getHeure() != null && !dto.getHeure().equals(entity.getHeure())) {
+                throw new AccessDeniedException("L'heure de la reunion finale est geree automatiquement par le systeme.");
+            }
+            if (dto.getNumReunion() != null && !dto.getNumReunion().equals(entity.getNumReunion())) {
+                throw new AccessDeniedException("Le numero de la reunion finale est gere automatiquement par le systeme.");
+            }
         }
 
-        entity.setNumReunion(dto.getNumReunion());
-        entity.setDate(dto.getDate());
-        entity.setHeure(dto.getHeure());
-        validateFinalMeetingDate(stage, entity.getDate());
-        entity.setObservation(dto.getObservation());
-        entity.setCompteRendu(dto.getCompteRendu());
-        entity.setNote(dto.getNote());
-        entity.setUrlFormEvaluation(normalizeUrl(dto.getUrlFormEvaluation(), "Le lien du formulaire d'evaluation est invalide"));
-        entity.setUrlFormSatisfaction(normalizeUrl(dto.getUrlFormSatisfaction(), "Le lien du formulaire de satisfaction est invalide"));
-        entity.setTitreEnqueteSatisfaction(normalizeText(dto.getTitreEnqueteSatisfaction()));
-        entity.setDescriptionEnqueteSatisfaction(normalizeText(dto.getDescriptionEnqueteSatisfaction()));
-
-        Set<Utilisateur> participants = new HashSet<>();
-        if (dto.getParticipantIds() != null) {
-            participants.addAll(utilisateurRepository.findAllById(dto.getParticipantIds()));
-        } else if (entity.getParticipants() != null) {
-            participants.addAll(entity.getParticipants());
-        }
-
-        participants.add(stage.getEncadrantProfessionnel());
-        participants.add(stage.getTuteurEntreprise());
-        entity.setParticipants(participants);
+        entity.setObservation(dto != null ? dto.getObservation() : entity.getObservation());
+        entity.setCompteRendu(dto != null ? dto.getCompteRendu() : entity.getCompteRendu());
+        entity.setNote(dto != null ? dto.getNote() : entity.getNote());
+        entity.setUrlFormEvaluation(normalizeUrl(dto != null ? dto.getUrlFormEvaluation() : entity.getUrlFormEvaluation(), "Le lien du formulaire d'evaluation est invalide"));
+        entity.setUrlFormSatisfaction(normalizeUrl(dto != null ? dto.getUrlFormSatisfaction() : entity.getUrlFormSatisfaction(), "Le lien du formulaire de satisfaction est invalide"));
+        entity.setTitreEnqueteSatisfaction(normalizeText(dto != null ? dto.getTitreEnqueteSatisfaction() : entity.getTitreEnqueteSatisfaction()));
+        entity.setDescriptionEnqueteSatisfaction(normalizeText(dto != null ? dto.getDescriptionEnqueteSatisfaction() : entity.getDescriptionEnqueteSatisfaction()));
+        entity.setCahierStage(resolveCahierStage(stage));
 
         ReunionFinale updated = reunionFinaleRepository.save(entity);
-        notifierStagiaireReunionFinaleModifiee(updated);
         log.info("Reunion finale mise a jour. id={}", updated.getId());
         return reunionFinaleMapper.toDto(updated);
     }
@@ -245,13 +185,7 @@ public class ReunionFinaleServiceImpl implements ReunionFinaleService {
 
     @Override
     public void delete(Long id) {
-        ReunionFinale reunionFinale = reunionFinaleRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Reunion finale introuvable avec l'id : " + id));
-
-        authorizeFinalMeetingManagement(reunionFinale.getStage());
-        ensureFinalMeetingCanBeCancelled(reunionFinale.getDate(), reunionFinale.getHeure());
-        reunionFinaleRepository.delete(reunionFinale);
-        notifierStagiaireReunionFinaleAnnulee(reunionFinale);
+        throw new AccessDeniedException("La suppression manuelle de la reunion finale est interdite.");
     }
 
     private void validateFinalMeetingDate(Stage stage, java.time.LocalDate meetingDate) {
@@ -285,6 +219,9 @@ public class ReunionFinaleServiceImpl implements ReunionFinaleService {
     private ReunionFinaleDto toDtoForCurrentUser(ReunionFinale entity) {
         ReunionFinaleDto dto = reunionFinaleMapper.toDto(entity);
         Utilisateur utilisateur = jwtService.getAuthenticatedUtilisateur().orElse(null);
+        if (!isEvaluationSectionOpen(entity)) {
+            dto.setUrlFormEvaluation(null);
+        }
         if (utilisateur != null && isSatisfactionActorRole(utilisateur.getRole()) && !isSatisfactionAvailableToday(entity)) {
             dto.setUrlFormSatisfaction(null);
         }
@@ -301,45 +238,34 @@ public class ReunionFinaleServiceImpl implements ReunionFinaleService {
             dto.setStageTitre(stage.getTitre());
         }
 
-        boolean dateAtteinte = isSatisfactionDateReached(reunionFinale);
-        boolean hasUrl = normalizeText(reunionFinale.getUrlFormSatisfaction()) != null;
-        boolean validUrl = hasUrl && isValidHttpUrl(reunionFinale.getUrlFormSatisfaction());
-        boolean disponible = dateAtteinte && hasUrl && validUrl;
-        dto.setDateAtteinte(dateAtteinte);
+        dto.setDateAtteinte(isSatisfactionDateReached(reunionFinale));
+        dto.setSectionEnqueteOuverte(isSatisfactionSectionOpen(reunionFinale));
+        dto.setTitre(resolveSurveyTitle(reunionFinale));
+        dto.setDescription(resolveSurveyDescription(reunionFinale));
 
-        if (isSatisfactionExpired(reunionFinale)) {
-            dto.setDisponible(false);
-            dto.setStatut(STATUT_NON_DISPONIBLE);
-            dto.setMessage("La periode de reponse a l'enquete de satisfaction est expiree.");
-            return dto;
-        }
-
-        if (!dateAtteinte) {
+        if (stage == null || stage.getId() == null || utilisateur == null || utilisateur.getId() == null) {
             dto.setDisponible(false);
             dto.setStatut(STATUT_NON_DISPONIBLE);
             dto.setMessage(MESSAGE_INDISPONIBLE);
             return dto;
         }
 
-        if (!hasUrl) {
+        EnqueteSatisfaction enquete = enqueteSatisfactionRepository.findByStageIdAndUtilisateurId(stage.getId(), utilisateur.getId())
+                .orElse(null);
+
+        if (enquete == null) {
             dto.setDisponible(false);
             dto.setStatut(STATUT_NON_DISPONIBLE);
-            dto.setMessage(MESSAGE_URL_INVALIDE);
+            dto.setMessage(MESSAGE_INDISPONIBLE);
             return dto;
         }
 
-        if (!validUrl) {
-            dto.setDisponible(false);
-            dto.setStatut(STATUT_NON_DISPONIBLE);
-            dto.setMessage(MESSAGE_URL_INVALIDE);
-            return dto;
-        }
-
-        dto.setTitre(resolveSurveyTitle(reunionFinale));
-        dto.setDescription(resolveSurveyDescription(reunionFinale));
-        dto.setDisponible(true);
-        dto.setUrlFormulaire(reunionFinale.getUrlFormSatisfaction().trim());
-        dto.setStatut(STATUT_DISPONIBLE);
+        dto.setEnqueteId(enquete.getId());
+        dto.setDisponible(enquete.getStatutEnquete() == StatutEnqueteSatisfaction.EN_ATTENTE);
+        dto.setStatut(enquete.getStatutEnquete() == StatutEnqueteSatisfaction.REMPLIE ? "REMPLIE" : "EN_ATTENTE");
+        dto.setMessage(enquete.getStatutEnquete() == StatutEnqueteSatisfaction.REMPLIE
+                ? "Enquete deja remplie."
+                : "Enquete de satisfaction a remplir dans l'application.");
         return dto;
     }
 
@@ -349,7 +275,32 @@ public class ReunionFinaleServiceImpl implements ReunionFinaleService {
                 && isValidHttpUrl(reunionFinale.getUrlFormSatisfaction());
     }
 
+    private boolean isEvaluationSectionOpen(ReunionFinale reunionFinale) {
+        Stage stage = reunionFinale != null ? reunionFinale.getStage() : null;
+        if (stage == null) {
+            return false;
+        }
+
+        if (stage.getSectionEvaluationOuverte() != null) {
+            return Boolean.TRUE.equals(stage.getSectionEvaluationOuverte());
+        }
+
+        return stage.getDateFin() != null && !stage.getDateFin().isAfter(LocalDate.now());
+    }
+
+    private boolean isSatisfactionSectionOpen(ReunionFinale reunionFinale) {
+        Stage stage = reunionFinale != null ? reunionFinale.getStage() : null;
+        if (stage != null && stage.getSectionEnqueteOuverte() != null) {
+            return Boolean.TRUE.equals(stage.getSectionEnqueteOuverte());
+        }
+        return isSatisfactionDateReached(reunionFinale);
+    }
+
     private boolean isSatisfactionDateReached(ReunionFinale reunionFinale) {
+        Stage stage = reunionFinale != null ? reunionFinale.getStage() : null;
+        if (stage != null && stage.getDateFin() != null) {
+            return !stage.getDateFin().isAfter(LocalDate.now());
+        }
         return reunionFinale.getDate() != null && !reunionFinale.getDate().isAfter(LocalDate.now());
     }
 
@@ -374,7 +325,7 @@ public class ReunionFinaleServiceImpl implements ReunionFinaleService {
         }
 
         String normalized = rawUrl.trim();
-        if (normalized.isEmpty()) {
+        if (normalized.isEmpty() || "string".equalsIgnoreCase(normalized)) {
             return null;
         }
 
@@ -417,7 +368,27 @@ public class ReunionFinaleServiceImpl implements ReunionFinaleService {
         }
 
         String normalized = value.trim();
-        return normalized.isEmpty() ? null : normalized;
+        if (normalized.isEmpty() || "string".equalsIgnoreCase(normalized)) {
+            return null;
+        }
+        return normalized;
+    }
+
+    private CahierStage resolveCahierStage(Stage stage) {
+        if (stage == null || stage.getId() == null) {
+            return null;
+        }
+
+        if (stage.getCahierStage() != null) {
+            return stage.getCahierStage();
+        }
+
+        return cahierStageRepository.findByStageId(stage.getId())
+                .map(cahierStage -> {
+                    stage.setCahierStage(cahierStage);
+                    return cahierStage;
+                })
+                .orElse(null);
     }
 
     private void notifierStagiaireReunionFinale(ReunionFinale reunionFinale) {

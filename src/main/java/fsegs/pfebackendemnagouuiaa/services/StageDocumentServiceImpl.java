@@ -190,21 +190,7 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         ensureEvaluationVisible(stage, Optional.of(fiche));
         validateNoBlockingReasons(getEvaluationPdfBlockingReasons(stage, fiche));
 
-        return createPdf(
-                "Fiche d'evaluation",
-                stage,
-                List.of(
-                        new String[]{"Note finale", fiche.getNoteFinale() == null ? "-" : String.valueOf(fiche.getNoteFinale())},
-                        new String[]{"Donnees completes", Boolean.TRUE.equals(fiche.donneesCompletes()) ? "Oui" : "Non"},
-                        new String[]{"Signatures completes", Boolean.TRUE.equals(fiche.signaturesCompletes()) ? "Oui" : "Non"},
-                        new String[]{"Verrouillee", Boolean.TRUE.equals(fiche.estVerrouillee()) ? "Oui" : "Non"},
-                        new String[]{"Point fort encadrant professionnel", safeText(fiche.getPointFortEncadrantPro())},
-                        new String[]{"Axe amelioration encadrant professionnel", safeText(fiche.getAxeAmeliorationEncadrantPro())},
-                        new String[]{"Point fort responsable entreprise", safeText(fiche.getPointFortResponsableEntreprise())},
-                        new String[]{"Axe amelioration responsable entreprise", safeText(fiche.getAxeAmeliorationResponsableEntreprise())}
-                ),
-                buildEvaluationSignatureRows(stage, fiche)
-        );
+        return createEvaluationPdf(stage, fiche);
     }
 
     @Override
@@ -371,10 +357,13 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         }
 
         return switch (role) {
-            case ADMINISTRATEUR, STAGIAIRE, ENCADRANT_PROFESSIONNEL -> true;
-            case RESPONSABLE_ENTREPRISE -> evaluation
-                    .map(item -> !hasText(item.getSignatureRepresentantEntreprise()))
-                    .orElse(false);
+            case ADMINISTRATEUR,
+                    STAGIAIRE,
+                    ENCADRANT_PROFESSIONNEL,
+                    ENCADRANT_ACADEMIQUE,
+                    RESPONSABLE_SERVICE_STAGES,
+                    RESPONSABLE_UNIVERSITAIRE_STAGES,
+                    RESPONSABLE_ENTREPRISE -> true;
             default -> false;
         };
     }
@@ -451,25 +440,20 @@ public class StageDocumentServiceImpl implements StageDocumentService {
                 .max(Comparator.comparing(ReunionFinale::getId))
                 .orElseThrow(() -> new IllegalStateException("Aucune reunion finale n'est disponible pour ce stage."));
 
-        ficheEvaluationService.create(new FicheEvaluationDto(
-                null,
-                "",
-                "",
-                "",
-                null,
-                false,
-                "",
-                "",
-                "",
-                null,
-                stage.getId(),
-                stage.getTitre(),
-                reunionFinale.getId(),
-                0.0,
-                false,
-                false,
-                false
-        ));
+        FicheEvaluationDto ficheEvaluationDto = new FicheEvaluationDto();
+        ficheEvaluationDto.setStageId(stage.getId());
+        ficheEvaluationDto.setStageTitre(stage.getTitre());
+        ficheEvaluationDto.setReunionFinaleId(reunionFinale.getId());
+        ficheEvaluationDto.setPointFortEncadrantPro("");
+        ficheEvaluationDto.setAxeAmeliorationEncadrantPro("");
+        ficheEvaluationDto.setPointFortResponsableEntreprise("");
+        ficheEvaluationDto.setAxeAmeliorationResponsableEntreprise("");
+        ficheEvaluationDto.setNoteFinale(0.0);
+        ficheEvaluationDto.setDonneesCompletes(false);
+        ficheEvaluationDto.setSignaturesCompletes(false);
+        ficheEvaluationDto.setComplete(false);
+        ficheEvaluationDto.setVerrouillee(false);
+        ficheEvaluationService.create(ficheEvaluationDto);
         return ficheEvaluationRepository.findFirstByStageId(stage.getId())
                 .orElseThrow(() -> new IllegalStateException("Fiche d'evaluation introuvable pour ce stage."));
     }
@@ -1082,6 +1066,193 @@ public class StageDocumentServiceImpl implements StageDocumentService {
 
         document.close();
         return outputStream.toByteArray();
+    }
+
+    private byte[] createEvaluationPdf(Stage stage, FicheEvaluation fiche) {
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        PdfWriter writer = new PdfWriter(outputStream);
+        PdfDocument pdfDocument = new PdfDocument(writer);
+        Document document = new Document(pdfDocument, PageSize.A4);
+        document.setMargins(26, 26, 30, 26);
+
+        document.add(buildEvaluationHero(stage, fiche));
+        document.add(buildEvaluationSummary(stage, fiche));
+
+        document.add(buildSectionCard(
+                "Informations generales",
+                buildInfoContentTable(List.of(
+                        new String[]{"Nom et prenom du stagiaire", stage.getStagiaire() == null ? "-" : buildFullName(stage.getStagiaire().getPrenom(), stage.getStagiaire().getNom())},
+                        new String[]{"Section", buildStudentTrack(stage)},
+                        new String[]{"Entreprise / lieu du stage", stage.getEntreprise() == null ? "-" : safeText(stage.getEntreprise().getNom()) + " - " + safeText(stage.getEntreprise().getAdresse())}
+                )),
+                PDF_PRIMARY_SOFT
+        ));
+
+        document.add(buildDualCard(
+                buildSectionCard("Partie 1 : Encadrant professionnel", buildInfoContentTable(List.of(
+                        new String[]{"Points forts", safeText(fiche.getPointFortEncadrantPro())},
+                        new String[]{"Axes d'amelioration", safeText(fiche.getAxeAmeliorationEncadrantPro())},
+                        new String[]{"Nom du signataire", safeText(fiche.getNomSignataireEncadrantProfessionnel())},
+                        new String[]{"Role", safeText(fiche.getRoleSignatureEncadrantProfessionnel())},
+                        new String[]{"Date", formatDateTime(fiche.getDateSignatureEncadrantProfessionnel())}
+                )), PDF_PRIMARY_SOFT),
+                buildSectionCard("Partie 2 : Representant de l'entreprise", buildInfoContentTable(List.of(
+                        new String[]{"Points forts", safeText(fiche.getPointFortResponsableEntreprise())},
+                        new String[]{"Axes d'amelioration", safeText(fiche.getAxeAmeliorationResponsableEntreprise())},
+                        new String[]{"Nom du signataire", safeText(fiche.getNomSignataireRepresentantEntreprise())},
+                        new String[]{"Role", safeText(fiche.getRoleSignatureRepresentantEntreprise())},
+                        new String[]{"Date", formatDateTime(fiche.getDateSignatureRepresentantEntreprise())}
+                )), PDF_SECONDARY_SOFT)
+        ));
+
+        document.add(buildSectionCard(
+                "Partie 3 : Notes attribuees",
+                buildEvaluationNotesContent(fiche),
+                PDF_PRIMARY_SOFT
+        ));
+
+        document.add(buildSectionCard(
+                "Partie 4 : Informations liees au stage",
+                buildInfoContentTable(List.of(
+                        new String[]{"Stage", safeText(stage.getTitre())},
+                        new String[]{"Sujet", safeText(stage.getSujet())},
+                        new String[]{"Periode", formatDate(stage.getDateDebut()) + " - " + formatDate(stage.getDateFin())},
+                        new String[]{"Reunion finale", fiche.getReunionFinale() == null ? "-" : firstNonBlank(fiche.getReunionFinale().getNumReunion(), "Reunion finale")},
+                        new String[]{"Date reunion finale", fiche.getReunionFinale() == null ? "-" : formatDate(fiche.getReunionFinale().getDate()) + " " + safeTime(fiche.getReunionFinale().getHeure())}
+                )),
+                PDF_SECONDARY_SOFT
+        ));
+
+        document.add(buildSectionCard(
+                "Zone finale des signatures",
+                buildEvaluationSignaturesContent(stage, fiche),
+                PDF_PRIMARY_SOFT
+        ));
+
+        document.add(new Paragraph("La fiche est verrouillee lorsque les signatures sont completes.")
+                .setFontSize(9)
+                .setItalic()
+                .setFontColor(PDF_MUTED)
+                .setMarginTop(6)
+                .setTextAlignment(TextAlignment.RIGHT));
+
+        document.close();
+        return outputStream.toByteArray();
+    }
+
+    private Table buildEvaluationHero(Stage stage, FicheEvaluation fiche) {
+        Table hero = new Table(UnitValue.createPercentArray(new float[]{2.4f, 1f}))
+                .useAllAvailableWidth()
+                .setMarginBottom(14);
+
+        Cell leftCell = new Cell()
+                .setBackgroundColor(PDF_PRIMARY)
+                .setBorder(Border.NO_BORDER)
+                .setPadding(18);
+
+        leftCell.add(new Paragraph("FSEGS - Gestion des stages")
+                .setFontSize(10)
+                .setBold()
+                .setFontColor(ColorConstants.WHITE)
+                .setMarginBottom(8));
+        leftCell.add(new Paragraph("FICHE D'EVALUATION DE STAGE")
+                .setFontSize(20)
+                .setBold()
+                .setFontColor(ColorConstants.WHITE)
+                .setMarginBottom(6));
+        leftCell.add(new Paragraph("Document d'evaluation renseigne conjointement par l'encadrant professionnel et le representant de l'entreprise.")
+                .setFontSize(10)
+                .setFontColor(new DeviceRgb(226, 232, 240))
+                .setMultipliedLeading(1.3f));
+
+        Cell rightCell = new Cell()
+                .setBackgroundColor(PDF_SECONDARY)
+                .setBorder(Border.NO_BORDER)
+                .setPadding(18);
+        rightCell.add(heroMeta("Stage", safeText(stage.getTitre())));
+        rightCell.add(heroMeta("Note finale", fiche.getNoteFinale() == null ? "-" : String.format(java.util.Locale.US, "%.2f", fiche.getNoteFinale())));
+        rightCell.add(heroMeta("Etat", fiche.estVerrouillee() ? "Verrouillee" : "En cours"));
+        rightCell.add(heroMeta("Generation", formatDateTime(LocalDateTime.now())));
+
+        hero.addCell(leftCell);
+        hero.addCell(rightCell);
+        return hero;
+    }
+
+    private Table buildEvaluationSummary(Stage stage, FicheEvaluation fiche) {
+        Table summary = new Table(UnitValue.createPercentArray(new float[]{1f, 1f, 1f, 1f}))
+                .useAllAvailableWidth()
+                .setMarginBottom(14);
+
+        summary.addCell(summaryCell("Stagiaire",
+                stage.getStagiaire() == null ? "-" : buildFullName(stage.getStagiaire().getPrenom(), stage.getStagiaire().getNom())));
+        summary.addCell(summaryCell("Entreprise",
+                stage.getEntreprise() == null ? "-" : safeText(stage.getEntreprise().getNom())));
+        summary.addCell(summaryCell("Reunion finale",
+                fiche.getReunionFinale() == null ? "-" : firstNonBlank(fiche.getReunionFinale().getNumReunion(), "Reunion finale")));
+        summary.addCell(summaryCell("Verrouillage",
+                fiche.estVerrouillee() ? "Actif" : "En attente"));
+
+        return summary;
+    }
+
+    private Table buildEvaluationNotesContent(FicheEvaluation fiche) {
+        Table container = new Table(UnitValue.createPercentArray(new float[]{1f}))
+                .useAllAvailableWidth();
+
+        Table table = new Table(UnitValue.createPercentArray(new float[]{2.2f, 1f, 1f, 1.1f}))
+                .useAllAvailableWidth();
+
+        table.addHeaderCell(signatureHeaderCell("Critere evalue"));
+        table.addHeaderCell(signatureHeaderCell("Note / 5"));
+        table.addHeaderCell(signatureHeaderCell("Coefficient"));
+        table.addHeaderCell(signatureHeaderCell("Score pondere"));
+
+        fiche.getNotesAttribuees().stream()
+                .sorted(Comparator.comparing(note -> note.getCritereEvaluation() == null
+                        ? ""
+                        : String.valueOf(note.getCritereEvaluation().getLibelle()), String.CASE_INSENSITIVE_ORDER))
+                .forEach(note -> {
+                    String critere = note.getCritereEvaluation() == null ? "-" : safeText(note.getCritereEvaluation().getLibelle());
+                    table.addCell(signatureBodyCell(critere));
+                    table.addCell(signatureBodyCell(note.getNote() == null ? "-" : String.valueOf(note.getNote())));
+                    table.addCell(signatureBodyCell(note.getPoids() == null ? "-" : String.valueOf(note.getPoids())));
+                    table.addCell(signatureBodyCell(String.format(java.util.Locale.US, "%.2f", note.calculerScorePondere())));
+                });
+
+        if (fiche.getNotesAttribuees().isEmpty()) {
+            table.addCell(new Cell(1, 4)
+                    .setBorder(new SolidBorder(PDF_BORDER, 1))
+                    .setPadding(10)
+                    .add(new Paragraph("Aucune note attribuee n'a encore ete renseignee.")
+                            .setFontSize(9)
+                            .setFontColor(PDF_MUTED)));
+        }
+
+        container.addCell(new Cell().setBorder(Border.NO_BORDER).setPadding(0).add(table));
+        container.addCell(new Cell()
+                .setBorder(Border.NO_BORDER)
+                .setPaddingTop(8)
+                .add(new Paragraph("Note finale : " + (fiche.getNoteFinale() == null ? "-" : String.format(java.util.Locale.US, "%.2f", fiche.getNoteFinale())))
+                        .setBold()
+                        .setFontSize(10)
+                        .setTextAlignment(TextAlignment.RIGHT)
+                        .setFontColor(PDF_PRIMARY)));
+        return container;
+    }
+
+    private Table buildEvaluationSignaturesContent(Stage stage, FicheEvaluation fiche) {
+        Table container = new Table(UnitValue.createPercentArray(new float[]{1f}))
+                .useAllAvailableWidth();
+        container.addCell(new Cell()
+                .setBorder(Border.NO_BORDER)
+                .setPadding(0)
+                .add(new Paragraph("Les signatures ci-dessous valident definitivement la fiche d'evaluation. Toute modification est interdite des que les deux signatures sont presentes.")
+                        .setFontSize(9)
+                        .setFontColor(PDF_MUTED)
+                        .setMarginBottom(10)));
+        container.addCell(new Cell().setBorder(Border.NO_BORDER).setPadding(0).add(buildSignatureTable(buildEvaluationSignatureRows(stage, fiche))));
+        return container;
     }
 
     private Paragraph sectionTitle(String title) {

@@ -1,6 +1,7 @@
 package fsegs.pfebackendemnagouuiaa.services;
 
 import fsegs.pfebackendemnagouuiaa.dto.FicheEvaluationDto;
+import fsegs.pfebackendemnagouuiaa.dto.NoteAttribueeDto;
 
 import java.util.List;
 
@@ -19,6 +20,7 @@ public interface FicheEvaluationService {
     FicheEvaluationDto update(Long id, FicheEvaluationDto dto);
 
     FicheEvaluationDto signerFiche(Long ficheId, Long userId);
-    public FicheEvaluationDto remplirPartieEncadrantProfessionnel(Long ficheId, Long userId, FicheEvaluationDto dto);
-    public FicheEvaluationDto remplirPartieResponsableEntreprise(Long ficheId, Long userId, FicheEvaluationDto dto);
+    FicheEvaluationDto remplirPartieEncadrantProfessionnel(Long ficheId, Long userId, FicheEvaluationDto dto);
+    FicheEvaluationDto remplirPartieResponsableEntreprise(Long ficheId, Long userId, FicheEvaluationDto dto);
+    FicheEvaluationDto enregistrerNotesEncadrantProfessionnel(Long ficheId, Long userId, List<NoteAttribueeDto> notes);
 }

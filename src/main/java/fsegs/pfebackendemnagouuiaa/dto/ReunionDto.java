@@ -25,7 +25,6 @@ public class ReunionDto {
     @NotNull(message = "L'heure est obligatoire")
     private LocalTime heure;
 
-    @NotBlank(message = "L'observation est obligatoire")
     private String observation;
 
     private String compteRendu;
@@ -42,4 +41,5 @@ public class ReunionDto {
     private Long encadrantCreateurId;
 
     private Set<Long> participantIds;
+    private Set<String> participantNoms;
 }

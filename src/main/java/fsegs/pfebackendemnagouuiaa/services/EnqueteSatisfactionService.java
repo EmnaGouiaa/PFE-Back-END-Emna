@@ -1,12 +1,21 @@
 package fsegs.pfebackendemnagouuiaa.services;
 
-import fsegs.pfebackendemnagouuiaa.dto.EnqueteSatisfactionDto;
+import fsegs.pfebackendemnagouuiaa.dto.CreateEnqueteSatisfactionRequest;
+import fsegs.pfebackendemnagouuiaa.dto.EnqueteSatisfactionResponse;
+import fsegs.pfebackendemnagouuiaa.dto.RemplirEnqueteSatisfactionRequest;
+import fsegs.pfebackendemnagouuiaa.entities.Stage;
+
+import java.util.List;
 
 public interface EnqueteSatisfactionService {
 
-    EnqueteSatisfactionDto getConfiguration();
+    List<EnqueteSatisfactionResponse> getEnquetesByStage(Long stageId);
 
-    EnqueteSatisfactionDto saveConfiguration(EnqueteSatisfactionDto dto);
+    List<EnqueteSatisfactionResponse> getEnquetesByUtilisateur(Long utilisateurId);
 
-    EnqueteSatisfactionDto getDisponiblePourUtilisateurConnecte();
+    EnqueteSatisfactionResponse remplirEnquete(Long enqueteId, RemplirEnqueteSatisfactionRequest request);
+
+    List<EnqueteSatisfactionResponse> creerEnquetesPourStageSiNecessaire(Stage stage);
+
+    EnqueteSatisfactionResponse createPendingSurvey(CreateEnqueteSatisfactionRequest request);
 }

@@ -293,7 +293,7 @@ public class CompanyValidationServiceImpl implements CompanyValidationService {
     private CompanyValidationItemDto buildConventionValidationItem(Stage stage, ConventionStage convention) {
         String status = Boolean.TRUE.equals(convention.getSigneeEntreprise())
                 ? "VALIDEE"
-                : stage.getStatut() == StatutStage.REFUSE ? "REFUSEE" : "EN_ATTENTE";
+                : (stage.getStatut() == StatutStage.REFUSE || stage.getStatut() == StatutStage.ANNULE) ? "REFUSEE" : "EN_ATTENTE";
 
         return baseBuilder(
                 stage,
@@ -309,7 +309,7 @@ public class CompanyValidationServiceImpl implements CompanyValidationService {
     private CompanyValidationItemDto buildCahierValidationItem(Stage stage, CahierStage cahier) {
         String status = Boolean.TRUE.equals(cahier.getSigneeRespEntreprise())
                 ? "VALIDEE"
-                : stage.getStatut() == StatutStage.REFUSE ? "REFUSEE" : "EN_ATTENTE";
+                : (stage.getStatut() == StatutStage.REFUSE || stage.getStatut() == StatutStage.ANNULE) ? "REFUSEE" : "EN_ATTENTE";
 
         return baseBuilder(
                 stage,
@@ -349,10 +349,10 @@ public class CompanyValidationServiceImpl implements CompanyValidationService {
     }
 
     private String mapStageStatus(StatutStage statut) {
-        if (statut == null || statut == StatutStage.EN_ATTENTE) {
+        if (statut == null || statut == StatutStage.PAS_COMMENCE) {
             return "EN_ATTENTE";
         }
-        if (statut == StatutStage.REFUSE) {
+        if (statut == StatutStage.REFUSE || statut == StatutStage.ANNULE) {
             return "REFUSEE";
         }
         return "VALIDEE";

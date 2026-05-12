@@ -93,15 +93,22 @@ public class UtilisateurController {
         return ResponseEntity.ok(utilisateurService.getAllUsers());
     }
 
-    @PreAuthorize("hasRole('ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('ADMINISTRATEUR','RESPONSABLE_ENTREPRISE')")
     @PatchMapping("/{id}/desactiver")
     public ResponseEntity<UserResponse> deactivateUser(@PathVariable Long id) {
         return ResponseEntity.ok(utilisateurService.deactivateUser(id));
     }
 
-    @PreAuthorize("hasRole('ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('ADMINISTRATEUR','RESPONSABLE_ENTREPRISE')")
     @PatchMapping("/{id}/activer")
     public ResponseEntity<UserResponse> activateUser(@PathVariable Long id) {
         return ResponseEntity.ok(utilisateurService.activateUser(id));
+    }
+
+    @PreAuthorize("hasRole('ADMINISTRATEUR')")
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteUser(@PathVariable Long id) {
+        utilisateurService.deleteUser(id);
+        return ResponseEntity.noContent().build();
     }
 }

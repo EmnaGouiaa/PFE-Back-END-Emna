@@ -5,9 +5,7 @@ import fsegs.pfebackendemnagouuiaa.dto.AuthenticationResponse;
 import fsegs.pfebackendemnagouuiaa.dto.ForgotPasswordRequest;
 import fsegs.pfebackendemnagouuiaa.dto.PasswordResetResponse;
 import fsegs.pfebackendemnagouuiaa.dto.ResetPasswordRequest;
-import fsegs.pfebackendemnagouuiaa.entities.PasswordResetCode;
 import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
-import fsegs.pfebackendemnagouuiaa.repository.PasswordResetCodeRepository;
 import fsegs.pfebackendemnagouuiaa.repository.UtilisateurRepository;
 import fsegs.pfebackendemnagouuiaa.security.JwtService;
 import lombok.RequiredArgsConstructor;
@@ -21,9 +19,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 @Service
 @RequiredArgsConstructor
@@ -34,10 +33,10 @@ public class AuthenticationServiceImpl implements AuthenticationService {
             "Un code de verification a ete envoye par email. Il reste valable 10 minutes.";
     private static final int RESET_CODE_LENGTH = 6;
     private static final int RESET_CODE_EXPIRATION_MINUTES = 10;
+    private static final ConcurrentMap<String, ResetCodePayload> RESET_CODES = new ConcurrentHashMap<>();
 
     private final AuthenticationManager authenticationManager;
     private final UtilisateurRepository utilisateurRepository;
-    private final PasswordResetCodeRepository passwordResetCodeRepository;
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
     private final CredentialPolicyService credentialPolicyService;
@@ -88,29 +87,22 @@ public class AuthenticationServiceImpl implements AuthenticationService {
     @Transactional
     public PasswordResetResponse forgotPassword(ForgotPasswordRequest request) {
         String email = normalizeEmail(request.getEmail());
-        passwordResetCodeRepository.deleteByExpirationDateBefore(LocalDateTime.now());
+        cleanupExpiredResetCodes();
 
         Optional<Utilisateur> utilisateurOpt = utilisateurRepository.findByNormalizedEmail(email);
 
         utilisateurOpt.ifPresent(utilisateur -> {
-            List<PasswordResetCode> activeCodes = passwordResetCodeRepository.findByEmailIgnoreCaseAndUsedFalse(email);
-            if (!activeCodes.isEmpty()) {
-                activeCodes.forEach(code -> code.setUsed(true));
-                passwordResetCodeRepository.saveAll(activeCodes);
-            }
-
-            PasswordResetCode resetCode = passwordResetCodeRepository.save(PasswordResetCode.builder()
-                    .email(email)
-                    .code(generateNumericCode())
-                    .expirationDate(LocalDateTime.now().plusMinutes(RESET_CODE_EXPIRATION_MINUTES))
-                    .used(false)
-                    .build());
+            ResetCodePayload resetCode = new ResetCodePayload(
+                    generateNumericCode(),
+                    LocalDateTime.now().plusMinutes(RESET_CODE_EXPIRATION_MINUTES)
+            );
+            RESET_CODES.put(email, resetCode);
 
             accountEmailService.sendPasswordResetCodeEmail(
                     utilisateur.getPrenom(),
                     utilisateur.getEmail(),
-                    resetCode.getCode(),
-                    resetCode.getExpirationDate()
+                    resetCode.code(),
+                    resetCode.expirationDate()
             );
         });
 
@@ -123,6 +115,7 @@ public class AuthenticationServiceImpl implements AuthenticationService {
     public PasswordResetResponse resetPassword(ResetPasswordRequest request) {
         String email = normalizeEmail(request.getEmail());
         String code = normalizeCode(request.getCode());
+        cleanupExpiredResetCodes();
 
         if (!request.getNewPassword().equals(request.getConfirmPassword())) {
             throw new IllegalArgumentException("La confirmation du mot de passe ne correspond pas.");
@@ -133,21 +126,18 @@ public class AuthenticationServiceImpl implements AuthenticationService {
         Utilisateur utilisateur = utilisateurRepository.findByNormalizedEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException("Le code de verification est invalide ou expire."));
 
-        PasswordResetCode resetCode = passwordResetCodeRepository
-                .findFirstByEmailIgnoreCaseAndCodeAndUsedFalseOrderByExpirationDateDesc(email, code)
-                .orElseThrow(() -> new IllegalArgumentException("Le code de verification est invalide ou expire."));
-
-        if (Boolean.TRUE.equals(resetCode.getUsed()) || resetCode.getExpirationDate() == null
-                || resetCode.getExpirationDate().isBefore(LocalDateTime.now())) {
+        ResetCodePayload resetCode = RESET_CODES.get(email);
+        if (resetCode == null
+                || resetCode.expirationDate() == null
+                || resetCode.expirationDate().isBefore(LocalDateTime.now())
+                || !resetCode.code().equals(code)) {
             throw new IllegalArgumentException("Le code de verification est invalide ou expire.");
         }
 
         utilisateur.setMotDePasse(passwordEncoder.encode(request.getNewPassword()));
         utilisateur.setDoitChangerMotDePasse(false);
         utilisateurRepository.save(utilisateur);
-
-        resetCode.setUsed(true);
-        passwordResetCodeRepository.save(resetCode);
+        RESET_CODES.remove(email);
 
         return new PasswordResetResponse("Votre mot de passe a ete reinitialise avec succes.");
     }
@@ -173,5 +163,17 @@ public class AuthenticationServiceImpl implements AuthenticationService {
     private String generateNumericCode() {
         int value = secureRandom.nextInt((int) Math.pow(10, RESET_CODE_LENGTH));
         return String.format("%0" + RESET_CODE_LENGTH + "d", value);
+    }
+
+    private void cleanupExpiredResetCodes() {
+        LocalDateTime now = LocalDateTime.now();
+        RESET_CODES.entrySet().removeIf(entry ->
+                entry.getValue() == null
+                        || entry.getValue().expirationDate() == null
+                        || entry.getValue().expirationDate().isBefore(now)
+        );
+    }
+
+    private record ResetCodePayload(String code, LocalDateTime expirationDate) {
     }
 }

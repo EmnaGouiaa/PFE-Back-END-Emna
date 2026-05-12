@@ -1,203 +1,370 @@
 package fsegs.pfebackendemnagouuiaa.services;
 
-import fsegs.pfebackendemnagouuiaa.dto.EnqueteSatisfactionDto;
+import fsegs.pfebackendemnagouuiaa.dto.CreateEnqueteSatisfactionRequest;
+import fsegs.pfebackendemnagouuiaa.dto.EnqueteSatisfactionResponse;
+import fsegs.pfebackendemnagouuiaa.dto.RemplirEnqueteSatisfactionRequest;
 import fsegs.pfebackendemnagouuiaa.entities.EnqueteSatisfaction;
-import fsegs.pfebackendemnagouuiaa.entities.ReunionFinale;
 import fsegs.pfebackendemnagouuiaa.entities.Role;
+import fsegs.pfebackendemnagouuiaa.entities.ReunionFinale;
 import fsegs.pfebackendemnagouuiaa.entities.Stage;
+import fsegs.pfebackendemnagouuiaa.entities.StatutEnqueteSatisfaction;
+import fsegs.pfebackendemnagouuiaa.entities.StatutStage;
 import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
 import fsegs.pfebackendemnagouuiaa.repository.EnqueteSatisfactionRepository;
 import fsegs.pfebackendemnagouuiaa.repository.ReunionFinaleRepository;
+import fsegs.pfebackendemnagouuiaa.repository.StageRepository;
+import fsegs.pfebackendemnagouuiaa.repository.UtilisateurRepository;
 import fsegs.pfebackendemnagouuiaa.security.JwtService;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.time.LocalDate;
-import java.util.Comparator;
-import java.util.Optional;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
 public class EnqueteSatisfactionServiceImpl implements EnqueteSatisfactionService {
 
-    private static final int DUREE_VISIBILITE_APRES_REUNION_JOURS = 7;
-
-    private static final String STATUT_DISPONIBLE = "Disponible";
-    private static final String STATUT_NON_DISPONIBLE = "Non disponible";
-    private static final String MESSAGE_INDISPONIBLE = "Aucune enquete de satisfaction disponible pour le moment.";
-    private static final String MESSAGE_URL_INVALIDE = "Le lien de l'enquete est indisponible.";
-    private static final String MESSAGE_PERIODE_EXPIREE = "La periode de reponse a l'enquete de satisfaction est expiree.";
+    private static final Set<Role> MANAGEMENT_ROLES = Set.of(
+            Role.ADMINISTRATEUR,
+            Role.RESPONSABLE_SERVICE_STAGES,
+            Role.RESPONSABLE_UNIVERSITAIRE_STAGES
+    );
+    private static final String DEFAULT_SURVEY_TITLE = EnqueteSatisfaction.TITRE_PAR_DEFAUT;
+    private static final String DEFAULT_SURVEY_DESCRIPTION = EnqueteSatisfaction.DESCRIPTION_PAR_DEFAUT;
+    private static final String DEFAULT_SURVEY_URL = EnqueteSatisfaction.URL_FORMULAIRE_PAR_DEFAUT;
 
     private final EnqueteSatisfactionRepository enqueteSatisfactionRepository;
+    private final StageRepository stageRepository;
     private final ReunionFinaleRepository reunionFinaleRepository;
+    private final UtilisateurRepository utilisateurRepository;
     private final JwtService jwtService;
 
     @Override
     @Transactional(readOnly = true)
-    public EnqueteSatisfactionDto getConfiguration() {
-        return enqueteSatisfactionRepository.findTopByOrderByIdAsc()
-                .map(this::toConfigurationDto)
-                .orElseGet(this::emptyConfigurationDto);
-    }
+    public List<EnqueteSatisfactionResponse> getEnquetesByStage(Long stageId) {
+        Stage stage = stageRepository.findById(stageId)
+                .orElseThrow(() -> new EntityNotFoundException("Stage introuvable."));
 
-    @Override
-    @Transactional
-    public EnqueteSatisfactionDto saveConfiguration(EnqueteSatisfactionDto dto) {
-        if (dto == null) {
-            throw new IllegalArgumentException("Les donnees de l'enquete sont obligatoires.");
-        }
+        authorizeStageVisibility(stage);
 
-        String titre = requireText(dto.getTitre(), "Le titre de l'enquete est obligatoire.");
-        String description = requireText(dto.getDescription(), "La description de l'enquete est obligatoire.");
-        String url = normalizeUrl(dto.getUrlFormulaire(), "Veuillez saisir une URL http(s) valide.");
-
-        EnqueteSatisfaction enquete = enqueteSatisfactionRepository.findTopByOrderByIdAsc()
-                .orElseGet(EnqueteSatisfaction::new);
-        enquete.setTitre(titre);
-        enquete.setDescription(description);
-        enquete.setUrlFormulaire(url);
-
-        return toConfigurationDto(enqueteSatisfactionRepository.save(enquete));
+        return enqueteSatisfactionRepository.findByStageIdOrderByDateCreationAsc(stageId)
+                .stream()
+                .map(this::toResponse)
+                .toList();
     }
 
     @Override
     @Transactional(readOnly = true)
-    public EnqueteSatisfactionDto getDisponiblePourUtilisateurConnecte() {
-        Utilisateur utilisateur = jwtService.getAuthenticatedUtilisateur()
-                .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifie introuvable."));
-
-        if (!isSatisfactionActorRole(utilisateur.getRole()) || utilisateur.getId() == null) {
-            throw new AccessDeniedException("Acces refuse a l'enquete de satisfaction.");
+    public List<EnqueteSatisfactionResponse> getEnquetesByUtilisateur(Long utilisateurId) {
+        Utilisateur connectedUser = getAuthenticatedUtilisateur();
+        if (!connectedUser.getId().equals(utilisateurId) && !isManagementRole(connectedUser.getRole())) {
+            throw new AccessDeniedException("Acces refuse aux enquetes de cet utilisateur.");
         }
 
-        Optional<EnqueteSatisfaction> configuredSurvey = enqueteSatisfactionRepository.findTopByOrderByIdAsc();
-        if (configuredSurvey.isEmpty()) {
-            return unavailable(MESSAGE_INDISPONIBLE, false);
+        return enqueteSatisfactionRepository.findByUtilisateurIdOrderByDateCreationDesc(utilisateurId)
+                .stream()
+                .map(this::toResponse)
+                .toList();
+    }
+
+    @Override
+    @Transactional
+    public EnqueteSatisfactionResponse remplirEnquete(Long enqueteId, RemplirEnqueteSatisfactionRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("Les donnees de reponse sont obligatoires.");
         }
 
-        EnqueteSatisfaction enquete = configuredSurvey.get();
-        if (!isValidHttpUrl(enquete.getUrlFormulaire())) {
-            return unavailable(MESSAGE_URL_INVALIDE, false);
+        Utilisateur connectedUser = getAuthenticatedUtilisateur();
+        EnqueteSatisfaction enquete = enqueteSatisfactionRepository.findById(enqueteId)
+                .orElseThrow(() -> new EntityNotFoundException("Enquete de satisfaction introuvable."));
+
+        if (enquete.getUtilisateur() == null || !connectedUser.getId().equals(enquete.getUtilisateur().getId())) {
+            throw new AccessDeniedException("Vous n'etes pas autorise a remplir cette enquete.");
+        }
+
+        if (enquete.getStatutEnquete() == StatutEnqueteSatisfaction.REMPLIE) {
+            throw new IllegalArgumentException("Cette enquete a deja ete remplie.");
+        }
+
+        if (!isSectionEnqueteOuverte(enquete.getStage())) {
+            throw new AccessDeniedException("L'enquete de satisfaction sera accessible a partir du dernier jour du stage.");
+        }
+
+        enquete.setReponses(normalizeNullableText(request.getReponses()));
+        enquete.setCommentaireGlobal(normalizeNullableText(request.getCommentaireGlobal()));
+        enquete.setStatutEnquete(StatutEnqueteSatisfaction.REMPLIE);
+        enquete.setDateSoumission(LocalDateTime.now());
+
+        return toResponse(enqueteSatisfactionRepository.save(enquete));
+    }
+
+    @Override
+    @Transactional
+    public List<EnqueteSatisfactionResponse> creerEnquetesPourStageSiNecessaire(Stage stage) {
+        if (!isSurveyEligibleStage(stage)) {
+            return List.of();
+        }
+
+        List<CreateEnqueteSatisfactionRequest> requests = buildSurveyRequests(stage);
+        List<EnqueteSatisfactionResponse> createdSurveys = new ArrayList<>();
+
+        for (CreateEnqueteSatisfactionRequest request : requests) {
+            if (enqueteSatisfactionRepository.existsByStageIdAndUtilisateurId(
+                    request.getStageId(),
+                    request.getUtilisateurId()
+            )) {
+                continue;
+            }
+
+            EnqueteSatisfactionResponse created = createPendingSurvey(request);
+            createdSurveys.add(created);
+        }
+
+        return createdSurveys;
+    }
+
+    @Override
+    @Transactional
+    public EnqueteSatisfactionResponse createPendingSurvey(CreateEnqueteSatisfactionRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("La creation d'enquete requiert des donnees.");
+        }
+
+        Stage stage = stageRepository.findById(request.getStageId())
+                .orElseThrow(() -> new EntityNotFoundException("Stage introuvable."));
+        Utilisateur utilisateur = utilisateurRepository.findById(request.getUtilisateurId())
+                .orElseThrow(() -> new EntityNotFoundException("Utilisateur introuvable."));
+
+        if (enqueteSatisfactionRepository.existsByStageIdAndUtilisateurId(stage.getId(), utilisateur.getId())) {
+            return enqueteSatisfactionRepository.findByStageIdAndUtilisateurId(stage.getId(), utilisateur.getId())
+                    .map(this::toResponse)
+                    .orElseThrow(() -> new IllegalStateException("La contrainte d'unicite des enquetes est incoherente."));
+        }
+
+        EnqueteSatisfaction enquete = new EnqueteSatisfaction();
+        enquete.setStage(stage);
+        enquete.setUtilisateur(utilisateur);
+        enquete.setRoleRepondant(request.getRoleRepondant() != null ? request.getRoleRepondant() : utilisateur.getRole());
+        enquete.setStatutEnquete(StatutEnqueteSatisfaction.EN_ATTENTE);
+        enquete.setTitre(resolveSurveyTitle(stage));
+        enquete.setDescription(resolveSurveyDescription(stage));
+        enquete.setUrlFormulaire(resolveSurveyUrl(stage));
+        enquete.setReponses(normalizeNullableText(request.getReponses()));
+        enquete.setCommentaireGlobal(normalizeNullableText(request.getCommentaireGlobal()));
+
+        return toResponse(enqueteSatisfactionRepository.save(enquete));
+    }
+
+    private List<CreateEnqueteSatisfactionRequest> buildSurveyRequests(Stage stage) {
+        Map<Long, CreateEnqueteSatisfactionRequest> requestsByUserId = new LinkedHashMap<>();
+
+        addSurveyRequest(requestsByUserId, stage, stage.getStagiaire(), Role.STAGIAIRE);
+        addSurveyRequest(requestsByUserId, stage, stage.getEncadrantAcademique(), Role.ENCADRANT_ACADEMIQUE);
+        addSurveyRequest(requestsByUserId, stage, stage.getEncadrantProfessionnel(), Role.ENCADRANT_PROFESSIONNEL);
+        addSurveyRequest(requestsByUserId, stage, stage.getTuteurEntreprise(), Role.RESPONSABLE_ENTREPRISE);
+
+        for (Role managementRole : MANAGEMENT_ROLES) {
+            utilisateurRepository.findByRole(managementRole)
+                    .forEach(utilisateur -> addSurveyRequest(requestsByUserId, stage, utilisateur, managementRole));
+        }
+
+        return new ArrayList<>(requestsByUserId.values());
+    }
+
+    private void addSurveyRequest(Map<Long, CreateEnqueteSatisfactionRequest> requestsByUserId,
+                                  Stage stage,
+                                  Utilisateur utilisateur,
+                                  Role roleRepondant) {
+        if (stage == null || stage.getId() == null || utilisateur == null || utilisateur.getId() == null) {
+            return;
+        }
+
+        requestsByUserId.putIfAbsent(
+                utilisateur.getId(),
+                new CreateEnqueteSatisfactionRequest(
+                        stage.getId(),
+                        utilisateur.getId(),
+                        roleRepondant,
+                        null,
+                        null
+                )
+        );
+    }
+
+    private EnqueteSatisfactionResponse toResponse(EnqueteSatisfaction enquete) {
+        Utilisateur connectedUser = resolveAuthenticatedUtilisateurSafely();
+        Utilisateur utilisateur = enquete.getUtilisateur();
+        Stage stage = enquete.getStage();
+
+        String fullName = utilisateur == null
+                ? null
+                : (safeText(utilisateur.getPrenom(), "") + " " + safeText(utilisateur.getNom(), "")).trim();
+
+        return new EnqueteSatisfactionResponse(
+                enquete.getId(),
+                enquete.getDateCreation(),
+                enquete.getDateSoumission(),
+                enquete.getStatutEnquete(),
+                enquete.getTitre(),
+                enquete.getDescription(),
+                enquete.getUrlFormulaire(),
+                enquete.getReponses(),
+                enquete.getCommentaireGlobal(),
+                enquete.getRoleRepondant(),
+                stage != null ? stage.getId() : null,
+                stage != null ? stage.getTitre() : null,
+                utilisateur != null ? utilisateur.getId() : null,
+                fullName == null || fullName.isBlank() ? null : fullName,
+                connectedUser != null
+                        && utilisateur != null
+                        && connectedUser.getId() != null
+                        && connectedUser.getId().equals(utilisateur.getId()),
+                enquete.getStatutEnquete() == StatutEnqueteSatisfaction.EN_ATTENTE && isSectionEnqueteOuverte(stage),
+                isSectionEnqueteOuverte(stage)
+        );
+    }
+
+    private boolean isSectionEnqueteOuverte(Stage stage) {
+        if (stage == null) {
+            return false;
+        }
+
+        if (stage.getSectionEnqueteOuverte() != null) {
+            return Boolean.TRUE.equals(stage.getSectionEnqueteOuverte());
         }
 
         LocalDate today = LocalDate.now();
-        LocalDate windowStart = today.minusDays(DUREE_VISIBILITE_APRES_REUNION_JOURS);
+        if (stage.getDateFin() != null && !today.isBefore(stage.getDateFin())) {
+            return true;
+        }
 
-        Optional<ReunionFinale> reunionDisponible = reunionFinaleRepository
-                .findAvailableForSatisfactionByUtilisateurId(utilisateur.getId(), windowStart, today)
+        if (stage.getId() == null) {
+            return false;
+        }
+
+        return reunionFinaleRepository.findByStageId(stage.getId())
                 .stream()
-                .max(Comparator.comparing(ReunionFinale::getDate, Comparator.nullsLast(Comparator.naturalOrder()))
-                        .thenComparing(ReunionFinale::getHeure, Comparator.nullsLast(Comparator.naturalOrder()))
-                        .thenComparing(ReunionFinale::getId, Comparator.nullsLast(Comparator.naturalOrder())));
+                .map(fsegs.pfebackendemnagouuiaa.entities.ReunionFinale::getDate)
+                .filter(Objects::nonNull)
+                .anyMatch(date -> !today.isBefore(date));
+    }
 
-        if (reunionDisponible.isPresent()) {
-            return toAvailableDto(enquete, reunionDisponible.get());
+    private void authorizeStageVisibility(Stage stage) {
+        Utilisateur utilisateur = getAuthenticatedUtilisateur();
+        if (isManagementRole(utilisateur.getRole())) {
+            return;
         }
 
-        boolean hadPastFinalMeeting = !reunionFinaleRepository
-                .findPastForSatisfactionByUtilisateurId(utilisateur.getId(), today)
-                .isEmpty();
-
-        if (hadPastFinalMeeting) {
-            return unavailable(MESSAGE_PERIODE_EXPIREE, true);
+        Long userId = utilisateur.getId();
+        Set<Long> allowedIds = new LinkedHashSet<>();
+        if (stage.getStagiaire() != null && stage.getStagiaire().getId() != null) {
+            allowedIds.add(stage.getStagiaire().getId());
+        }
+        if (stage.getEncadrantAcademique() != null && stage.getEncadrantAcademique().getId() != null) {
+            allowedIds.add(stage.getEncadrantAcademique().getId());
+        }
+        if (stage.getEncadrantProfessionnel() != null && stage.getEncadrantProfessionnel().getId() != null) {
+            allowedIds.add(stage.getEncadrantProfessionnel().getId());
+        }
+        if (stage.getTuteurEntreprise() != null && stage.getTuteurEntreprise().getId() != null) {
+            allowedIds.add(stage.getTuteurEntreprise().getId());
         }
 
-        return unavailable(MESSAGE_INDISPONIBLE, false);
-    }
-
-    private EnqueteSatisfactionDto toConfigurationDto(EnqueteSatisfaction enquete) {
-        EnqueteSatisfactionDto dto = new EnqueteSatisfactionDto();
-        dto.setEnqueteId(enquete.getId());
-        dto.setTitre(enquete.getTitre());
-        dto.setDescription(enquete.getDescription());
-        dto.setUrlFormulaire(enquete.getUrlFormulaire());
-        dto.setDisponible(isValidHttpUrl(enquete.getUrlFormulaire()));
-        dto.setStatut(Boolean.TRUE.equals(dto.getDisponible()) ? STATUT_DISPONIBLE : STATUT_NON_DISPONIBLE);
-        return dto;
-    }
-
-    private EnqueteSatisfactionDto toAvailableDto(EnqueteSatisfaction enquete, ReunionFinale reunionFinale) {
-        EnqueteSatisfactionDto dto = toConfigurationDto(enquete);
-        dto.setReunionFinaleId(reunionFinale.getId());
-        dto.setDateAtteinte(true);
-        dto.setDisponible(true);
-        dto.setStatut(STATUT_DISPONIBLE);
-
-        Stage stage = reunionFinale.getStage();
-        if (stage != null) {
-            dto.setStageId(stage.getId());
-            dto.setStageTitre(stage.getTitre());
+        if (userId == null || !allowedIds.contains(userId)) {
+            throw new AccessDeniedException("Acces refuse aux enquetes de ce stage.");
         }
-
-        return dto;
     }
 
-    private EnqueteSatisfactionDto emptyConfigurationDto() {
-        EnqueteSatisfactionDto dto = new EnqueteSatisfactionDto();
-        dto.setDisponible(false);
-        dto.setStatut(STATUT_NON_DISPONIBLE);
-        dto.setMessage(MESSAGE_INDISPONIBLE);
-        return dto;
+    private Utilisateur getAuthenticatedUtilisateur() {
+        return jwtService.getAuthenticatedUtilisateur()
+                .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifie introuvable."));
     }
 
-    private EnqueteSatisfactionDto unavailable(String message, boolean dateAtteinte) {
-        EnqueteSatisfactionDto dto = emptyConfigurationDto();
-        dto.setMessage(message);
-        dto.setDateAtteinte(dateAtteinte);
-        return dto;
+    private boolean isManagementRole(Role role) {
+        return MANAGEMENT_ROLES.contains(role);
     }
 
-    private String requireText(String value, String message) {
-        String normalized = normalizeText(value);
-        if (normalized == null) {
-            throw new IllegalArgumentException(message);
-        }
-        return normalized;
+    private boolean isSurveyEligibleStage(Stage stage) {
+        return stage != null
+                && stage.getId() != null
+                && stage.getStatut() != null
+                && (stage.getStatut() == StatutStage.EN_COURS || stage.getStatut() == StatutStage.TERMINE);
     }
 
-    private String normalizeText(String value) {
+    private String normalizeNullableText(String value) {
         if (value == null) {
             return null;
         }
-
         String normalized = value.trim();
         return normalized.isEmpty() ? null : normalized;
     }
 
-    private String normalizeUrl(String rawUrl, String invalidMessage) {
-        String normalized = requireText(rawUrl, "L'URL externe du formulaire est obligatoire.");
-        if (!isValidHttpUrl(normalized)) {
-            throw new IllegalArgumentException(invalidMessage);
+    private String safeText(String value, String fallback) {
+        if (value == null || value.isBlank()) {
+            return fallback;
         }
-        return normalized;
+        return value.trim();
     }
 
-    private boolean isValidHttpUrl(String rawUrl) {
-        String normalized = normalizeText(rawUrl);
-        if (normalized == null) {
-            return false;
+    private String resolveSurveyTitle(Stage stage) {
+        ReunionFinale reunionFinale = findReferenceFinalMeeting(stage);
+        String configured = reunionFinale != null ? normalizeNullableText(reunionFinale.getTitreEnqueteSatisfaction()) : null;
+        return configured != null ? configured : DEFAULT_SURVEY_TITLE;
+    }
+
+    private String resolveSurveyDescription(Stage stage) {
+        ReunionFinale reunionFinale = findReferenceFinalMeeting(stage);
+        String configured = reunionFinale != null ? normalizeNullableText(reunionFinale.getDescriptionEnqueteSatisfaction()) : null;
+        return configured != null ? configured : DEFAULT_SURVEY_DESCRIPTION;
+    }
+
+    private String resolveSurveyUrl(Stage stage) {
+        ReunionFinale reunionFinale = findReferenceFinalMeeting(stage);
+        String configured = reunionFinale == null ? null : normalizeNullableText(reunionFinale.getUrlFormSatisfaction());
+        return configured != null ? configured : DEFAULT_SURVEY_URL;
+    }
+
+    private ReunionFinale findReferenceFinalMeeting(Stage stage) {
+        if (stage == null || stage.getId() == null) {
+            return null;
         }
 
+        return reunionFinaleRepository.findByStageId(stage.getId())
+                .stream()
+                .filter(Objects::nonNull)
+                .sorted((left, right) -> {
+                    if (left.getDate() == null && right.getDate() == null) {
+                        return 0;
+                    }
+                    if (left.getDate() == null) {
+                        return 1;
+                    }
+                    if (right.getDate() == null) {
+                        return -1;
+                    }
+                    return right.getDate().compareTo(left.getDate());
+                })
+                .findFirst()
+                .orElse(null);
+    }
+
+    private Utilisateur resolveAuthenticatedUtilisateurSafely() {
         try {
-            URI uri = new URI(normalized);
-            String scheme = uri.getScheme();
-            return scheme != null
-                    && ("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))
-                    && uri.getHost() != null
-                    && !uri.getHost().isBlank();
-        } catch (URISyntaxException ex) {
-            return false;
+            return jwtService.getAuthenticatedUtilisateur().orElse(null);
+        } catch (RuntimeException ex) {
+            return null;
         }
     }
 
-    private boolean isSatisfactionActorRole(Role role) {
-        return role == Role.STAGIAIRE
-                || role == Role.ENCADRANT_ACADEMIQUE
-                || role == Role.ENCADRANT_PROFESSIONNEL
-                || role == Role.RESPONSABLE_ENTREPRISE;
-    }
 }

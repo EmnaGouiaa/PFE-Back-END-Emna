@@ -54,6 +54,9 @@ public class Utilisateur implements UserDetails {
     private Boolean actif = true;
 
     @Builder.Default
+    private Boolean supprime = false;
+
+    @Builder.Default
     private Boolean doitChangerMotDePasse = false;
     
     @Enumerated(EnumType.STRING)
@@ -94,10 +97,10 @@ public class Utilisateur implements UserDetails {
     @JsonIgnore
     public boolean isEnabled() { 
         // Si la valeur est null en base (pour les vieux comptes), on considère qu'il est actif
-        return !Boolean.FALSE.equals(this.actif);
+        return !Boolean.FALSE.equals(this.actif) && !Boolean.TRUE.equals(this.supprime);
     }
 
-    @ManyToMany
+    @ManyToMany(mappedBy = "participants")
     @JsonIgnore
     private Set<Reunion> reunions = new HashSet<>();
 

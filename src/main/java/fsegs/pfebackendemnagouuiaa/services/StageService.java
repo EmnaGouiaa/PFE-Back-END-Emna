@@ -1,10 +1,14 @@
 package fsegs.pfebackendemnagouuiaa.services;
 
 import fsegs.pfebackendemnagouuiaa.dto.CreateStageRequest;
+import fsegs.pfebackendemnagouuiaa.dto.RapportEnqueteSatisfactionResponse;
+import fsegs.pfebackendemnagouuiaa.dto.StageEnqueteSectionStatusResponse;
 import fsegs.pfebackendemnagouuiaa.entities.OffreStage;
 import fsegs.pfebackendemnagouuiaa.entities.ResponsableEntreprise;
 import fsegs.pfebackendemnagouuiaa.entities.Stage;
 import fsegs.pfebackendemnagouuiaa.entities.Stagiaire;
+import org.springframework.core.io.Resource;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
@@ -39,5 +43,9 @@ public interface StageService {
     Map<String, Object> genererRapportStage(Long stageId);
     Map<String, Object> getResumeTrelloStage(Long stageId);
     Map<String, Object> createTrelloBoardIfNotExists(Long stageId);
+    StageEnqueteSectionStatusResponse getEnqueteSectionStatus(Long stageId);
+    RapportEnqueteSatisfactionResponse uploadRapportEnquete(Long stageId, MultipartFile file);
+    Resource getRapportEnqueteResource(Long stageId);
+    RapportEnqueteSatisfactionResponse getRapportEnqueteMetadata(Long stageId);
 
 }

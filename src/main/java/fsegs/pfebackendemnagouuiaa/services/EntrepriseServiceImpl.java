@@ -6,6 +6,7 @@ import fsegs.pfebackendemnagouuiaa.mapper.EntrepriseMapper;
 import fsegs.pfebackendemnagouuiaa.repository.EntrepriseRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
@@ -66,9 +67,16 @@ public class EntrepriseServiceImpl implements EntrepriseService {
     }
 
     @Override
+    @Transactional
     public void delete(Long id) {
         Entreprise entreprise = entrepriseRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Entreprise introuvable avec l'id : " + id));
+
+        entreprise.getStages().forEach(stage -> {
+            stage.setTuteurEntreprise(null);
+            stage.setEncadrantProfessionnel(null);
+            stage.setOffreSource(null);
+        });
 
         entrepriseRepository.delete(entreprise);
     }

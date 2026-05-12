@@ -9,8 +9,10 @@ import fsegs.pfebackendemnagouuiaa.mapper.EncadrantProfessionnelMapper;
 import fsegs.pfebackendemnagouuiaa.repository.EncadrantProfessionnelRepository;
 import fsegs.pfebackendemnagouuiaa.repository.EntrepriseRepository;
 import fsegs.pfebackendemnagouuiaa.repository.ResponsableEntrepriseRepository;
+import fsegs.pfebackendemnagouuiaa.security.JwtService;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -20,6 +22,9 @@ import java.util.List;
 @RequiredArgsConstructor
 public class EncadrantProfessionnelServiceImpl implements EncadrantProfessionnelService {
 
+    private static final String RESPONSABLE_ENTREPRISE_ONLY_CREATE_MESSAGE =
+            "Le responsable entreprise peut seulement creer un encadrant professionnel.";
+
     private final EncadrantProfessionnelRepository encadrantProfessionnelRepository;
     private final EntrepriseRepository entrepriseRepository;
     private final ResponsableEntrepriseRepository responsableEntrepriseRepository;
@@ -28,12 +33,14 @@ public class EncadrantProfessionnelServiceImpl implements EncadrantProfessionnel
     private final ContactUniquenessService contactUniquenessService;
     private final CredentialPolicyService credentialPolicyService;
     private final AccountEmailService accountEmailService;
+    private final JwtService jwtService;
 
     @Override
     public EncadrantProfessionnelDto create(EncadrantProfessionnelDto dto) {
         String normalizedEmail = contactUniquenessService.normalizeAndValidateRequiredEmail(dto.getEmail(), "email");
         String normalizedPhone = contactUniquenessService.normalizeAndValidateRequiredPhone(dto.getTelephone(), "telephone");
         contactUniquenessService.validateUserContactForCreate(normalizedEmail, normalizedPhone);
+        Entreprise entreprise = loadRequiredEntreprise(dto.getEntrepriseId());
 
         EncadrantProfessionnel entity = encadrantProfessionnelMapper.toEntity(dto);
         String generatedPassword = generateTemporaryPassword();
@@ -43,10 +50,7 @@ public class EncadrantProfessionnelServiceImpl implements EncadrantProfessionnel
         entity.setDoitChangerMotDePasse(true);
         entity.setRole(Role.ENCADRANT_PROFESSIONNEL);
         entity.setActif(true);
-
-        if (dto.getEntrepriseId() != null) {
-            entity.setEntreprise(loadEntreprise(dto.getEntrepriseId()));
-        }
+        entity.setEntreprise(entreprise);
 
         EncadrantProfessionnel saved = encadrantProfessionnelRepository.save(entity);
         accountEmailService.sendProfessionalSupervisorAccountCreatedEmail(saved.getPrenom(), saved.getEmail(), generatedPassword);
@@ -55,12 +59,15 @@ public class EncadrantProfessionnelServiceImpl implements EncadrantProfessionnel
 
     @Override
     public EncadrantProfessionnelDto update(Long id, EncadrantProfessionnelDto dto) {
+        ensureResponsableEntrepriseCanOnlyCreate();
+
         EncadrantProfessionnel entity = encadrantProfessionnelRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Encadrant professionnel introuvable avec l'id : " + id));
 
         String normalizedEmail = contactUniquenessService.normalizeAndValidateRequiredEmail(dto.getEmail(), "email");
         String normalizedPhone = contactUniquenessService.normalizeAndValidateRequiredPhone(dto.getTelephone(), "telephone");
         contactUniquenessService.validateUserContactForUpdate(entity.getId(), normalizedEmail, normalizedPhone);
+        Entreprise entreprise = loadRequiredEntreprise(dto.getEntrepriseId());
 
         entity.setNom(dto.getNom());
         entity.setPrenom(dto.getPrenom());
@@ -68,12 +75,7 @@ public class EncadrantProfessionnelServiceImpl implements EncadrantProfessionnel
         entity.setTelephone(normalizedPhone);
         entity.setPoste(dto.getPoste());
         entity.setService(dto.getService());
-
-        if (dto.getEntrepriseId() != null) {
-            entity.setEntreprise(loadEntreprise(dto.getEntrepriseId()));
-        } else {
-            entity.setEntreprise(null);
-        }
+        entity.setEntreprise(entreprise);
 
         EncadrantProfessionnel updated = encadrantProfessionnelRepository.save(entity);
         return encadrantProfessionnelMapper.toDto(updated);
@@ -105,6 +107,8 @@ public class EncadrantProfessionnelServiceImpl implements EncadrantProfessionnel
 
     @Override
     public EncadrantProfessionnelDto createByResponsableEntreprise(Long responsableId, EncadrantProfessionnelDto dto) {
+        ensureAuthenticatedResponsableEntrepriseOwnsRequest(responsableId);
+
         ResponsableEntreprise responsable = responsableEntrepriseRepository.findById(responsableId)
                 .orElseThrow(() -> new EntityNotFoundException("Responsable entreprise introuvable avec l'id : " + responsableId));
 
@@ -133,15 +137,45 @@ public class EncadrantProfessionnelServiceImpl implements EncadrantProfessionnel
 
     @Override
     public void delete(Long id) {
+        ensureResponsableEntrepriseCanOnlyCreate();
+
         EncadrantProfessionnel entity = encadrantProfessionnelRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Encadrant professionnel introuvable avec l'id : " + id));
 
         encadrantProfessionnelRepository.delete(entity);
     }
 
+    private void ensureResponsableEntrepriseCanOnlyCreate() {
+        jwtService.getAuthenticatedUtilisateur().ifPresent(utilisateur -> {
+            if (utilisateur.getRole() == Role.RESPONSABLE_ENTREPRISE) {
+                throw new AccessDeniedException(RESPONSABLE_ENTREPRISE_ONLY_CREATE_MESSAGE);
+            }
+        });
+    }
+
+    private void ensureAuthenticatedResponsableEntrepriseOwnsRequest(Long responsableId) {
+        jwtService.getAuthenticatedUtilisateur().ifPresent(utilisateur -> {
+            if (utilisateur.getRole() != Role.RESPONSABLE_ENTREPRISE) {
+                return;
+            }
+
+            if (utilisateur.getId() == null || !utilisateur.getId().equals(responsableId)) {
+                throw new AccessDeniedException(RESPONSABLE_ENTREPRISE_ONLY_CREATE_MESSAGE);
+            }
+        });
+    }
+
     private Entreprise loadEntreprise(Long entrepriseId) {
         return entrepriseRepository.findById(entrepriseId)
                 .orElseThrow(() -> new EntityNotFoundException("Entreprise introuvable avec l'id : " + entrepriseId));
+    }
+
+    private Entreprise loadRequiredEntreprise(Long entrepriseId) {
+        if (entrepriseId == null) {
+            throw new IllegalArgumentException("L'encadrant professionnel doit etre rattache a une entreprise.");
+        }
+
+        return loadEntreprise(entrepriseId);
     }
 
     private String generateTemporaryPassword() {

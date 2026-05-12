@@ -7,8 +7,11 @@ import fsegs.pfebackendemnagouuiaa.dto.UpdatePasswordRequest;
 import fsegs.pfebackendemnagouuiaa.dto.UpdateProfileRequest;
 import fsegs.pfebackendemnagouuiaa.dto.UpdateUserRequest;
 import fsegs.pfebackendemnagouuiaa.dto.UserResponse;
+import fsegs.pfebackendemnagouuiaa.entities.CahierStage;
+import fsegs.pfebackendemnagouuiaa.entities.ConventionStage;
 import fsegs.pfebackendemnagouuiaa.entities.EncadrantAcademique;
 import fsegs.pfebackendemnagouuiaa.entities.EncadrantProfessionnel;
+import fsegs.pfebackendemnagouuiaa.entities.Role;
 import fsegs.pfebackendemnagouuiaa.entities.ResponsableEntreprise;
 import fsegs.pfebackendemnagouuiaa.entities.ResponsableServiceStages;
 import fsegs.pfebackendemnagouuiaa.entities.Stagiaire;
@@ -17,6 +20,8 @@ import fsegs.pfebackendemnagouuiaa.exception.AccountCreationException;
 import fsegs.pfebackendemnagouuiaa.exception.AccountEmailDeliveryException;
 import fsegs.pfebackendemnagouuiaa.exception.DuplicateFieldException;
 import fsegs.pfebackendemnagouuiaa.mapper.UtilisateurMapper;
+import fsegs.pfebackendemnagouuiaa.repository.CahierStageRepository;
+import fsegs.pfebackendemnagouuiaa.repository.ConventionStageRepository;
 import fsegs.pfebackendemnagouuiaa.repository.StageRepository;
 import fsegs.pfebackendemnagouuiaa.repository.UtilisateurRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -41,6 +46,9 @@ import fsegs.pfebackendemnagouuiaa.entities.Stage;
 @RequiredArgsConstructor
 public class UtilisateurServiceImpl implements UtilisateurService {
 
+    private static final String RESPONSABLE_ENTREPRISE_ONLY_CREATE_MESSAGE =
+            "Le responsable entreprise peut seulement creer un encadrant professionnel.";
+
     private final UtilisateurRepository utilisateurRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
@@ -48,10 +56,14 @@ public class UtilisateurServiceImpl implements UtilisateurService {
     private final CredentialPolicyService credentialPolicyService;
     private final AccountEmailService accountEmailService;
     private final StageRepository stageRepository;
+    private final ConventionStageRepository conventionStageRepository;
+    private final CahierStageRepository cahierStageRepository;
     private final NotificationService notificationService;
 
     @Override
     public UserResponse createUser(CreateUserRequest request) {
+        validateAdminManagedRoleCreation(request.getRole());
+
         Utilisateur utilisateur = UtilisateurMapper.toEntity(request);
         String email;
         String telephone;
@@ -273,6 +285,7 @@ public class UtilisateurServiceImpl implements UtilisateurService {
         }
 
         Utilisateur updated = utilisateurRepository.save(utilisateur);
+        synchroniserDonneesStagiaireLiees(updated);
         notifierStagiairesSiSignatureAjouteeOuMiseAJour(updated, previousSignature, request.getNomFichierSignature() != null);
         return UtilisateurMapper.toProfileResponse(updated);
     }
@@ -307,6 +320,8 @@ public class UtilisateurServiceImpl implements UtilisateurService {
                 throw new IllegalArgumentException("Cette adresse e-mail est déjà utilisée", ex);
             }
         }
+
+        synchroniserDonneesStagiaireLiees(utilisateur);
 
         String token = jwtService.generateToken(utilisateur);
 
@@ -355,7 +370,7 @@ public class UtilisateurServiceImpl implements UtilisateurService {
 
     @Override
     public UserResponse getUserById(Long id) {
-        Utilisateur utilisateur = utilisateurRepository.findById(id)
+        Utilisateur utilisateur = utilisateurRepository.findVisibleUserById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Utilisateur introuvable avec l'id : " + id));
 
         return UtilisateurMapper.toResponse(utilisateur);
@@ -363,7 +378,7 @@ public class UtilisateurServiceImpl implements UtilisateurService {
 
     @Override
     public List<UserResponse> getAllUsers() {
-        return utilisateurRepository.findAll()
+        return utilisateurRepository.findVisibleUsers()
                 .stream()
                 .map(UtilisateurMapper::toResponse)
                 .toList();
@@ -379,13 +394,59 @@ public class UtilisateurServiceImpl implements UtilisateurService {
         return updateUserActivation(id, true);
     }
 
-    private UserResponse updateUserActivation(Long id, boolean active) {
+    @Override
+    @Transactional
+    public void deleteUser(Long id) {
+        Utilisateur authenticatedUser = jwtService.getAuthenticatedUtilisateur()
+                .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifie introuvable."));
+
         Utilisateur utilisateur = utilisateurRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Utilisateur introuvable avec l'id : " + id));
+
+        if (Boolean.TRUE.equals(utilisateur.getSupprime())) {
+            throw new EntityNotFoundException("Cet utilisateur a deja ete supprime.");
+        }
+
+        if (authenticatedUser.getId().equals(utilisateur.getId())) {
+            throw new IllegalArgumentException("Vous ne pouvez pas supprimer votre propre compte.");
+        }
+
+        utilisateur.setSupprime(true);
+        utilisateur.setActif(false);
+        utilisateur.setDoitChangerMotDePasse(false);
+        utilisateur.setEmail(buildDeletedUniqueValue("deleted", utilisateur.getId(), utilisateur.getEmail()));
+        utilisateur.setTelephone(buildDeletedUniqueValue("deleted-phone", utilisateur.getId(), utilisateur.getTelephone()));
+        utilisateur.setMatricule(buildDeletedUniqueValue("deleted-matricule", utilisateur.getId(), utilisateur.getMatricule()));
+
+        utilisateurRepository.save(utilisateur);
+    }
+
+    private UserResponse updateUserActivation(Long id, boolean active) {
+        Utilisateur authenticatedUser = jwtService.getAuthenticatedUtilisateur()
+                .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifie introuvable."));
+
+        Utilisateur utilisateur = utilisateurRepository.findVisibleUserById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Utilisateur introuvable avec l'id : " + id));
+
+        if (authenticatedUser.getRole() != null && authenticatedUser.getRole().name().equals("RESPONSABLE_ENTREPRISE")) {
+            if (utilisateur instanceof EncadrantProfessionnel) {
+                throw new AccessDeniedException(RESPONSABLE_ENTREPRISE_ONLY_CREATE_MESSAGE);
+            }
+
+            throw new AccessDeniedException("Seul l'administrateur peut modifier le statut d'un utilisateur.");
+        }
 
         utilisateur.setActif(active);
         Utilisateur updated = utilisateurRepository.save(utilisateur);
         return UtilisateurMapper.toResponse(updated);
+    }
+
+    private void validateAdminManagedRoleCreation(Role role) {
+        if (role == Role.RESPONSABLE_ENTREPRISE || role == Role.ENCADRANT_PROFESSIONNEL) {
+            throw new IllegalArgumentException(
+                    "Ce role doit etre cree depuis la section Entreprises & responsables."
+            );
+        }
     }
 
     private Utilisateur findOwnedUser(Long id) {
@@ -397,6 +458,7 @@ public class UtilisateurServiceImpl implements UtilisateurService {
         }
 
         return utilisateurRepository.findById(id)
+                .filter(utilisateur -> !Boolean.TRUE.equals(utilisateur.getSupprime()))
                 .orElseThrow(() -> new EntityNotFoundException("Utilisateur introuvable avec l'id : " + id));
     }
 
@@ -526,11 +588,99 @@ public class UtilisateurServiceImpl implements UtilisateurService {
         };
     }
 
+    private void synchroniserDonneesStagiaireLiees(Utilisateur utilisateur) {
+        if (!(utilisateur instanceof Stagiaire stagiaire) || stagiaire.getId() == null) {
+            return;
+        }
+
+        List<Stage> stages = stageRepository.findByStagiaireId(stagiaire.getId());
+        if (stages.isEmpty()) {
+            return;
+        }
+
+        String nomCompletStagiaire = buildFullName(stagiaire);
+        for (Stage stage : stages) {
+            if (stage == null || stage.getId() == null) {
+                continue;
+            }
+
+            synchroniserConventionStagiaire(stage.getId(), stagiaire, nomCompletStagiaire);
+            synchroniserCahierStageStagiaire(stage.getId(), stagiaire, nomCompletStagiaire);
+        }
+    }
+
+    private void synchroniserConventionStagiaire(Long stageId, Stagiaire stagiaire, String nomCompletStagiaire) {
+        conventionStageRepository.findByStageId(stageId)
+                .ifPresent(convention -> {
+                    boolean updated = false;
+
+                    if (convention.getSignataireStagiaireId() != null
+                            && convention.getSignataireStagiaireId().equals(stagiaire.getId())
+                            && !sameText(convention.getNomSignataireStagiaire(), nomCompletStagiaire)) {
+                        convention.setNomSignataireStagiaire(nomCompletStagiaire);
+                        updated = true;
+                    }
+
+                    if (hasText(stagiaire.getNomFichierSignature())
+                            && !sameText(convention.getImageSignatureStagiaire(), stagiaire.getNomFichierSignature())) {
+                        convention.setImageSignatureStagiaire(stagiaire.getNomFichierSignature());
+                        updated = true;
+                    }
+
+                    if (updated) {
+                        conventionStageRepository.save(convention);
+                    }
+                });
+    }
+
+    private void synchroniserCahierStageStagiaire(Long stageId, Stagiaire stagiaire, String nomCompletStagiaire) {
+        cahierStageRepository.findByStageId(stageId)
+                .ifPresent(cahierStage -> {
+                    boolean updated = false;
+
+                    if (cahierStage.getSignataireStagiaireId() != null
+                            && cahierStage.getSignataireStagiaireId().equals(stagiaire.getId())
+                            && !sameText(cahierStage.getNomSignataireStagiaire(), nomCompletStagiaire)) {
+                        cahierStage.setNomSignataireStagiaire(nomCompletStagiaire);
+                        updated = true;
+                    }
+
+                    if (hasText(stagiaire.getNomFichierSignature())
+                            && !sameText(cahierStage.getImageSignatureStagiaire(), stagiaire.getNomFichierSignature())) {
+                        cahierStage.setImageSignatureStagiaire(stagiaire.getNomFichierSignature());
+                        updated = true;
+                    }
+
+                    if (updated) {
+                        cahierStageRepository.save(cahierStage);
+                    }
+                });
+    }
+
+    private String buildFullName(Utilisateur utilisateur) {
+        if (utilisateur == null) {
+            return "";
+        }
+
+        return ((utilisateur.getPrenom() == null ? "" : utilisateur.getPrenom().trim()) + " "
+                + (utilisateur.getNom() == null ? "" : utilisateur.getNom().trim())).trim();
+    }
+
     private boolean hasText(String value) {
         return value != null && !value.trim().isEmpty();
     }
 
+    private boolean sameText(String left, String right) {
+        return normalize(left).equals(normalize(right));
+    }
+
     private String normalize(String value) {
         return value == null ? "" : value.trim();
+    }
+
+    private String buildDeletedUniqueValue(String prefix, Long id, String originalValue) {
+        String original = normalize(originalValue);
+        String suffix = hasText(original) ? "-" + original.replaceAll("\\s+", "-") : "";
+        return prefix + "-" + id + suffix;
     }
 }
