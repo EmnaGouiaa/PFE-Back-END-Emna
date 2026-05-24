@@ -7,6 +7,7 @@ import fsegs.pfebackendemnagouuiaa.entities.ResponsableEntreprise;
 import fsegs.pfebackendemnagouuiaa.entities.Role;
 import fsegs.pfebackendemnagouuiaa.entities.StatutDemande;
 import fsegs.pfebackendemnagouuiaa.entities.StatutValidation;
+import fsegs.pfebackendemnagouuiaa.entities.TypeNotification;
 import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
 import fsegs.pfebackendemnagouuiaa.repository.DemandeCreationCompteEntrepriseRepository;
 import fsegs.pfebackendemnagouuiaa.repository.EntrepriseRepository;
@@ -15,6 +16,7 @@ import fsegs.pfebackendemnagouuiaa.repository.UtilisateurRepository;
 import fsegs.pfebackendemnagouuiaa.security.JwtService;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -24,6 +26,7 @@ import java.security.SecureRandom;
 import java.util.List;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class DemandeCreationCompteEntrepriseServiceImpl implements DemandeCreationCompteEntrepriseService {
 
@@ -57,10 +60,17 @@ public class DemandeCreationCompteEntrepriseServiceImpl implements DemandeCreati
                 .telephoneResponsable(normalized.telephoneResponsable())
                 .build();
 
-        return demandeRepository.save(demande);
+        DemandeCreationCompteEntreprise saved = demandeRepository.save(demande);
+        try {
+            notifierResponsableUniversitaireNouvelleDemande(saved);
+        } catch (Exception ex) {
+            log.warn("Notification non envoyee pour la soumission de la demande {} : {}", saved.getId(), ex.getMessage());
+        }
+        return saved;
     }
 
     @Override
+    @Transactional
     public DemandeCreationCompteEntreprise updateDemande(Long id, CreateDemandeCreationCompteEntrepriseRequest request) {
         DemandeCreationCompteEntreprise demande = demandeRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Demande introuvable"));
@@ -102,14 +112,6 @@ public class DemandeCreationCompteEntrepriseServiceImpl implements DemandeCreati
     }
 
     @Override
-    public void deleteDemande(Long id) {
-        if (!demandeRepository.existsById(id)) {
-            throw new EntityNotFoundException("Demande introuvable");
-        }
-        demandeRepository.deleteById(id);
-    }
-
-    @Override
     public List<DemandeCreationCompteEntreprise> getDemandesByStagiaire(Long stagiaireId) {
         authorizeStagiaireAccess(stagiaireId);
         return demandeRepository.findByStagiaireId(stagiaireId);
@@ -117,89 +119,63 @@ public class DemandeCreationCompteEntrepriseServiceImpl implements DemandeCreati
 
     @Override
     @Transactional
-    public DemandeCreationCompteEntreprise validerParAdmin(Long demandeId, Long adminId) {
-        DemandeCreationCompteEntreprise demande = demandeRepository.findById(demandeId)
-                .orElseThrow(() -> new EntityNotFoundException("Demande introuvable"));
-        ensureDemandeStillActionable(demande);
-        authorizeAdminActor(adminId);
-
-        utilisateurRepository.findById(adminId)
-                .orElseThrow(() -> new EntityNotFoundException("Admin introuvable"));
-
-        demande.setValideeParAdminId(adminId);
-        demande.setStatutAdmin(StatutValidation.VALIDEE);
-        mettreAJourStatutGlobal(demande);
-
-        DemandeCreationCompteEntreprise saved = demandeRepository.save(demande);
-        finaliserCreationCompteEntrepriseSiDoubleValidation(saved);
-        return saved;
-    }
-
-    @Override
-    public DemandeCreationCompteEntreprise refuserParAdmin(Long demandeId, Long adminId, String commentaire) {
-        DemandeCreationCompteEntreprise demande = demandeRepository.findById(demandeId)
-                .orElseThrow(() -> new EntityNotFoundException("Demande introuvable"));
-        ensureDemandeStillActionable(demande);
-        authorizeAdminActor(adminId);
-        String commentaireNormalise = normalizeRequiredComment(commentaire);
-
-        utilisateurRepository.findById(adminId)
-                .orElseThrow(() -> new EntityNotFoundException("Admin introuvable"));
-
-        demande.setValideeParAdminId(adminId);
-        demande.setStatutAdmin(StatutValidation.REFUSEE);
-        demande.setCommentaireAdmin(commentaireNormalise);
-        demande.setStatut(StatutDemande.REFUSEE);
-        DemandeCreationCompteEntreprise saved = demandeRepository.save(demande);
-        notifierRefusDemande(saved, commentaireNormalise);
-        return saved;
-    }
-
-    @Override
-    public DemandeCreationCompteEntreprise validerParEncadrantAcademique(Long demandeId, Long encadrantId) {
-        DemandeCreationCompteEntreprise demande = demandeRepository.findById(demandeId)
-                .orElseThrow(() -> new EntityNotFoundException("Demande introuvable"));
-        ensureDemandeStillActionable(demande);
-
-        Utilisateur encadrant = utilisateurRepository.findById(encadrantId)
-                .orElseThrow(() -> new EntityNotFoundException("Encadrant introuvable"));
-
-        demande.setValideeParEncadrantAcademique(encadrant);
-        demande.setValideeParEncadrantId(encadrantId);
-        mettreAJourStatutGlobal(demande);
-
-        return demandeRepository.save(demande);
-    }
-
-    @Override
-    public DemandeCreationCompteEntreprise refuserParEncadrantAcademique(Long demandeId, Long encadrantId) {
-        DemandeCreationCompteEntreprise demande = demandeRepository.findById(demandeId)
-                .orElseThrow(() -> new EntityNotFoundException("Demande introuvable"));
-        ensureDemandeStillActionable(demande);
-
-        Utilisateur encadrant = utilisateurRepository.findById(encadrantId)
-                .orElseThrow(() -> new EntityNotFoundException("Encadrant introuvable"));
-
-        demande.setValideeParEncadrantAcademique(encadrant);
-        demande.setValideeParEncadrantId(encadrantId);
-        demande.setStatut(StatutDemande.REFUSEE);
-
-        return demandeRepository.save(demande);
-    }
-
-    @Override
-    @Transactional
     public DemandeCreationCompteEntreprise validerParResponsableStages(Long demandeId) {
         DemandeCreationCompteEntreprise demande = demandeRepository.findById(demandeId)
                 .orElseThrow(() -> new EntityNotFoundException("Demande introuvable"));
+
+        // Idempotence : si déjà validée par le responsable, retour sans re-créer le compte.
+        if (demande.getStatutResponsableStages() == StatutValidation.VALIDEE) {
+            log.info("[DemandeService] validerParResponsableStages: demande {} deja approuvee — retour idempotent.", demandeId);
+            return demande;
+        }
+
         ensureDemandeStillActionable(demande);
+
+        // Vérification AVANT le save pour éviter un rollback inutile de la mise à jour du statut.
+        verifierCreationCompteResponsablePossible(demande);
 
         demande.setStatutResponsableStages(StatutValidation.VALIDEE);
         mettreAJourStatutGlobal(demande);
 
         DemandeCreationCompteEntreprise saved = demandeRepository.save(demande);
-        finaliserCreationCompteEntrepriseSiDoubleValidation(saved);
+        finaliserCreationCompteEntrepriseSiApprouvee(saved);
         return saved;
+    }
+
+    private void verifierCreationCompteResponsablePossible(DemandeCreationCompteEntreprise demande) {
+        if (demande.getNomEntreprise() == null || demande.getNomEntreprise().isBlank()) {
+            throw new IllegalStateException("Le nom de l'entreprise est manquant dans la demande. Veuillez corriger la demande avant de valider.");
+        }
+        if (demande.getEmailResponsable() == null || demande.getEmailResponsable().isBlank()) {
+            throw new IllegalStateException("L'adresse email du responsable est manquante dans la demande. Veuillez corriger la demande avant de valider.");
+        }
+        if (demande.getNomResponsable() == null || demande.getNomResponsable().isBlank()) {
+            throw new IllegalStateException("Le nom du responsable est manquant dans la demande. Veuillez corriger la demande avant de valider.");
+        }
+        if (demande.getPrenomResponsable() == null || demande.getPrenomResponsable().isBlank()) {
+            throw new IllegalStateException("Le prenom du responsable est manquant dans la demande. Veuillez corriger la demande avant de valider.");
+        }
+
+        Utilisateur existingByEmail = utilisateurRepository.findByEmailIgnoreCase(demande.getEmailResponsable()).orElse(null);
+        if (existingByEmail != null && !(existingByEmail instanceof ResponsableEntreprise)) {
+            throw new IllegalStateException(
+                "Un compte utilisateur existe deja avec l'adresse email du responsable : "
+                + demande.getEmailResponsable()
+                + ". Impossible de creer un compte entreprise avec cet email."
+            );
+        }
+
+        if (demande.getTelephoneResponsable() != null && !demande.getTelephoneResponsable().isBlank()) {
+            utilisateurRepository.findByTelephone(demande.getTelephoneResponsable()).ifPresent(existing -> {
+                if (!(existing instanceof ResponsableEntreprise)) {
+                    throw new IllegalStateException(
+                        "Un compte utilisateur existe deja avec le numero de telephone du responsable : "
+                        + demande.getTelephoneResponsable()
+                        + ". Impossible de creer un compte entreprise avec ce telephone."
+                    );
+                }
+            });
+        }
     }
 
     @Override
@@ -218,29 +194,58 @@ public class DemandeCreationCompteEntrepriseServiceImpl implements DemandeCreati
     }
 
     private void mettreAJourStatutGlobal(DemandeCreationCompteEntreprise demande) {
-        boolean adminValide = demande.getStatutAdmin() == StatutValidation.VALIDEE;
-        boolean responsableValide = demande.getStatutResponsableStages() == StatutValidation.VALIDEE;
-        boolean adminRefuse = demande.getStatutAdmin() == StatutValidation.REFUSEE;
-        boolean responsableRefuse = demande.getStatutResponsableStages() == StatutValidation.REFUSEE;
-
-        if (adminValide && responsableValide) {
+        StatutValidation resp = demande.getStatutResponsableStages();
+        if (resp == StatutValidation.VALIDEE) {
             demande.setStatut(StatutDemande.VALIDEE);
-        } else if (adminRefuse || responsableRefuse) {
+        } else if (resp == StatutValidation.REFUSEE) {
             demande.setStatut(StatutDemande.REFUSEE);
         } else {
             demande.setStatut(StatutDemande.EN_ATTENTE);
         }
     }
 
-    private void finaliserCreationCompteEntrepriseSiDoubleValidation(DemandeCreationCompteEntreprise demande) {
+    private void finaliserCreationCompteEntrepriseSiApprouvee(DemandeCreationCompteEntreprise demande) {
         if (demande == null || demande.getId() == null) return;
         if (demande.getStatut() != StatutDemande.VALIDEE) return;
 
         creerEntrepriseDepuisDemandeSiNecessaire(demande);
         Long stagiaireId = demande.getStagiaire() != null ? demande.getStagiaire().getId() : null;
         if (stagiaireId != null) {
-            notificationService.notifierDemandeEntrepriseValidee(stagiaireId, demande.getId(), demande.getNomEntreprise());
+            try {
+                notificationService.notifierDemandeEntrepriseValidee(stagiaireId, demande.getId(), demande.getNomEntreprise());
+            } catch (Exception ex) {
+                log.warn("Notification d'approbation non envoyee pour la demande {} : {}", demande.getId(), ex.getMessage());
+            }
         }
+    }
+
+    private void notifierResponsableUniversitaireNouvelleDemande(DemandeCreationCompteEntreprise demande) {
+        if (demande == null || demande.getId() == null) {
+            return;
+        }
+
+        List<Utilisateur> responsables = utilisateurRepository.findByRole(Role.RESPONSABLE_STAGE);
+        if (responsables.isEmpty()) {
+            return;
+        }
+
+        String nomEntreprise = demande.getNomEntreprise() == null || demande.getNomEntreprise().isBlank()
+                ? "une nouvelle entreprise"
+                : demande.getNomEntreprise().trim();
+        String nomStagiaire = demande.getStagiaire() == null
+                ? "Un stagiaire"
+                : ((demande.getStagiaire().getPrenom() == null ? "" : demande.getStagiaire().getPrenom().trim()) + " "
+                + (demande.getStagiaire().getNom() == null ? "" : demande.getStagiaire().getNom().trim())).trim();
+
+        notificationService.createNotification(
+                "Nouvelle demande d'ajout d'entreprise",
+                (nomStagiaire.isBlank() ? "Un stagiaire" : nomStagiaire)
+                        + " a soumis une demande pour ajouter l'entreprise "
+                        + nomEntreprise
+                        + ".",
+                TypeNotification.VALIDATION_ENTREPRISE,
+                responsables
+        );
     }
 
     private void notifierRefusDemande(DemandeCreationCompteEntreprise demande, String motifRefus) {
@@ -248,11 +253,15 @@ public class DemandeCreationCompteEntrepriseServiceImpl implements DemandeCreati
             return;
         }
 
-        notificationService.notifierDemandeEntrepriseRefusee(
-                demande.getStagiaire().getId(),
-                demande.getId(),
-                motifRefus
-        );
+        try {
+            notificationService.notifierDemandeEntrepriseRefusee(
+                    demande.getStagiaire().getId(),
+                    demande.getId(),
+                    motifRefus
+            );
+        } catch (Exception ex) {
+            log.warn("Notification de refus non envoyee pour la demande {} : {}", demande.getId(), ex.getMessage());
+        }
     }
 
     private void creerEntrepriseDepuisDemandeSiNecessaire(DemandeCreationCompteEntreprise demande) {
@@ -288,21 +297,23 @@ public class DemandeCreationCompteEntrepriseServiceImpl implements DemandeCreati
                 .entreprise(entreprise)
                 .role(Role.RESPONSABLE_ENTREPRISE)
                 .actif(true)
+                .supprime(false)
                 .doitChangerMotDePasse(true)
                 .motDePasse(passwordEncoder.encode(motDePasseTemporaire))
                 .build();
 
         responsableEntrepriseRepository.save(responsable);
-        notificationService.notifierCreationCompteEntreprise(responsable.getEmail(), motDePasseTemporaire, entreprise.getNom());
         try {
-            accountEmailService.sendAccountCreatedEmail(
-                    responsable.getPrenom(),
-                    responsable.getEmail(),
-                    motDePasseTemporaire
-            );
-        } catch (RuntimeException ex) {
-            // Keep the approved account creation flow successful even if SMTP fails.
+            notificationService.notifierCreationCompteEntreprise(responsable.getEmail(), motDePasseTemporaire, entreprise.getNom());
+        } catch (Exception ex) {
+            // La notification ne doit jamais faire échouer la création du compte.
+            log.warn("Notification de creation de compte non envoyee pour {} : {}", responsable.getEmail(), ex.getMessage());
         }
+        accountEmailService.sendAccountCreatedEmailAsync(
+                responsable.getPrenom(),
+                responsable.getEmail(),
+                motDePasseTemporaire
+        );
     }
 
     private Long resolveAuthorizedStagiaireId(Long requestedStagiaireId) {
@@ -360,16 +371,9 @@ public class DemandeCreationCompteEntrepriseServiceImpl implements DemandeCreati
 
         String normalized = commentaire.trim();
         if (normalized.length() > 1000) {
-            throw new IllegalArgumentException("Le motif du refus ne doit pas dépasser 1000 caractères.");
+            throw new IllegalArgumentException("Le motif du refus ne doit pas depasser 1000 caracteres.");
         }
         return normalized;
-    }
-
-    private void authorizeAdminActor(Long adminId) {
-        Utilisateur utilisateur = getAuthenticatedUtilisateur();
-        if (utilisateur.getRole() == Role.ADMINISTRATEUR && !utilisateur.getId().equals(adminId)) {
-            throw new AccessDeniedException("L'identifiant administrateur ne correspond pas a la session authentifiee.");
-        }
     }
 
     private Utilisateur getAuthenticatedUtilisateur() {
@@ -437,28 +441,28 @@ public class DemandeCreationCompteEntrepriseServiceImpl implements DemandeCreati
         utilisateurRepository.findByEmailIgnoreCase(emailResponsable).ifPresent(existing -> {
             throw new fsegs.pfebackendemnagouuiaa.exception.DuplicateFieldException(
                     "emailResponsable",
-                    "L'e-mail du représentant est déjà utilisé."
+                    "L'email du representant est deja utilise."
             );
         });
 
         responsableEntrepriseRepository.findByEmailIgnoreCase(emailResponsable).ifPresent(existing -> {
             throw new fsegs.pfebackendemnagouuiaa.exception.DuplicateFieldException(
                     "emailResponsable",
-                    "L'e-mail du représentant est déjà utilisé."
+                    "L'email du representant est deja utilise."
             );
         });
 
         utilisateurRepository.findByTelephone(telephoneResponsable).ifPresent(existing -> {
             throw new fsegs.pfebackendemnagouuiaa.exception.DuplicateFieldException(
                     "telephoneResponsable",
-                    "Le numéro du représentant existe déjà."
+                    "Le numero du representant est deja utilise."
             );
         });
 
         responsableEntrepriseRepository.findByTelephone(telephoneResponsable).ifPresent(existing -> {
             throw new fsegs.pfebackendemnagouuiaa.exception.DuplicateFieldException(
                     "telephoneResponsable",
-                    "Le numéro du représentant existe déjà."
+                    "Le numero du representant est deja utilise."
             );
         });
     }

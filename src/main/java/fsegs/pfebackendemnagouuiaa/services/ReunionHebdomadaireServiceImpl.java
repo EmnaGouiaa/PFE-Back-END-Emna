@@ -106,8 +106,6 @@ public class ReunionHebdomadaireServiceImpl implements ReunionHebdomadaireServic
         entity.setHeure(dto.getHeure());
         entity.setObservation(dto.getObservation());
         entity.setCompteRendu(dto.getCompteRendu());
-        entity.setNumSemaine(dto.getNumSemaine());
-        entity.setObjectifsSemaineProchaine(dto.getObjectifsSemaineProchaine());
 
         if (dto.getStageId() != null) {
             Stage stage = stageRepository.findById(dto.getStageId())

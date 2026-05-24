@@ -4,11 +4,13 @@ import fsegs.pfebackendemnagouuiaa.dto.CreateOffreStageRequest;
 import fsegs.pfebackendemnagouuiaa.dto.AffecterEtudiantOffreResponse;
 import fsegs.pfebackendemnagouuiaa.dto.AnnulerAffectationOffreResponse;
 import fsegs.pfebackendemnagouuiaa.dto.OffreStageResponse;
+import fsegs.pfebackendemnagouuiaa.entities.EncadrantProfessionnel;
 import fsegs.pfebackendemnagouuiaa.entities.Entreprise;
 import fsegs.pfebackendemnagouuiaa.entities.OffreStage;
 import fsegs.pfebackendemnagouuiaa.entities.ResponsableEntreprise;
 import fsegs.pfebackendemnagouuiaa.entities.ResponsableServiceStages;
 import fsegs.pfebackendemnagouuiaa.entities.Role;
+import fsegs.pfebackendemnagouuiaa.entities.RoleSignature;
 import fsegs.pfebackendemnagouuiaa.entities.Stage;
 import fsegs.pfebackendemnagouuiaa.entities.StatutStage;
 import fsegs.pfebackendemnagouuiaa.entities.StatutOffre;
@@ -19,6 +21,7 @@ import fsegs.pfebackendemnagouuiaa.exception.TechnicalOperationException;
 import fsegs.pfebackendemnagouuiaa.repository.AbsenceRepository;
 import fsegs.pfebackendemnagouuiaa.repository.CahierStageRepository;
 import fsegs.pfebackendemnagouuiaa.repository.ConventionStageRepository;
+import fsegs.pfebackendemnagouuiaa.repository.EncadrantProfessionnelRepository;
 import fsegs.pfebackendemnagouuiaa.repository.EntrepriseRepository;
 import fsegs.pfebackendemnagouuiaa.repository.FicheEvaluationRepository;
 import fsegs.pfebackendemnagouuiaa.repository.OffreStageRepository;
@@ -32,6 +35,7 @@ import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -53,6 +57,7 @@ public class OffreStageServiceImpl implements OffreStageService {
     private final StageRepository stageRepository;
     private final CahierStageRepository cahierStageRepository;
     private final ConventionStageRepository conventionStageRepository;
+    private final EncadrantProfessionnelRepository encadrantProfessionnelRepository;
     private final FicheEvaluationRepository ficheEvaluationRepository;
     private final ReunionRepository reunionRepository;
     private final AbsenceRepository absenceRepository;
@@ -65,6 +70,17 @@ public class OffreStageServiceImpl implements OffreStageService {
     @Override
     public OffreStageResponse createOffre(CreateOffreStageRequest request) {
         Utilisateur authenticatedUser = getAuthenticatedUser();
+
+        // Validation des donnees (champs obligatoires, duree 1-4 mois, date de debut >= aujourd'hui...).
+        // Appliquee a la creation comme a la modification pour une regle coherente.
+        validateOfferRequest(request);
+
+        // Période de création : uniquement pour le rôle RESPONSABLE_ENTREPRISE.
+        // Les rôles RESPONSABLE_STAGE et ADMINISTRATEUR ne sont pas soumis à cette restriction.
+        if (authenticatedUser.getRole() == Role.RESPONSABLE_ENTREPRISE) {
+            validateCreationPeriod();
+        }
+
         OffreStage offre = new OffreStage();
 
         offre.setTitre(request.getTitre());
@@ -88,6 +104,26 @@ public class OffreStageServiceImpl implements OffreStageService {
         Utilisateur authenticatedUser = getAuthenticatedUser();
         OffreStage offre = findOffreById(id);
         ensureRepresentativeCanAccessOffer(offre, authenticatedUser);
+
+        // Regle metier (RESPONSABLE_ENTREPRISE uniquement) :
+        //   - REFUSEE                                : modification interdite (bloquage definitif).
+        //   - EN_ATTENTE (avant approbation)          : modification libre integrale.
+        //   - VALIDEE / PUBLIEE / AFFECTEE (approuvee): seuls les champs non critiques (titre,
+        //     profil recherche, encadrant pro) peuvent etre modifies. Description, duree et
+        //     date de debut sont silencieusement preservees pour ne pas contourner la validation
+        //     responsable stages / academique.
+        //   - TERMINEE / ARCHIVEE / FERMEE            : pris en charge par ensureOfferCanBeUpdated.
+        if (authenticatedUser.getRole() == Role.RESPONSABLE_ENTREPRISE) {
+            if (offre.getStatut() == StatutOffre.REFUSEE) {
+                throw new IllegalStateException(
+                        "Cette offre a été refusée par le Responsable des Stages et ne peut plus être modifiée. "
+                                + "Veuillez créer une nouvelle offre pour toute correction.");
+            }
+            if (offre.getStatut() != StatutOffre.EN_ATTENTE) {
+                return updateNonCriticalFieldsOnly(offre, request, authenticatedUser);
+            }
+        }
+
         validateOfferRequest(request);
         ensureOfferCanBeUpdated(offre, authenticatedUser);
 
@@ -108,6 +144,66 @@ public class OffreStageServiceImpl implements OffreStageService {
             throw ex;
         } catch (RuntimeException ex) {
             log.error("Erreur technique lors de la modification de l'offre {}", id, ex);
+            throw new TechnicalOperationException(
+                    "Une erreur technique est survenue lors de l'enregistrement.",
+                    ex
+            );
+        }
+    }
+
+    /**
+     * Mise a jour apres validation academique : seuls les champs non sensibles peuvent etre
+     * mis a jour. Sensibles (verrouilles) : description des missions, duree, date de debut.
+     * Non sensibles (modifiables) : titre, profil recherche, encadrant professionnel.
+     * Le statut de l'offre n'est pas reinitialise (pas de retour a EN_ATTENTE), pour ne pas
+     * perturber le suivi en cours.
+     */
+    private OffreStageResponse updateNonCriticalFieldsOnly(
+            OffreStage offre,
+            CreateOffreStageRequest request,
+            Utilisateur authenticatedUser
+    ) {
+        try {
+            offre.setTitre(normalizeRequiredField(request.getTitre(), "titre"));
+            if (offre.getTitre().length() < 3) {
+                throw new IllegalArgumentException("Le titre doit contenir au moins 3 caractères.");
+            }
+            offre.setProfilRecherche(normalizeOptionalText(request.getProfilRecherche()));
+            // Mise a jour de l'encadrant pro (champ non sensible cote academique).
+            // assignEncadrantProToOffre verifie l'appartenance a l'entreprise et l'obligation.
+            assignEncadrantProToOffre(offre, request, offre.getEntreprise(), authenticatedUser);
+            // descriptionMissions, duree, dateDebutPrevue : valeurs en base preservees.
+            return toResponse(offreStageRepository.save(offre));
+        } catch (IllegalArgumentException | IllegalStateException ex) {
+            throw ex;
+        } catch (RuntimeException ex) {
+            log.error("Erreur technique lors de la mise a jour partielle (post-validation) de l'offre {}", offre.getId(), ex);
+            throw new TechnicalOperationException(
+                    "Une erreur technique est survenue lors de l'enregistrement.",
+                    ex
+            );
+        }
+    }
+
+    /**
+     * @deprecated Conserve pour reference. Remplace par {@link #updateNonCriticalFieldsOnly}
+     * suite a la nouvelle regle metier (verrou partiel apres validation au lieu de blocage total).
+     */
+    @Deprecated
+    @SuppressWarnings("unused")
+    private OffreStageResponse updateDescriptionOnly(OffreStage offre, CreateOffreStageRequest request) {
+        try {
+            String desc = normalizeRequiredField(request.getDescriptionMissions(), "descriptionMissions");
+            if (desc.length() < 10) {
+                throw new IllegalArgumentException(
+                        "La description des missions doit contenir au moins 10 caractères.");
+            }
+            offre.setDescriptionMissions(desc);
+            return toResponse(offreStageRepository.save(offre));
+        } catch (IllegalArgumentException | IllegalStateException ex) {
+            throw ex;
+        } catch (RuntimeException ex) {
+            log.error("Erreur technique lors de la mise a jour partielle (description) de l'offre {}", offre.getId(), ex);
             throw new TechnicalOperationException(
                     "Une erreur technique est survenue lors de l'enregistrement.",
                     ex
@@ -215,7 +311,7 @@ public class OffreStageServiceImpl implements OffreStageService {
             offre.setValideePar(responsableServiceStages);
         } else {
             // Some university-responsible accounts are stored as generic Utilisateur rows.
-            // Approval must still succeed for role RESPONSABLE_UNIVERSITAIRE_STAGES.
+            // Approval must still succeed for role RESPONSABLE_STAGE.
             offre.setValideePar(null);
         }
 
@@ -277,18 +373,92 @@ public class OffreStageServiceImpl implements OffreStageService {
 
     @Override
     public List<OffreStageResponse> getOffresOuvertes() {
+        // Garde-fou : on archive a la volee les offres expirees non affectees, pour qu'elles
+        // disparaissent immediatement de la vue stagiaire sans attendre le passage du cron.
+        archiveExpiredUnassignedOffers();
+
         List<StatutOffre> visibleStatuses = List.copyOf(EnumSet.of(StatutOffre.PUBLIEE, StatutOffre.VALIDEE));
+        LocalDate today = LocalDate.now();
 
         List<OffreStageResponse> offers = offreStageRepository.findByStatutInOrderByDatePublicationDescIdDesc(visibleStatuses)
                 .stream()
                 .filter(offre -> offre.getStatut() != StatutOffre.AFFECTEE)
                 .filter(offre -> offre.getStatut() != StatutOffre.REFUSEE)
+                .filter(offre -> offre.getStatut() != StatutOffre.ARCHIVEE)
+                .filter(offre -> offre.getStatut() != StatutOffre.TERMINEE)
+                // Spec : un stagiaire ne doit jamais voir une offre dont la date de debut est depassee.
+                .filter(offre -> offre.getDateDebutPrevue() == null || !offre.getDateDebutPrevue().isBefore(today))
                 .filter(offre -> !hasCreatedStage(offre))
                 .map(this::toResponse)
                 .toList();
 
         log.info("Recherche des offres ouvertes pour stagiaires -> {} offre(s) disponible(s)", offers.size());
         return offers;
+    }
+
+    /**
+     * Tache planifiee : pose le statut final TERMINEE sur les offres en fin de cycle de vie.
+     *
+     * Couvre deux cas (cycle de vie unifie autour de l'etat final TERMINEE) :
+     *  1) Offres dont la date de debut est passee SANS qu'un etudiant ne soit affecte
+     *     (anciennement ARCHIVEE).
+     *  2) Offres affectees a un etudiant DONT le sujet a ete valide par l'encadrant
+     *     academique ET dont la date de fin de stage est atteinte.
+     *
+     * Cron par defaut : tous les jours a 02:00 (Africa/Tunis), parametrable via app.offre.archivage.cron.
+     */
+    @Scheduled(
+            cron = "${app.offre.archivage.cron:0 0 2 * * *}",
+            zone = "${app.offre.archivage.zone:Africa/Tunis}"
+    )
+    @Transactional
+    public int archiveExpiredUnassignedOffers() {
+        LocalDate today = LocalDate.now();
+
+        int terminated = 0;
+
+        // ─── Cas 1 : offres expirees non affectees → TERMINEE ─────────────────────────
+        List<StatutOffre> finalizableStatuses = List.of(
+                StatutOffre.EN_ATTENTE,
+                StatutOffre.VALIDEE,
+                StatutOffre.PUBLIEE,
+                StatutOffre.REFUSEE
+        );
+        List<OffreStage> expiredUnassigned = offreStageRepository.findAll().stream()
+                .filter(offre -> offre.getDateDebutPrevue() != null && offre.getDateDebutPrevue().isBefore(today))
+                .filter(offre -> offre.getStagiaireAffecte() == null)
+                .filter(offre -> finalizableStatuses.contains(offre.getStatut()))
+                .filter(offre -> !hasCreatedStage(offre))
+                .toList();
+        for (OffreStage offre : expiredUnassigned) {
+            offre.setStatut(StatutOffre.TERMINEE);
+            offreStageRepository.save(offre);
+            terminated++;
+            log.info("Offre {} marquee TERMINEE automatiquement (date debut {} passee, sans affectation).",
+                    offre.getId(), offre.getDateDebutPrevue());
+        }
+
+        // ─── Cas 2 : offres affectees + sujet valide + stage fini → TERMINEE ──────────
+        List<OffreStage> assignedFinished = offreStageRepository.findAll().stream()
+                .filter(offre -> offre.getStatut() == StatutOffre.AFFECTEE)
+                .filter(offre -> {
+                    Stage stage = findLatestStageForOffer(offre.getId());
+                    if (stage == null || stage.getStatut() == StatutStage.ANNULE) return false;
+                    if (stage.getStatutSujet() != StatutValidation.VALIDEE) return false;
+                    return stage.getDateFin() != null && !stage.getDateFin().isAfter(today);
+                })
+                .toList();
+        for (OffreStage offre : assignedFinished) {
+            offre.setStatut(StatutOffre.TERMINEE);
+            offreStageRepository.save(offre);
+            terminated++;
+            log.info("Offre {} marquee TERMINEE automatiquement (stage termine, sujet valide).", offre.getId());
+        }
+
+        if (terminated > 0) {
+            log.info("Transition automatique : {} offre(s) passees a TERMINEE.", terminated);
+        }
+        return terminated;
     }
 
     @Override
@@ -302,6 +472,7 @@ public class OffreStageServiceImpl implements OffreStageService {
     }
 
     @Override
+    @Transactional
     public AffecterEtudiantOffreResponse affecterEtudiant(Long offreId, String emailEtudiant) {
         String normalizedEmail = normalizeRequiredEmail(emailEtudiant);
         ResponsableEntreprise responsableAuthentifie = getAuthenticatedResponsableEntreprise();
@@ -324,7 +495,7 @@ public class OffreStageServiceImpl implements OffreStageService {
                     responsableAuthentifie.getEmail(),
                     responsableAuthentifie.getEntreprise() != null ? responsableAuthentifie.getEntreprise().getId() : null
             );
-            throw new AccessDeniedException("Vous ne pouvez affecter un étudiant qu’à une offre de votre entreprise.");
+            throw new AccessDeniedException("Vous ne pouvez affecter un étudiant quéé une offre de votre entreprise.");
         }
 
         if (hasCreatedStage(offre) || offre.getStatut() == StatutOffre.AFFECTEE) {
@@ -343,26 +514,39 @@ public class OffreStageServiceImpl implements OffreStageService {
 
         Stagiaire stagiaire = stagiaireResolutionService.findByEmail(normalizedEmail);
         log.info("Affectation etudiant - stagiaire resolu: id={}, email={}", stagiaire.getId(), stagiaire.getEmail());
+        ensureNoExistingOfferAssignment(stagiaire, offre);
         existsStageActifByStagiaire(stagiaire, offre);
 
         offre.setStagiaireAffecte(stagiaire);
         offre.setStatut(StatutOffre.AFFECTEE);
         offreStageRepository.save(offre);
-        notificationService.notifierStageAffecte(
-                stagiaire.getId(),
-                null,
-                offre.getTitre(),
-                offre.getEntreprise() != null ? offre.getEntreprise().getNom() : null
-        );
 
-        log.info("Offre {} affectee au stagiaire {} sans declenchement du stage", offreId, stagiaire.getId());
+        Stage savedStage = stageService.creerStageDepuisOffrePourEntreprise(offre, stagiaire, responsableAuthentifie);
+        log.info("Stage cree via StageService: id={}, titre={}, stagiaireId={}, statut={}",
+                savedStage.getId(), savedStage.getTitre(),
+                savedStage.getStagiaire() != null ? savedStage.getStagiaire().getId() : null,
+                savedStage.getStatut());
+
+        try {
+            notificationService.notifierStageAffecte(
+                    stagiaire.getId(),
+                    savedStage.getId(),
+                    offre.getTitre(),
+                    offre.getEntreprise() != null ? offre.getEntreprise().getNom() : null
+            );
+            log.info("Notification de stage affecte creee pour stagiaireId={}, stageId={}", stagiaire.getId(), savedStage.getId());
+        } catch (Exception ex) {
+            log.warn("Erreur lors de la creation de la notification de stage affecte: {}", ex.getMessage(), ex);
+        }
+
+        log.info("Offre {} affectee au stagiaire {} avec creation du stage {}", offreId, stagiaire.getId(), savedStage.getId());
 
         return AffecterEtudiantOffreResponse.builder()
                 .message("Etudiant affecte a l'offre avec succes.")
                 .offreId(offre.getId())
                 .offreStatut(offre.getStatut().name())
-                .stageId(null)
-                .stageTitre(null)
+                .stageId(savedStage.getId())
+                .stageTitre(savedStage.getTitre())
                 .stagiaireId(stagiaire.getId())
                 .stagiaireEmail(stagiaire.getEmail())
                 .stageDeclenche(false)
@@ -395,12 +579,24 @@ public class OffreStageServiceImpl implements OffreStageService {
 
         Long stagiaireId = stagiaireAffecte.getId();
         Stage linkedStage = findLatestStageForOffer(offreId);
+        Long deletedStageId = null;
         if (linkedStage != null) {
+            // Regle metier : l'affectation est verrouillee des que l'encadrant academique a
+            // valide le sujet de stage. Toute annulation/modification est alors interdite.
+            if (linkedStage.getStatutSujet() == StatutValidation.VALIDEE) {
+                throw new IllegalStateException("Impossible d\u2019annuler l\u2019affectation : le sujet de stage a d\u00e9j\u00e0 \u00e9t\u00e9 valid\u00e9 par l\u2019encadrant acad\u00e9mique.");
+            }
             if (linkedStage.getStatut() != StatutStage.PAS_COMMENCE) {
                 throw new IllegalStateException("Impossible d\u2019annuler l\u2019affectation : le stage est d\u00e9j\u00e0 d\u00e9clench\u00e9.");
             }
-            linkedStage.setStatut(StatutStage.ANNULE);
-            stageRepository.save(linkedStage);
+            // Regle metier : suppression complete du stage afin qu'il ne soit plus visible
+            // pour aucun acteur (etudiant, encadrants, agent, admin, responsable entreprise).
+            // Les entites liees (convention, cahier, fiche d'evaluation, reunions, notifications,
+            // absences) sont supprimees en cascade via les annotations
+            // @OneToOne/@OneToMany(cascade=CascadeType.ALL, orphanRemoval=true) declarees dans Stage.
+            deletedStageId = linkedStage.getId();
+            stageRepository.delete(linkedStage);
+            stageRepository.flush();
         }
 
         offre.setStagiaireAffecte(null);
@@ -408,15 +604,19 @@ public class OffreStageServiceImpl implements OffreStageService {
         offre.setMotifRefus(null);
         offreStageRepository.save(offre);
 
-        log.info("Affectation stagiaire/offre annulee avant declenchement du stage. offreId={}, stagiaireId={}", offreId, stagiaireId);
+        log.info("Affectation annulee avec suppression du stage. offreId={}, stagiaireId={}, stageSupprimeId={}", offreId, stagiaireId, deletedStageId);
+
+        String message = deletedStageId != null
+                ? "L\u2019affectation a \u00e9t\u00e9 annul\u00e9e. Le stage associ\u00e9 a \u00e9t\u00e9 supprim\u00e9 automatiquement."
+                : "Affectation annul\u00e9e avec succ\u00e8s.";
 
         return AnnulerAffectationOffreResponse.builder()
-                .message("Affectation annulee avec succes.")
+                .message(message)
                 .offreId(offre.getId())
                 .offreStatut(offre.getStatut().name())
-                .stageId(linkedStage != null ? linkedStage.getId() : null)
-                .stageStatut(linkedStage != null && linkedStage.getStatut() != null ? linkedStage.getStatut().name() : null)
-                .modeAnnulation(linkedStage != null ? "ANNULATION_STAGE" : "ANNULATION_AFFECTATION")
+                .stageId(deletedStageId)
+                .stageStatut(null)
+                .modeAnnulation(deletedStageId != null ? "SUPPRESSION_STAGE" : "ANNULATION_AFFECTATION")
                 .build();
     }
 
@@ -439,6 +639,35 @@ public class OffreStageServiceImpl implements OffreStageService {
         } else if (!isDirectOfferManagementRole(authenticatedUser)) {
             offre.setValideePar(null);
         }
+
+        assignEncadrantProToOffre(offre, request, entreprise, authenticatedUser);
+    }
+
+    private void assignEncadrantProToOffre(
+            OffreStage offre,
+            CreateOffreStageRequest request,
+            Entreprise entreprise,
+            Utilisateur authenticatedUser
+    ) {
+        Long encId = request.getEncadrantProId();
+        if (encId == null) {
+            if (authenticatedUser.getRole() == Role.RESPONSABLE_ENTREPRISE) {
+                throw new IllegalArgumentException("L'encadrant professionnel est obligatoire.");
+            }
+            offre.setEncadrantPro(null);
+            return;
+        }
+
+        EncadrantProfessionnel enc = encadrantProfessionnelRepository.findById(encId)
+                .orElseThrow(() -> new EntityNotFoundException("Encadrant professionnel introuvable."));
+
+        Long entId = entreprise != null ? entreprise.getId() : null;
+        Long encEntId = enc.getEntreprise() != null ? enc.getEntreprise().getId() : null;
+        if (entId == null || encEntId == null || !entId.equals(encEntId)) {
+            throw new IllegalArgumentException("L'encadrant professionnel selectionne n'appartient pas a cette entreprise.");
+        }
+
+        offre.setEncadrantPro(enc);
     }
 
     private void applyOfferWorkflowOnCreate(OffreStage offre, Utilisateur authenticatedUser) {
@@ -480,8 +709,7 @@ public class OffreStageServiceImpl implements OffreStageService {
     }
 
     private boolean isDirectOfferManagementRole(Utilisateur authenticatedUser) {
-        return authenticatedUser.getRole() == Role.RESPONSABLE_UNIVERSITAIRE_STAGES
-                || authenticatedUser.getRole() == Role.RESPONSABLE_SERVICE_STAGES
+        return authenticatedUser.getRole() == Role.RESPONSABLE_STAGE
                 || authenticatedUser.getRole() == Role.ADMINISTRATEUR;
     }
 
@@ -507,6 +735,14 @@ public class OffreStageServiceImpl implements OffreStageService {
         Stage linkedStage = findLatestStageForOffer(offre.getId());
         boolean stageCree = linkedStage != null;
         boolean stageDeclenche = isStageDeclenche(linkedStage);
+        // Affectation active = stage lie existant ET non annule (exclut un stage cancelle).
+        Stage activeStage = (linkedStage != null && linkedStage.getStatut() != StatutStage.ANNULE)
+                ? linkedStage
+                : null;
+        boolean affectationActive = activeStage != null;
+        String statutSujetName = activeStage != null && activeStage.getStatutSujet() != null
+                ? activeStage.getStatutSujet().name()
+                : null;
         return OffreStageResponse.builder()
                 .id(offre.getId())
                 .titre(offre.getTitre())
@@ -523,10 +759,14 @@ public class OffreStageServiceImpl implements OffreStageService {
                 .publieeParNomComplet(buildFullName(offre.getPublieePar()))
                 .valideeParId(offre.getValideePar() != null ? offre.getValideePar().getId() : null)
                 .valideeParNomComplet(approvedByName)
+                .encadrantProId(offre.getEncadrantPro() != null ? offre.getEncadrantPro().getId() : null)
+                .encadrantProNomComplet(buildFullName(offre.getEncadrantPro()))
                 .stageCree(stageCree)
                 .stageDeclenche(stageDeclenche)
                 .trelloEnabled(linkedStage != null && linkedStage.getStatut() == StatutStage.EN_COURS)
                 .affectable(isOfferAssignable(offre, hasCreatedStage(offre)))
+                .affectationActive(affectationActive)
+                .statutSujet(statutSujetName)
                 .build();
     }
 
@@ -554,14 +794,13 @@ public class OffreStageServiceImpl implements OffreStageService {
     private String normalizeRequiredField(String value, String fieldName) {
         String normalized = normalizeText(value);
         if (normalized == null) {
-            throw new IllegalArgumentException("Tous les champs obligatoires doivent être renseignés.");
+            throw new IllegalArgumentException("Tous les champs obligatoires doivent étre renseignés.");
         }
         return normalized;
     }
 
     private boolean isOfferApprovalAuthorizedRole(Role role) {
-        return role == Role.RESPONSABLE_SERVICE_STAGES
-                || role == Role.RESPONSABLE_UNIVERSITAIRE_STAGES
+        return role == Role.RESPONSABLE_STAGE
                 || role == Role.ADMINISTRATEUR;
     }
 
@@ -614,7 +853,10 @@ public class OffreStageServiceImpl implements OffreStageService {
     }
 
     private void ensureOfferCanBeUpdated(OffreStage offre, Utilisateur authenticatedUser) {
-        ensureOffreNotAssigned(offre, "modifiee");
+        // Note : on n'invoque plus ensureOffreNotAssigned ici. Un etudiant peut etre affecte
+        // sans que le sujet ait ete valide par l'encadrant academique — dans ce cas le
+        // Responsable Entreprise garde la libre modification (regle metier explicite).
+        // Le blocage post-validation est gere en amont dans updateOffre().
 
         if (authenticatedUser == null || authenticatedUser.getRole() != Role.RESPONSABLE_ENTREPRISE) {
             return;
@@ -624,20 +866,54 @@ public class OffreStageServiceImpl implements OffreStageService {
             throw new IllegalStateException("Cette offre n'est pas modifiable selon son statut actuel.");
         }
 
+        if (offre.getStatut() == StatutOffre.TERMINEE || offre.getStatut() == StatutOffre.ARCHIVEE) {
+            throw new IllegalStateException("Cette offre est terminée et ne peut plus être modifiée.");
+        }
+
         if (offre.getStatut() == null) {
             throw new IllegalStateException("Cette offre n'est pas modifiable selon son statut actuel.");
         }
     }
 
+    /**
+     * Vérifie que la date du jour se situe dans l'une des deux périodes autorisées
+     * pour la création d'offres de stage :
+     *   - Période 1 : du 1er février au 1er juin (inclus)
+     *   - Période 2 : du 1er juin au 30 août (inclus)
+     * Ces deux périodes forment une fenêtre continue du 1er février au 30 août.
+     *
+     * Levée uniquement pour le rôle RESPONSABLE_ENTREPRISE ; les administrateurs
+     * et responsables des stages ne sont pas soumis à cette restriction.
+     */
+    private void validateCreationPeriod() {
+        LocalDate today = LocalDate.now();
+        int month = today.getMonthValue(); // 1–12
+        int day   = today.getDayOfMonth();
+
+        // Fenêtre ouverte : 1er février → 30 août inclus
+        boolean inPeriod = month >= 2 && (month < 8 || (month == 8 && day <= 30));
+
+        if (!inPeriod) {
+            // Calcul de la prochaine ouverture (1er février)
+            int nextYear = (month >= 9) ? today.getYear() + 1 : today.getYear();
+            String nextOpening = "1er fevrier " + nextYear;
+            throw new IllegalStateException(
+                "La creation d'offres de stage est actuellement fermee. " +
+                "Periodes autorisees : du 1er fevrier au 1er juin, et du 1er juin au 30 aout. " +
+                "Prochaine ouverture : " + nextOpening + "."
+            );
+        }
+    }
+
     private void validateOfferRequest(CreateOffreStageRequest request) {
         if (request == null) {
-            throw new IllegalArgumentException("Tous les champs obligatoires doivent être renseignés.");
+            throw new IllegalArgumentException("Tous les champs obligatoires doivent étre renseignés.");
         }
 
         if (normalizeText(request.getTitre()) == null
                 || normalizeText(request.getDescriptionMissions()) == null
                 || request.getDateDebutPrevue() == null) {
-            throw new IllegalArgumentException("Tous les champs obligatoires doivent être renseignés.");
+            throw new IllegalArgumentException("Tous les champs obligatoires doivent étre renseignés.");
         }
 
         if (normalizeText(request.getTitre()).length() < 3
@@ -646,17 +922,83 @@ public class OffreStageServiceImpl implements OffreStageService {
         }
 
         Integer duree = request.getDuree();
-        if (duree != null && duree <= 0) {
-            throw new IllegalArgumentException("Les données saisies sont invalides.");
+        if (duree == null) {
+            throw new IllegalArgumentException(
+                    "La durée du stage doit être comprise entre 1 et 4 mois maximum.");
+        }
+        if (duree < 1 || duree > 4) {
+            throw new IllegalArgumentException(
+                    "La durée du stage doit être comprise entre 1 et 4 mois maximum.");
         }
 
         if (request.getDateDebutPrevue().isBefore(LocalDate.now())) {
-            throw new IllegalArgumentException("Les données saisies sont invalides.");
+            throw new IllegalArgumentException(
+                    "La date de début du stage ne peut pas être dans le passé. Veuillez choisir une date actuelle ou future.");
         }
+
+        // Regles metier de periode academique :
+        //   Periode 1 (Stage academique) : debut ∈ [1er fev, 31 mai], fin ≤ 1er juin, duree ≤ 4 mois.
+        //   Periode 2 (Stage ete)         : debut ∈ [1er juin, 31 aout], fin ≤ 1er sept, duree ≤ 2 mois.
+        validateStagePeriod(request.getDateDebutPrevue(), duree);
 
         String profilRecherche = normalizeText(request.getProfilRecherche());
         if (profilRecherche != null && profilRecherche.length() < 2) {
             throw new IllegalArgumentException("Les données saisies sont invalides.");
+        }
+    }
+
+    /**
+     * Verifie qu'une offre respecte sa periode academique : la date de debut doit
+     * appartenir a la Periode 1 (fevrier-mai) ou Periode 2 (juin-aout), et la date
+     * de fin calculee (debut + duree) ne doit pas depasser la limite de la periode.
+     *
+     * Periode 1 : debut ∈ [1 fev, 31 mai], fin ≤ 1 juin de la meme annee, duree ≤ 4 mois.
+     * Periode 2 : debut ∈ [1 juin, 31 aout], fin ≤ 1 sept de la meme annee, duree ≤ 2 mois.
+     */
+    private void validateStagePeriod(LocalDate dateDebut, Integer duree) {
+        if (dateDebut == null || duree == null) {
+            return; // null gere par les controles precedents
+        }
+
+        int year = dateDebut.getYear();
+        int month = dateDebut.getMonthValue();
+        LocalDate dateFin = dateDebut.plusMonths(duree);
+
+        // Determination de la periode selon le mois de la date de debut.
+        // - Fevrier..Mai → Periode 1
+        // - Juin..Aout   → Periode 2
+        // - Septembre..Janvier → hors periode
+        boolean inPeriod1 = month >= 2 && month <= 5;
+        boolean inPeriod2 = month >= 6 && month <= 8;
+
+        if (!inPeriod1 && !inPeriod2) {
+            throw new IllegalArgumentException(
+                    "La date de début doit être comprise dans une période académique valide : "
+                            + "Période 1 (1er février → 1er juin) ou Période 2 (1er juin → 1er septembre).");
+        }
+
+        LocalDate maxEnd;
+        int maxDuration;
+        String periodLabel;
+        if (inPeriod1) {
+            maxEnd = LocalDate.of(year, 6, 1);
+            maxDuration = 4;
+            periodLabel = "Période 1 (Stage académique)";
+        } else {
+            maxEnd = LocalDate.of(year, 9, 1);
+            maxDuration = 2;
+            periodLabel = "Période 2 (Stage été)";
+        }
+
+        if (duree > maxDuration) {
+            throw new IllegalArgumentException(
+                    periodLabel + " : la durée maximale autorisée est de " + maxDuration + " mois.");
+        }
+
+        if (dateFin.isAfter(maxEnd)) {
+            throw new IllegalArgumentException(
+                    periodLabel + " : la date de fin calculée ("
+                            + dateFin + ") dépasse la limite autorisée (" + maxEnd + ").");
         }
     }
 
@@ -713,6 +1055,22 @@ public class OffreStageServiceImpl implements OffreStageService {
         if (conflict) {
             log.warn("Affectation etudiant refusee - conflit de periode detecte pour stagiaire {}", stagiaire.getId());
             throw new IllegalStateException("Cet etudiant est deja affecte a un stage sur cette periode.");
+        }
+    }
+
+    private void ensureNoExistingOfferAssignment(Stagiaire stagiaire, OffreStage offreCourante) {
+        if (stagiaire == null || stagiaire.getId() == null || offreCourante == null || offreCourante.getId() == null) {
+            return;
+        }
+
+        boolean alreadyAssignedElsewhere = offreStageRepository.findAll().stream()
+                .filter(offre -> offre.getId() != null && !offre.getId().equals(offreCourante.getId()))
+                .filter(offre -> offre.getStatut() == StatutOffre.AFFECTEE)
+                .anyMatch(offre -> offre.getStagiaireAffecte() != null
+                        && stagiaire.getId().equals(offre.getStagiaireAffecte().getId()));
+
+        if (alreadyAssignedElsewhere) {
+            throw new IllegalStateException("Cet etudiant est deja affecte a une autre offre. Annulez l'affectation existante avant de continuer.");
         }
     }
 
@@ -840,24 +1198,15 @@ public class OffreStageServiceImpl implements OffreStageService {
         }
 
         boolean conventionSignee = conventionStageRepository.findByStageId(stageId)
-                .map(convention -> Boolean.TRUE.equals(convention.getSigneeEncAca())
-                        || Boolean.TRUE.equals(convention.getSigneeEncPro())
-                        || Boolean.TRUE.equals(convention.getSigneeEntreprise())
-                        || Boolean.TRUE.equals(convention.getSigneeResp())
-                        || Boolean.TRUE.equals(convention.getSigneeStagiaire()))
+                .map(convention -> !convention.getSignatures().isEmpty())
                 .orElse(false);
 
         boolean cahierSigne = cahierStageRepository.findByStageId(stageId)
-                .map(cahier -> Boolean.TRUE.equals(cahier.getEstSigne())
-                        || Boolean.TRUE.equals(cahier.getSigneeEncAcad())
-                        || Boolean.TRUE.equals(cahier.getSigneeEncPro())
-                        || Boolean.TRUE.equals(cahier.getSigneeRespEntreprise())
-                        || Boolean.TRUE.equals(cahier.getSigneeStagiaire()))
+                .map(cahier -> !cahier.getSignatures().isEmpty())
                 .orElse(false);
 
         boolean ficheSignee = ficheEvaluationRepository.findFirstByStageId(stageId)
-                .map(fiche -> (fiche.getSignatureEncadrantProfessionnel() != null && !fiche.getSignatureEncadrantProfessionnel().isBlank())
-                        || (fiche.getSignatureRepresentantEntreprise() != null && !fiche.getSignatureRepresentantEntreprise().isBlank()))
+                .map(fiche -> !fiche.getSignatures().isEmpty())
                 .orElse(false);
 
         return conventionSignee || cahierSigne || ficheSignee;

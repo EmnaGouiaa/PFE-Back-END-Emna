@@ -25,13 +25,7 @@ public class DemandeCreationCompteEntreprise {
     private LocalDate dateDemande;
 
     @Enumerated(EnumType.STRING)
-    private StatutValidation statutAdmin;
-
-    @Enumerated(EnumType.STRING)
     private StatutValidation statutResponsableStages;
-
-    @Column(length = 1000)
-    private String commentaireAdmin;
 
     @Column(length = 1000)
     private String commentaireResponsableStages;
@@ -54,17 +48,7 @@ public class DemandeCreationCompteEntreprise {
 
     private String telephoneResponsable;
 
-    @ManyToOne(fetch = FetchType.EAGER)
-    @JoinColumn(name = "validee_par_encadrant_academique_id")
-    private Utilisateur valideeParEncadrantAcademique;
-
-    @Column(name = "validee_par_admin_id")
-    private Long valideeParAdminId;
-
-    @Column(name = "validee_par_encadrant_id")
-    private Long valideeParEncadrantId;
-
-    @Column(name = "cree_le", nullable = false)
+    @Column(name = "cree_le", columnDefinition = "DATETIME DEFAULT CURRENT_TIMESTAMP")
     private LocalDateTime creeLe;
 
     @Column(name = "mis_a_jour_le")
@@ -76,6 +60,7 @@ public class DemandeCreationCompteEntreprise {
     @OneToOne(mappedBy = "demandeStage")
     @JsonIgnore
     private Stage stage;
+
     @PrePersist
     public void prePersist() {
         this.creeLe = LocalDateTime.now();
@@ -83,10 +68,6 @@ public class DemandeCreationCompteEntreprise {
 
         if (this.statut == null) {
             this.statut = StatutDemande.EN_ATTENTE;
-        }
-
-        if (this.statutAdmin == null) {
-            this.statutAdmin = StatutValidation.EN_ATTENTE;
         }
 
         if (this.statutResponsableStages == null) {

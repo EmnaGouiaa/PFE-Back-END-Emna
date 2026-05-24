@@ -12,13 +12,16 @@ import fsegs.pfebackendemnagouuiaa.repository.ResponsableEntrepriseRepository;
 import fsegs.pfebackendemnagouuiaa.security.JwtService;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class EncadrantProfessionnelServiceImpl implements EncadrantProfessionnelService {
 
@@ -36,6 +39,7 @@ public class EncadrantProfessionnelServiceImpl implements EncadrantProfessionnel
     private final JwtService jwtService;
 
     @Override
+    @Transactional
     public EncadrantProfessionnelDto create(EncadrantProfessionnelDto dto) {
         String normalizedEmail = contactUniquenessService.normalizeAndValidateRequiredEmail(dto.getEmail(), "email");
         String normalizedPhone = contactUniquenessService.normalizeAndValidateRequiredPhone(dto.getTelephone(), "telephone");
@@ -50,14 +54,20 @@ public class EncadrantProfessionnelServiceImpl implements EncadrantProfessionnel
         entity.setDoitChangerMotDePasse(true);
         entity.setRole(Role.ENCADRANT_PROFESSIONNEL);
         entity.setActif(true);
+        entity.setSupprime(false);
         entity.setEntreprise(entreprise);
 
         EncadrantProfessionnel saved = encadrantProfessionnelRepository.save(entity);
-        accountEmailService.sendProfessionalSupervisorAccountCreatedEmail(saved.getPrenom(), saved.getEmail(), generatedPassword);
+        try {
+            accountEmailService.sendProfessionalSupervisorAccountCreatedEmail(saved.getPrenom(), saved.getEmail(), generatedPassword);
+        } catch (Exception ex) {
+            log.warn("Email non envoye pour l'encadrant professionnel {} : {}", saved.getId(), ex.getMessage());
+        }
         return encadrantProfessionnelMapper.toDto(saved);
     }
 
     @Override
+    @Transactional
     public EncadrantProfessionnelDto update(Long id, EncadrantProfessionnelDto dto) {
         ensureResponsableEntrepriseCanOnlyCreate();
 
@@ -82,6 +92,7 @@ public class EncadrantProfessionnelServiceImpl implements EncadrantProfessionnel
     }
 
     @Override
+    @Transactional(readOnly = true)
     public EncadrantProfessionnelDto getById(Long id) {
         EncadrantProfessionnel entity = encadrantProfessionnelRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Encadrant professionnel introuvable avec l'id : " + id));
@@ -90,6 +101,7 @@ public class EncadrantProfessionnelServiceImpl implements EncadrantProfessionnel
     }
 
     @Override
+    @Transactional(readOnly = true)
     public List<EncadrantProfessionnelDto> getAll() {
         return encadrantProfessionnelRepository.findAll()
                 .stream()
@@ -97,15 +109,32 @@ public class EncadrantProfessionnelServiceImpl implements EncadrantProfessionnel
                 .toList();
     }
 
+    /**
+     * Returns only non-deleted encadrants for the given entreprise.
+     * <p>
+     * The {@code @Transactional(readOnly = true)} annotation is critical: without it the
+     * Hibernate session closes after {@code findByEntrepriseIdAndSupprimeIsFalse} returns,
+     * and the subsequent stream mapping would trigger a {@code LazyInitializationException}
+     * when the mapper accesses {@code entity.getEntreprise().getId()} on the detached entity.
+     * </p>
+     *
+     * @param entrepriseId the id of the company; returns an empty list if it has no encadrants
+     */
     @Override
+    @Transactional(readOnly = true)
     public List<EncadrantProfessionnelDto> getByEntrepriseId(Long entrepriseId) {
-        return encadrantProfessionnelRepository.findByEntrepriseId(entrepriseId)
+        if (entrepriseId == null) {
+            log.warn("getByEntrepriseId appele avec entrepriseId null — retour liste vide.");
+            return List.of();
+        }
+        return encadrantProfessionnelRepository.findByEntrepriseIdAndSupprimeIsFalse(entrepriseId)
                 .stream()
                 .map(encadrantProfessionnelMapper::toDto)
                 .toList();
     }
 
     @Override
+    @Transactional
     public EncadrantProfessionnelDto createByResponsableEntreprise(Long responsableId, EncadrantProfessionnelDto dto) {
         ensureAuthenticatedResponsableEntrepriseOwnsRequest(responsableId);
 
@@ -129,9 +158,14 @@ public class EncadrantProfessionnelServiceImpl implements EncadrantProfessionnel
         entity.setDoitChangerMotDePasse(true);
         entity.setRole(Role.ENCADRANT_PROFESSIONNEL);
         entity.setActif(true);
+        entity.setSupprime(false);
 
         EncadrantProfessionnel saved = encadrantProfessionnelRepository.save(entity);
-        accountEmailService.sendProfessionalSupervisorAccountCreatedEmail(saved.getPrenom(), saved.getEmail(), generatedPassword);
+        try {
+            accountEmailService.sendProfessionalSupervisorAccountCreatedEmail(saved.getPrenom(), saved.getEmail(), generatedPassword);
+        } catch (Exception ex) {
+            log.warn("Email non envoye pour l'encadrant professionnel {} : {}", saved.getId(), ex.getMessage());
+        }
         return encadrantProfessionnelMapper.toDto(saved);
     }
 

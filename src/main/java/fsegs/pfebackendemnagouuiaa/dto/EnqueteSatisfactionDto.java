@@ -21,4 +21,10 @@ public class EnqueteSatisfactionDto {
     private Boolean dateAtteinte;
     private String message;
     private Boolean sectionEnqueteOuverte;
+
+    /** Champ renvoyé par GET /api/enquete — indique si l'enquête est active. */
+    private Boolean active;
+
+    /** Champ renvoyé par GET /api/enquete — date de dernière modification ISO-8601. */
+    private String dateModification;
 }

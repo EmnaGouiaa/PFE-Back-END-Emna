@@ -24,26 +24,26 @@ public class NoteAttribueeController {
         return new ResponseEntity<>(noteAttribueeService.create(dto), HttpStatus.CREATED);
     }
 
-    @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','STAGIAIRE','RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','STAGIAIRE','RESPONSABLE_STAGE','ADMINISTRATEUR')")
     @GetMapping
     public ResponseEntity<List<NoteAttribueeDto>> getAll() {
         return ResponseEntity.ok(noteAttribueeService.getAll());
     }
 
-    @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','STAGIAIRE','RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','STAGIAIRE','RESPONSABLE_STAGE','ADMINISTRATEUR')")
     @GetMapping("/fiche/{ficheId}/critere/{critereId}")
     public ResponseEntity<NoteAttribueeDto> getById(@PathVariable Long ficheId,
                                                     @PathVariable Long critereId) {
         return ResponseEntity.ok(noteAttribueeService.getById(ficheId, critereId));
     }
 
-    @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','STAGIAIRE','RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','STAGIAIRE','RESPONSABLE_STAGE','ADMINISTRATEUR')")
     @GetMapping("/fiche/{ficheId}")
     public ResponseEntity<List<NoteAttribueeDto>> getByFicheId(@PathVariable Long ficheId) {
         return ResponseEntity.ok(noteAttribueeService.getByFicheEvaluationId(ficheId));
     }
 
-    @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','STAGIAIRE','RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','STAGIAIRE','RESPONSABLE_STAGE','ADMINISTRATEUR')")
     @GetMapping("/critere/{critereId}")
     public ResponseEntity<List<NoteAttribueeDto>> getByCritereId(@PathVariable Long critereId) {
         return ResponseEntity.ok(noteAttribueeService.getByCritereEvaluationId(critereId));

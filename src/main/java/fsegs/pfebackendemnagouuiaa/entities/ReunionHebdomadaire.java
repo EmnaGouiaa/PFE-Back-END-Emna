@@ -2,7 +2,6 @@ package fsegs.pfebackendemnagouuiaa.entities;
 
 import jakarta.persistence.DiscriminatorValue;
 import jakarta.persistence.Entity;
-import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
@@ -11,10 +10,6 @@ import lombok.NoArgsConstructor;
 @DiscriminatorValue("HEBDOMADAIRE")
 @Data
 @NoArgsConstructor
-@AllArgsConstructor
 @EqualsAndHashCode(callSuper = true)
-public class ReunionHebdomadaire extends Reunion{
-
-    private Integer numSemaine;
-    private String objectifsSemaineProchaine;
+public class ReunionHebdomadaire extends Reunion {
 }

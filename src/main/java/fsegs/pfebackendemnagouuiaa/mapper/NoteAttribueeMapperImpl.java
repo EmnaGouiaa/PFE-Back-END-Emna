@@ -18,8 +18,8 @@ public class NoteAttribueeMapperImpl implements NoteAttribueeMapper {
         NoteAttribueeDto dto = new NoteAttribueeDto();
 
         if (entity.getId() != null) {
-            dto.setFicheEvaluationId(entity.getId().getFicheId());
-            dto.setCritereEvaluationId(entity.getId().getCritereId());
+            dto.setFicheEvaluationId(entity.getId().getFicheEvaluationId());
+            dto.setCritereEvaluationId(entity.getId().getCritereEvaluationId());
         }
 
         dto.setPoids(entity.getPoids());
@@ -45,7 +45,7 @@ public class NoteAttribueeMapperImpl implements NoteAttribueeMapper {
         NoteAttribuee entity = new NoteAttribuee();
 
         if (dto.getFicheEvaluationId() != null && dto.getCritereEvaluationId() != null) {
-            entity.setId(new CleNoteAttribuee(dto.getCritereEvaluationId(), dto.getFicheEvaluationId()));
+            entity.setId(new CleNoteAttribuee(dto.getFicheEvaluationId(), dto.getCritereEvaluationId()));
         }
 
         entity.setPoids(dto.getPoids());

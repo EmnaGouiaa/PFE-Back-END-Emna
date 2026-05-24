@@ -42,7 +42,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         userEmail =jwtService.extractUsername(jwt);
         if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
             Utilisateur utilisateur = utilisateurRepository.findByEmailIgnoreCase(userEmail).orElse(null);
-            if (utilisateur != null && !Boolean.TRUE.equals(utilisateur.getActif())) {
+            // Use Boolean.FALSE.equals so that actif=null (old/migrated accounts) is treated as
+            // active, matching the behaviour of Utilisateur.isEnabled().
+            // !Boolean.TRUE.equals(null) == true would wrongly block those accounts.
+            if (utilisateur != null && Boolean.FALSE.equals(utilisateur.getActif())) {
                 writeForbiddenResponse(response, "Compte desactive.");
                 return;
             }

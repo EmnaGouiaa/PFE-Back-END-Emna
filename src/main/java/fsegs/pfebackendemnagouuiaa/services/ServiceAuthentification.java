@@ -37,7 +37,7 @@ public class ServiceAuthentification {
         String emailNormalise = requete.getEmail() == null ? "" : requete.getEmail().trim().toLowerCase();
 
         if (utilisateurRepository.existsByEmailIgnoreCase(emailNormalise)) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email déjà utilisé");
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Email déjé utilisé");
         }
 
         Stagiaire utilisateur = new Stagiaire();

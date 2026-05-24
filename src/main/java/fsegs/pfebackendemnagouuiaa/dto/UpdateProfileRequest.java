@@ -46,6 +46,7 @@ public class UpdateProfileRequest {
 
     private Integer niveau;
 
-    @Size(max = 255, message = "Le nom du fichier de signature ne doit pas depasser 255 caracteres")
-    private String nomFichierSignature;
+    // Pas de limite de taille stricte : la valeur peut etre une donnee Base-64 (image importee)
+    // ou une URL courte. La colonne DB est en LONGTEXT.
+    private String urlSignature;
 }

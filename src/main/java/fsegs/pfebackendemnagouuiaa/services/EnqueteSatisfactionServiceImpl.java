@@ -1,370 +1,230 @@
 package fsegs.pfebackendemnagouuiaa.services;
 
-import fsegs.pfebackendemnagouuiaa.dto.CreateEnqueteSatisfactionRequest;
-import fsegs.pfebackendemnagouuiaa.dto.EnqueteSatisfactionResponse;
-import fsegs.pfebackendemnagouuiaa.dto.RemplirEnqueteSatisfactionRequest;
-import fsegs.pfebackendemnagouuiaa.entities.EnqueteSatisfaction;
-import fsegs.pfebackendemnagouuiaa.entities.Role;
+import fsegs.pfebackendemnagouuiaa.dto.ConfigurerEnqueteRequest;
+import fsegs.pfebackendemnagouuiaa.dto.EnqueteSatisfactionDto;
+import fsegs.pfebackendemnagouuiaa.entities.ConfigurationGlobaleEnquete;
 import fsegs.pfebackendemnagouuiaa.entities.ReunionFinale;
 import fsegs.pfebackendemnagouuiaa.entities.Stage;
-import fsegs.pfebackendemnagouuiaa.entities.StatutEnqueteSatisfaction;
-import fsegs.pfebackendemnagouuiaa.entities.StatutStage;
-import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
-import fsegs.pfebackendemnagouuiaa.repository.EnqueteSatisfactionRepository;
+import fsegs.pfebackendemnagouuiaa.repository.ConfigurationGlobaleEnqueteRepository;
 import fsegs.pfebackendemnagouuiaa.repository.ReunionFinaleRepository;
 import fsegs.pfebackendemnagouuiaa.repository.StageRepository;
-import fsegs.pfebackendemnagouuiaa.repository.UtilisateurRepository;
-import fsegs.pfebackendemnagouuiaa.security.JwtService;
-import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.time.format.DateTimeFormatter;
 
+/**
+ * Règle d'ouverture de l'enquête de satisfaction :
+ *
+ *   sectionOuverte = (aujourd'hui >= dateFin_stage
+ *                  OU aujourd'hui >= date_réunionFinale)
+ *                  ET enquête.active = true
+ *                  ET urlFormulaire configurée
+ *
+ * L'URL du formulaire n'est transmise au client que si la section est ouverte.
+ */
 @Service
 @RequiredArgsConstructor
 public class EnqueteSatisfactionServiceImpl implements EnqueteSatisfactionService {
 
-    private static final Set<Role> MANAGEMENT_ROLES = Set.of(
-            Role.ADMINISTRATEUR,
-            Role.RESPONSABLE_SERVICE_STAGES,
-            Role.RESPONSABLE_UNIVERSITAIRE_STAGES
-    );
-    private static final String DEFAULT_SURVEY_TITLE = EnqueteSatisfaction.TITRE_PAR_DEFAUT;
-    private static final String DEFAULT_SURVEY_DESCRIPTION = EnqueteSatisfaction.DESCRIPTION_PAR_DEFAUT;
-    private static final String DEFAULT_SURVEY_URL = EnqueteSatisfaction.URL_FORMULAIRE_PAR_DEFAUT;
+    private static final String DEFAULT_TITLE       = "Enquête de satisfaction";
+    private static final String DEFAULT_DESCRIPTION = "Merci de répondre à cette enquête de satisfaction.";
+    private static final DateTimeFormatter DATE_FR  = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
-    private final EnqueteSatisfactionRepository enqueteSatisfactionRepository;
-    private final StageRepository stageRepository;
-    private final ReunionFinaleRepository reunionFinaleRepository;
-    private final UtilisateurRepository utilisateurRepository;
-    private final JwtService jwtService;
+    private final ConfigurationGlobaleEnqueteRepository configurationGlobaleEnqueteRepository;
+    private final ReunionFinaleRepository               reunionFinaleRepository;
+    private final StageRepository                       stageRepository;
+
+    // ─── Lecture configuration globale ──────────────────────────────────────
 
     @Override
     @Transactional(readOnly = true)
-    public List<EnqueteSatisfactionResponse> getEnquetesByStage(Long stageId) {
-        Stage stage = stageRepository.findById(stageId)
-                .orElseThrow(() -> new EntityNotFoundException("Stage introuvable."));
-
-        authorizeStageVisibility(stage);
-
-        return enqueteSatisfactionRepository.findByStageIdOrderByDateCreationAsc(stageId)
-                .stream()
-                .map(this::toResponse)
-                .toList();
+    public EnqueteSatisfactionDto getConfiguration() {
+        return toConfigDto(getOrCreateGlobalConfig());
     }
 
+    // ─── Enregistrement configuration (RESPONSABLE_STAGE) ───────────────────
+
+    @Override
+    @Transactional
+    public EnqueteSatisfactionDto saveConfiguration(ConfigurerEnqueteRequest request) {
+        if (request == null) {
+            throw new IllegalArgumentException("La requête ne peut pas être vide.");
+        }
+
+        String titre       = normalizeRequired(request.getTitre(),       "Le titre de l'enquête est obligatoire.");
+        String description = normalizeRequired(request.getDescription(), "La description de l'enquête est obligatoire.");
+        String url         = sanitizeUrl(request.getUrlFormulaire());
+
+        if (url == null || url.isBlank()) {
+            throw new IllegalArgumentException("L'URL externe du formulaire est obligatoire.");
+        }
+        if (!url.startsWith("http://") && !url.startsWith("https://")) {
+            throw new IllegalArgumentException("L'URL doit commencer par http:// ou https://.");
+        }
+
+        ConfigurationGlobaleEnquete config = getOrCreateGlobalConfig();
+        config.setTitre(titre);
+        config.setDescription(description);
+        config.setUrlFormulaire(url);
+        config = configurationGlobaleEnqueteRepository.save(config);
+
+        return toConfigDto(config);
+    }
+
+    // ─── Activer / désactiver (RESPONSABLE_STAGE) ────────────────────────────
+
+    @Override
+    @Transactional
+    public EnqueteSatisfactionDto toggleActive() {
+        ConfigurationGlobaleEnquete config = getOrCreateGlobalConfig();
+        config.setActive(!config.isActive());
+        config = configurationGlobaleEnqueteRepository.save(config);
+        return toConfigDto(config);
+    }
+
+    // ─── Etat enquête pour un stage précis (acteurs) ─────────────────────────
+
+    /**
+     * Calcule la visibilité de l'enquête pour un stage donné.
+     *
+     * Règle :  ouvert si (today >= dateFin_stage OU today >= date_réunionFinale)
+     *                     ET active ET URL configurée.
+     */
     @Override
     @Transactional(readOnly = true)
-    public List<EnqueteSatisfactionResponse> getEnquetesByUtilisateur(Long utilisateurId) {
-        Utilisateur connectedUser = getAuthenticatedUtilisateur();
-        if (!connectedUser.getId().equals(utilisateurId) && !isManagementRole(connectedUser.getRole())) {
-            throw new AccessDeniedException("Acces refuse aux enquetes de cet utilisateur.");
-        }
+    public EnqueteSatisfactionDto getForStage(Long stageId) {
 
-        return enqueteSatisfactionRepository.findByUtilisateurIdOrderByDateCreationDesc(utilisateurId)
-                .stream()
-                .map(this::toResponse)
-                .toList();
-    }
+        ConfigurationGlobaleEnquete config = getOrCreateGlobalConfig();
+        boolean hasUrl = config.getUrlFormulaire() != null && !config.getUrlFormulaire().isBlank();
 
-    @Override
-    @Transactional
-    public EnqueteSatisfactionResponse remplirEnquete(Long enqueteId, RemplirEnqueteSatisfactionRequest request) {
-        if (request == null) {
-            throw new IllegalArgumentException("Les donnees de reponse sont obligatoires.");
-        }
-
-        Utilisateur connectedUser = getAuthenticatedUtilisateur();
-        EnqueteSatisfaction enquete = enqueteSatisfactionRepository.findById(enqueteId)
-                .orElseThrow(() -> new EntityNotFoundException("Enquete de satisfaction introuvable."));
-
-        if (enquete.getUtilisateur() == null || !connectedUser.getId().equals(enquete.getUtilisateur().getId())) {
-            throw new AccessDeniedException("Vous n'etes pas autorise a remplir cette enquete.");
-        }
-
-        if (enquete.getStatutEnquete() == StatutEnqueteSatisfaction.REMPLIE) {
-            throw new IllegalArgumentException("Cette enquete a deja ete remplie.");
-        }
-
-        if (!isSectionEnqueteOuverte(enquete.getStage())) {
-            throw new AccessDeniedException("L'enquete de satisfaction sera accessible a partir du dernier jour du stage.");
-        }
-
-        enquete.setReponses(normalizeNullableText(request.getReponses()));
-        enquete.setCommentaireGlobal(normalizeNullableText(request.getCommentaireGlobal()));
-        enquete.setStatutEnquete(StatutEnqueteSatisfaction.REMPLIE);
-        enquete.setDateSoumission(LocalDateTime.now());
-
-        return toResponse(enqueteSatisfactionRepository.save(enquete));
-    }
-
-    @Override
-    @Transactional
-    public List<EnqueteSatisfactionResponse> creerEnquetesPourStageSiNecessaire(Stage stage) {
-        if (!isSurveyEligibleStage(stage)) {
-            return List.of();
-        }
-
-        List<CreateEnqueteSatisfactionRequest> requests = buildSurveyRequests(stage);
-        List<EnqueteSatisfactionResponse> createdSurveys = new ArrayList<>();
-
-        for (CreateEnqueteSatisfactionRequest request : requests) {
-            if (enqueteSatisfactionRepository.existsByStageIdAndUtilisateurId(
-                    request.getStageId(),
-                    request.getUtilisateurId()
-            )) {
-                continue;
-            }
-
-            EnqueteSatisfactionResponse created = createPendingSurvey(request);
-            createdSurveys.add(created);
-        }
-
-        return createdSurveys;
-    }
-
-    @Override
-    @Transactional
-    public EnqueteSatisfactionResponse createPendingSurvey(CreateEnqueteSatisfactionRequest request) {
-        if (request == null) {
-            throw new IllegalArgumentException("La creation d'enquete requiert des donnees.");
-        }
-
-        Stage stage = stageRepository.findById(request.getStageId())
-                .orElseThrow(() -> new EntityNotFoundException("Stage introuvable."));
-        Utilisateur utilisateur = utilisateurRepository.findById(request.getUtilisateurId())
-                .orElseThrow(() -> new EntityNotFoundException("Utilisateur introuvable."));
-
-        if (enqueteSatisfactionRepository.existsByStageIdAndUtilisateurId(stage.getId(), utilisateur.getId())) {
-            return enqueteSatisfactionRepository.findByStageIdAndUtilisateurId(stage.getId(), utilisateur.getId())
-                    .map(this::toResponse)
-                    .orElseThrow(() -> new IllegalStateException("La contrainte d'unicite des enquetes est incoherente."));
-        }
-
-        EnqueteSatisfaction enquete = new EnqueteSatisfaction();
-        enquete.setStage(stage);
-        enquete.setUtilisateur(utilisateur);
-        enquete.setRoleRepondant(request.getRoleRepondant() != null ? request.getRoleRepondant() : utilisateur.getRole());
-        enquete.setStatutEnquete(StatutEnqueteSatisfaction.EN_ATTENTE);
-        enquete.setTitre(resolveSurveyTitle(stage));
-        enquete.setDescription(resolveSurveyDescription(stage));
-        enquete.setUrlFormulaire(resolveSurveyUrl(stage));
-        enquete.setReponses(normalizeNullableText(request.getReponses()));
-        enquete.setCommentaireGlobal(normalizeNullableText(request.getCommentaireGlobal()));
-
-        return toResponse(enqueteSatisfactionRepository.save(enquete));
-    }
-
-    private List<CreateEnqueteSatisfactionRequest> buildSurveyRequests(Stage stage) {
-        Map<Long, CreateEnqueteSatisfactionRequest> requestsByUserId = new LinkedHashMap<>();
-
-        addSurveyRequest(requestsByUserId, stage, stage.getStagiaire(), Role.STAGIAIRE);
-        addSurveyRequest(requestsByUserId, stage, stage.getEncadrantAcademique(), Role.ENCADRANT_ACADEMIQUE);
-        addSurveyRequest(requestsByUserId, stage, stage.getEncadrantProfessionnel(), Role.ENCADRANT_PROFESSIONNEL);
-        addSurveyRequest(requestsByUserId, stage, stage.getTuteurEntreprise(), Role.RESPONSABLE_ENTREPRISE);
-
-        for (Role managementRole : MANAGEMENT_ROLES) {
-            utilisateurRepository.findByRole(managementRole)
-                    .forEach(utilisateur -> addSurveyRequest(requestsByUserId, stage, utilisateur, managementRole));
-        }
-
-        return new ArrayList<>(requestsByUserId.values());
-    }
-
-    private void addSurveyRequest(Map<Long, CreateEnqueteSatisfactionRequest> requestsByUserId,
-                                  Stage stage,
-                                  Utilisateur utilisateur,
-                                  Role roleRepondant) {
-        if (stage == null || stage.getId() == null || utilisateur == null || utilisateur.getId() == null) {
-            return;
-        }
-
-        requestsByUserId.putIfAbsent(
-                utilisateur.getId(),
-                new CreateEnqueteSatisfactionRequest(
-                        stage.getId(),
-                        utilisateur.getId(),
-                        roleRepondant,
-                        null,
-                        null
-                )
-        );
-    }
-
-    private EnqueteSatisfactionResponse toResponse(EnqueteSatisfaction enquete) {
-        Utilisateur connectedUser = resolveAuthenticatedUtilisateurSafely();
-        Utilisateur utilisateur = enquete.getUtilisateur();
-        Stage stage = enquete.getStage();
-
-        String fullName = utilisateur == null
-                ? null
-                : (safeText(utilisateur.getPrenom(), "") + " " + safeText(utilisateur.getNom(), "")).trim();
-
-        return new EnqueteSatisfactionResponse(
-                enquete.getId(),
-                enquete.getDateCreation(),
-                enquete.getDateSoumission(),
-                enquete.getStatutEnquete(),
-                enquete.getTitre(),
-                enquete.getDescription(),
-                enquete.getUrlFormulaire(),
-                enquete.getReponses(),
-                enquete.getCommentaireGlobal(),
-                enquete.getRoleRepondant(),
-                stage != null ? stage.getId() : null,
-                stage != null ? stage.getTitre() : null,
-                utilisateur != null ? utilisateur.getId() : null,
-                fullName == null || fullName.isBlank() ? null : fullName,
-                connectedUser != null
-                        && utilisateur != null
-                        && connectedUser.getId() != null
-                        && connectedUser.getId().equals(utilisateur.getId()),
-                enquete.getStatutEnquete() == StatutEnqueteSatisfaction.EN_ATTENTE && isSectionEnqueteOuverte(stage),
-                isSectionEnqueteOuverte(stage)
-        );
-    }
-
-    private boolean isSectionEnqueteOuverte(Stage stage) {
-        if (stage == null) {
-            return false;
-        }
-
-        if (stage.getSectionEnqueteOuverte() != null) {
-            return Boolean.TRUE.equals(stage.getSectionEnqueteOuverte());
-        }
+        // Récupération des données du stage et de sa réunion finale
+        // (la réunion finale n'est plus une condition suffisante d'ouverture — la règle
+        // métier exige que la date de fin du stage soit atteinte).
+        Stage         stage         = stageRepository.findById(stageId).orElse(null);
+        ReunionFinale reunionFinale = reunionFinaleRepository.findFirstByStageIdOrderByIdAsc(stageId).orElse(null);
 
         LocalDate today = LocalDate.now();
-        if (stage.getDateFin() != null && !today.isBefore(stage.getDateFin())) {
-            return true;
+
+        // ── Conditions d'ouverture ──────────────────────────────────────────
+        // REGLE METIER : l'enquête ne peut être complétée qu'APRES la fin du stage.
+        // Le statut du stage (EN_COURS / TERMINE) et celui de l'enquête restent
+        // INDEPENDANTS : compléter l'enquête ne déclenche aucune transition de stage,
+        // et inversement la fin du stage n'auto-complète pas l'enquête.
+        boolean dateFinAtteinte =
+                stage != null
+                && stage.getDateFin() != null
+                && !today.isBefore(stage.getDateFin());           // today >= dateFin
+
+        boolean sectionOuverte = dateFinAtteinte && config.isActive() && hasUrl;
+
+        // ── Statut et message affichés à l'utilisateur ──────────────────────
+        String statut;
+        String message;
+
+        if (!hasUrl) {
+            statut  = "Non configurée";
+            message = "L'enquête de satisfaction n'est pas encore configurée par le responsable des stages.";
+
+        } else if (!config.isActive()) {
+            statut  = "Désactivée";
+            message = "L'enquête de satisfaction est temporairement désactivée.";
+
+        } else if (stage == null) {
+            statut  = "En attente";
+            message = "Stage introuvable.";
+
+        } else if (!dateFinAtteinte) {
+            // Stage pas encore termine → enquête bloquée avec message exact du spec.
+            statut  = "En attente";
+            LocalDate dateFin = stage.getDateFin();
+            String suffixe = dateFin != null
+                    ? " (date de fin prévue : " + dateFin.format(DATE_FR) + ")."
+                    : ".";
+            message = "L'enquête ne peut être complétée qu'après la fin du stage" + suffixe;
+
+        } else {
+            statut  = "Ouverte";
+            message = "L'enquête est disponible suite à la fin de votre stage. Merci de compléter le formulaire.";
         }
 
-        if (stage.getId() == null) {
-            return false;
-        }
+        // L'URL n'est exposée QUE si la section est ouverte
+        String urlVisible   = sectionOuverte ? config.getUrlFormulaire() : "";
+        String stageTitre   = stage != null && stage.getTitre() != null ? stage.getTitre() : "";
+        Long   rfId         = reunionFinale != null ? reunionFinale.getId() : null;
 
-        return reunionFinaleRepository.findByStageId(stage.getId())
-                .stream()
-                .map(fsegs.pfebackendemnagouuiaa.entities.ReunionFinale::getDate)
-                .filter(Objects::nonNull)
-                .anyMatch(date -> !today.isBefore(date));
+        return new EnqueteSatisfactionDto(
+                rfId,
+                stageId,
+                stageTitre,
+                null,                    // enqueteId — non utilisé (URL externe)
+                config.getTitre(),
+                config.getDescription(),
+                urlVisible,
+                statut,
+                sectionOuverte,          // disponible
+                dateFinAtteinte,         // dateAtteinte (basé uniquement sur la fin de stage)
+                message,
+                sectionOuverte,          // sectionEnqueteOuverte
+                config.isActive(),
+                config.getDateModification() != null ? config.getDateModification().toString() : null
+        );
     }
 
-    private void authorizeStageVisibility(Stage stage) {
-        Utilisateur utilisateur = getAuthenticatedUtilisateur();
-        if (isManagementRole(utilisateur.getRole())) {
-            return;
-        }
+    // ─── Helpers privés ─────────────────────────────────────────────────────
 
-        Long userId = utilisateur.getId();
-        Set<Long> allowedIds = new LinkedHashSet<>();
-        if (stage.getStagiaire() != null && stage.getStagiaire().getId() != null) {
-            allowedIds.add(stage.getStagiaire().getId());
-        }
-        if (stage.getEncadrantAcademique() != null && stage.getEncadrantAcademique().getId() != null) {
-            allowedIds.add(stage.getEncadrantAcademique().getId());
-        }
-        if (stage.getEncadrantProfessionnel() != null && stage.getEncadrantProfessionnel().getId() != null) {
-            allowedIds.add(stage.getEncadrantProfessionnel().getId());
-        }
-        if (stage.getTuteurEntreprise() != null && stage.getTuteurEntreprise().getId() != null) {
-            allowedIds.add(stage.getTuteurEntreprise().getId());
-        }
-
-        if (userId == null || !allowedIds.contains(userId)) {
-            throw new AccessDeniedException("Acces refuse aux enquetes de ce stage.");
-        }
+    /** Retourne la date la plus proche parmi dateFin et dateReunion (null ignorées). */
+    private LocalDate dateLaPlusProche(LocalDate dateFin, LocalDate dateReunion) {
+        if (dateFin == null)      return dateReunion;
+        if (dateReunion == null)  return dateFin;
+        return dateFin.isBefore(dateReunion) ? dateFin : dateReunion;
     }
 
-    private Utilisateur getAuthenticatedUtilisateur() {
-        return jwtService.getAuthenticatedUtilisateur()
-                .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifie introuvable."));
+    /** Libellé correspondant à la date d'ouverture la plus proche. */
+    private String labelDateOuverture(LocalDate dateFin, LocalDate dateReunion) {
+        if (dateFin == null && dateReunion == null) return "";
+        if (dateFin == null)   return "réunion finale";
+        if (dateReunion == null) return "fin de stage";
+        return dateFin.isBefore(dateReunion) ? "fin de stage" : "réunion finale";
     }
 
-    private boolean isManagementRole(Role role) {
-        return MANAGEMENT_ROLES.contains(role);
+    private ConfigurationGlobaleEnquete getOrCreateGlobalConfig() {
+        return configurationGlobaleEnqueteRepository.findById(1L).orElseGet(() -> {
+            ConfigurationGlobaleEnquete c = new ConfigurationGlobaleEnquete();
+            c.setId(1L);
+            c.setTitre(DEFAULT_TITLE);
+            c.setDescription(DEFAULT_DESCRIPTION);
+            c.setUrlFormulaire(null);
+            return configurationGlobaleEnqueteRepository.save(c);
+        });
     }
 
-    private boolean isSurveyEligibleStage(Stage stage) {
-        return stage != null
-                && stage.getId() != null
-                && stage.getStatut() != null
-                && (stage.getStatut() == StatutStage.EN_COURS || stage.getStatut() == StatutStage.TERMINE);
+    private EnqueteSatisfactionDto toConfigDto(ConfigurationGlobaleEnquete config) {
+        boolean hasUrl = config.getUrlFormulaire() != null && !config.getUrlFormulaire().isBlank();
+        return new EnqueteSatisfactionDto(
+                null, null, "", null,
+                config.getTitre(),
+                config.getDescription(),
+                hasUrl ? config.getUrlFormulaire() : "",
+                hasUrl ? "Configurée" : "Non configurée",
+                hasUrl, false, "", false,
+                config.isActive(),
+                config.getDateModification() != null ? config.getDateModification().toString() : null
+        );
     }
 
-    private String normalizeNullableText(String value) {
-        if (value == null) {
-            return null;
-        }
-        String normalized = value.trim();
-        return normalized.isEmpty() ? null : normalized;
+    private String sanitizeUrl(String value) {
+        if (value == null) return null;
+        String t = value.trim();
+        return t.isEmpty() || "string".equalsIgnoreCase(t) ? null : t;
     }
 
-    private String safeText(String value, String fallback) {
-        if (value == null || value.isBlank()) {
-            return fallback;
+    private String normalizeRequired(String value, String errorMessage) {
+        if (value == null || value.trim().isEmpty()) {
+            throw new IllegalArgumentException(errorMessage);
         }
         return value.trim();
     }
-
-    private String resolveSurveyTitle(Stage stage) {
-        ReunionFinale reunionFinale = findReferenceFinalMeeting(stage);
-        String configured = reunionFinale != null ? normalizeNullableText(reunionFinale.getTitreEnqueteSatisfaction()) : null;
-        return configured != null ? configured : DEFAULT_SURVEY_TITLE;
-    }
-
-    private String resolveSurveyDescription(Stage stage) {
-        ReunionFinale reunionFinale = findReferenceFinalMeeting(stage);
-        String configured = reunionFinale != null ? normalizeNullableText(reunionFinale.getDescriptionEnqueteSatisfaction()) : null;
-        return configured != null ? configured : DEFAULT_SURVEY_DESCRIPTION;
-    }
-
-    private String resolveSurveyUrl(Stage stage) {
-        ReunionFinale reunionFinale = findReferenceFinalMeeting(stage);
-        String configured = reunionFinale == null ? null : normalizeNullableText(reunionFinale.getUrlFormSatisfaction());
-        return configured != null ? configured : DEFAULT_SURVEY_URL;
-    }
-
-    private ReunionFinale findReferenceFinalMeeting(Stage stage) {
-        if (stage == null || stage.getId() == null) {
-            return null;
-        }
-
-        return reunionFinaleRepository.findByStageId(stage.getId())
-                .stream()
-                .filter(Objects::nonNull)
-                .sorted((left, right) -> {
-                    if (left.getDate() == null && right.getDate() == null) {
-                        return 0;
-                    }
-                    if (left.getDate() == null) {
-                        return 1;
-                    }
-                    if (right.getDate() == null) {
-                        return -1;
-                    }
-                    return right.getDate().compareTo(left.getDate());
-                })
-                .findFirst()
-                .orElse(null);
-    }
-
-    private Utilisateur resolveAuthenticatedUtilisateurSafely() {
-        try {
-            return jwtService.getAuthenticatedUtilisateur().orElse(null);
-        } catch (RuntimeException ex) {
-            return null;
-        }
-    }
-
 }

@@ -24,4 +24,12 @@ public interface StagiaireRepository extends JpaRepository<Stagiaire, Long> {
     boolean existsByEmail(String email);
 
     boolean existsByMatricule(String matricule);
+
+    /**
+     * Renvoie le matricule de stagiaire le plus eleve pour un prefixe donne (ex: "MAT23").
+     * L'ordre alphabetique descendant est equivalent a l'ordre numerique descendant
+     * grace au zero-padding sur 4 chiffres dans le format "MAT{YY}{NNNN}".
+     */
+    @Query("select max(s.matricule) from Stagiaire s where s.matricule like concat(:prefix, '%')")
+    Optional<String> findMaxMatriculeByPrefix(@Param("prefix") String prefix);
 }

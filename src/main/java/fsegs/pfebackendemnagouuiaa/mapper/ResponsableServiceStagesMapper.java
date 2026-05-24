@@ -29,9 +29,10 @@ public class ResponsableServiceStagesMapper {
         responsable.setMotDePasse(dto.getMotDePasse());
         responsable.setTelephone(dto.getTelephone());
         responsable.setActif(dto.getActif() != null ? dto.getActif() : true);
-        responsable.setNomFichierSignature(dto.getNomFichierSignature());
-        responsable.setService(dto.getService());
-        responsable.setRole(Role.RESPONSABLE_SERVICE_STAGES);
+        responsable.setUrlSignature(dto.getUrlSignature());
+        String service = dto.getService() != null && !dto.getService().isBlank() ? dto.getService().trim() : "Service des stages";
+        responsable.setService(service);
+        responsable.setRole(Role.RESPONSABLE_STAGE);
     }
 
     public ResponsableServiceStagesResponseDTO toResponseDTO(ResponsableServiceStages responsable) {
@@ -44,7 +45,7 @@ public class ResponsableServiceStagesMapper {
                 .email(responsable.getEmail())
                 .telephone(responsable.getTelephone())
                 .actif(responsable.getActif())
-                .nomFichierSignature(responsable.getNomFichierSignature())
+                .urlSignature(responsable.getUrlSignature())
                 .role(responsable.getRole() != null ? responsable.getRole().name() : null)
                 .service(responsable.getService())
                 .build();

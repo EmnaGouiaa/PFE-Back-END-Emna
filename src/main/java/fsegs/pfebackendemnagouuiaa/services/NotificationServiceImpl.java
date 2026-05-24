@@ -32,6 +32,7 @@ import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
@@ -63,6 +64,7 @@ public class NotificationServiceImpl implements NotificationService {
     private final DemandeCreationCompteEntrepriseRepository demandeCreationCompteEntrepriseRepository;
 
     @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void notifierStagiaireReunionFixee(Long stagiaireId, Long reunionId, String message) {
         log.info("Notification reunion enregistree pour stagiaireId={} : {}", stagiaireId, message);
         if (stagiaireId == null) {
@@ -97,8 +99,21 @@ public class NotificationServiceImpl implements NotificationService {
                                              String type,
                                              Long relatedEntityId,
                                              String relatedEntityType) {
-        Utilisateur utilisateur = utilisateurRepository.findById(userId)
-                .orElseThrow(() -> new EntityNotFoundException("Utilisateur introuvable"));
+        log.debug("creerNotification debut: userId={}, type={}, relatedEntityId={}, relatedEntityType={}",
+                userId, type, relatedEntityId, relatedEntityType);
+
+        if (userId == null) {
+            log.warn("creerNotification: userId est null, notification ignoree");
+            return null;
+        }
+
+        Utilisateur utilisateur = utilisateurRepository.findById(userId).orElse(null);
+        if (utilisateur == null) {
+            log.warn("creerNotification: utilisateur introuvable avec id={}, notification ignoree", userId);
+            return null;
+        }
+
+        log.debug("Utilisateur trouve: id={}, email={}", utilisateur.getId(), utilisateur.getEmail());
 
         Notification notification = Notification.builder()
                 .titre(title)
@@ -109,7 +124,12 @@ public class NotificationServiceImpl implements NotificationService {
 
         applyBusinessContext(notification, relatedEntityId, relatedEntityType);
 
-        Notification savedNotification = notificationRepository.save(notification);
+        // saveAndFlush garantit que la ligne notification est commitee en base
+        // avant d'inserer notification_destinataire (evite la violation de FK).
+        Notification savedNotification = notificationRepository.saveAndFlush(notification);
+        log.debug("Notification sauvegardee: id={}, titre={}, stage_id={}",
+                savedNotification.getId(), savedNotification.getTitre(),
+                savedNotification.getStage() != null ? savedNotification.getStage().getId() : null);
 
         NotificationDestinataire notificationDestinataire = NotificationDestinataire.builder()
                 .notification(savedNotification)
@@ -118,9 +138,14 @@ public class NotificationServiceImpl implements NotificationService {
                 .statutActionNotif(StatutActionNotification.PENDING)
                 .build();
 
-        NotificationDestinataireResponse response = toResponse(
-                notificationDestinataireRepository.save(notificationDestinataire)
-        );
+        NotificationDestinataire savedDestinataire = notificationDestinataireRepository.save(notificationDestinataire);
+        log.debug("NotificationDestinataire sauvegardee: id={}, utilisateurId={}, notificationId={}",
+                savedDestinataire.getId(), savedDestinataire.getUtilisateur() != null ? savedDestinataire.getUtilisateur().getId() : null,
+                savedDestinataire.getNotification() != null ? savedDestinataire.getNotification().getId() : null);
+
+        NotificationDestinataireResponse response = toResponse(savedDestinataire);
+
+        log.debug("creerNotification fin: notificationId={}, userId={}", response.getNotificationId(), userId);
 
         return NotificationDto.builder()
                 .id(response.getNotificationId())
@@ -137,7 +162,7 @@ public class NotificationServiceImpl implements NotificationService {
     }
 
     @Override
-    @Transactional
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public List<NotificationDestinataireResponse> createNotification(String titre,
                                                                      String body,
                                                                      TypeNotification typeNotification,
@@ -272,6 +297,23 @@ public class NotificationServiceImpl implements NotificationService {
 
     @Override
     @Transactional
+    public int markAllAsRead(Long utilisateurId) {
+        List<NotificationDestinataire> unread = notificationDestinataireRepository
+                .findByUtilisateurIdAndStatutNotification(utilisateurId, StatutNotification.NON_LUE);
+        if (unread.isEmpty()) {
+            return 0;
+        }
+        LocalDateTime now = LocalDateTime.now();
+        unread.forEach(nd -> {
+            nd.setStatutNotification(StatutNotification.LUE);
+            nd.setDateLecture(now);
+        });
+        notificationDestinataireRepository.saveAll(unread);
+        return unread.size();
+    }
+
+    @Override
+    @Transactional
     public NotificationDestinataireResponse markActionDone(Long notificationDestinataireId, String reponse) {
         NotificationDestinataire notificationDestinataire = findNotificationDestinataire(notificationDestinataireId);
         notificationDestinataire.setStatutActionNotif(StatutActionNotification.DONE);
@@ -295,6 +337,7 @@ public class NotificationServiceImpl implements NotificationService {
     }
 
     @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void notifierDemandeEntrepriseValidee(Long stagiaireId, Long demandeEntrepriseId, String nomEntreprise) {
         creerNotification(
                 stagiaireId,
@@ -307,6 +350,7 @@ public class NotificationServiceImpl implements NotificationService {
     }
 
     @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void notifierDemandeEntrepriseRefusee(Long stagiaireId, Long demandeEntrepriseId, String motifRefus) {
         creerNotification(
                 stagiaireId,
@@ -319,6 +363,7 @@ public class NotificationServiceImpl implements NotificationService {
     }
 
     @Override
+    @Transactional(propagation = Propagation.REQUIRES_NEW)
     public void notifierStageAffecte(Long stagiaireId, Long stageId, String titreStage, String nomEntreprise) {
         creerNotification(
                 stagiaireId,
@@ -425,42 +470,27 @@ public class NotificationServiceImpl implements NotificationService {
         }
 
         switch (relatedEntityType.trim().toUpperCase()) {
-            case "STAGE" -> notification.setStage(
-                    stageRepository.findById(relatedEntityId)
-                            .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"))
-            );
-            case "REUNION" -> notification.setReunion(
-                    reunionRepository.findById(relatedEntityId)
-                            .orElseThrow(() -> new EntityNotFoundException("Reunion introuvable"))
-            );
-            case "REUNION_FINALE" -> {
-                ReunionFinale reunionFinale = reunionFinaleRepository.findById(relatedEntityId)
-                        .orElseThrow(() -> new EntityNotFoundException("Reunion finale introuvable"));
+            case "STAGE" -> stageRepository.findById(relatedEntityId)
+                    .ifPresent(notification::setStage);
+            case "REUNION" -> reunionRepository.findById(relatedEntityId)
+                    .ifPresent(notification::setReunion);
+            case "REUNION_FINALE" -> reunionFinaleRepository.findById(relatedEntityId).ifPresent(reunionFinale -> {
                 notification.setReunionFinale(reunionFinale);
                 notification.setReunion(reunionFinale);
-            }
-            case "REUNION_HEBDOMADAIRE" -> {
-                ReunionHebdomadaire reunionHebdomadaire = reunionHebdomadaireRepository.findById(relatedEntityId)
-                        .orElseThrow(() -> new EntityNotFoundException("Reunion hebdomadaire introuvable"));
-                notification.setReunionHebdomadaire(reunionHebdomadaire);
-                notification.setReunion(reunionHebdomadaire);
-            }
-            case "CAHIER_STAGE" -> notification.setCahierStage(
-                    cahierStageRepository.findById(relatedEntityId)
-                            .orElseThrow(() -> new EntityNotFoundException("Cahier de stage introuvable"))
-            );
-            case "FICHE_EVALUATION" -> notification.setFicheEvaluation(
-                    ficheEvaluationRepository.findById(relatedEntityId)
-                            .orElseThrow(() -> new EntityNotFoundException("Fiche d'evaluation introuvable"))
-            );
-            case "CONVENTION", "CONVENTION_STAGE" -> notification.setConventionStage(
-                    conventionStageRepository.findById(relatedEntityId)
-                            .orElseThrow(() -> new EntityNotFoundException("Convention introuvable"))
-            );
-            case "DEMANDE", "DEMANDE_ENTREPRISE", "DEMANDE_CREATION_COMPTE_ENTREPRISE" -> notification.setDemandeCreationCompteEntreprise(
+            });
+            case "REUNION_HEBDOMADAIRE" -> reunionHebdomadaireRepository.findById(relatedEntityId).ifPresent(reunionHebdo -> {
+                notification.setReunionHebdomadaire(reunionHebdo);
+                notification.setReunion(reunionHebdo);
+            });
+            case "CAHIER_STAGE" -> cahierStageRepository.findById(relatedEntityId)
+                    .ifPresent(notification::setCahierStage);
+            case "FICHE_EVALUATION" -> ficheEvaluationRepository.findById(relatedEntityId)
+                    .ifPresent(notification::setFicheEvaluation);
+            case "CONVENTION", "CONVENTION_STAGE" -> conventionStageRepository.findById(relatedEntityId)
+                    .ifPresent(notification::setConventionStage);
+            case "DEMANDE", "DEMANDE_ENTREPRISE", "DEMANDE_CREATION_COMPTE_ENTREPRISE" ->
                     demandeCreationCompteEntrepriseRepository.findById(relatedEntityId)
-                            .orElseThrow(() -> new EntityNotFoundException("Demande introuvable"))
-            );
+                            .ifPresent(notification::setDemandeCreationCompteEntreprise);
             default -> {
                 // Unknown business context: keep notification generic for compatibility.
             }

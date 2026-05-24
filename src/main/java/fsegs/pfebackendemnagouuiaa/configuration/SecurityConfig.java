@@ -18,6 +18,8 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import jakarta.servlet.http.HttpServletResponse;
+
 import java.util.List;
 
 @Configuration
@@ -38,7 +40,7 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
 
-                        // 🔥 AJOUT CRITIQUE
+                        // ?? AJOUT CRITIQUE
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
                         .requestMatchers(
@@ -47,7 +49,6 @@ public class SecurityConfig {
                                 "/api/stages/**",
                                 "/api/offres/**",
                                 "/api/offres-stage/**",
-                                "/api/demandes-stage/**",
                                 "/v3/api-docs/**",
                                 "/swagger-ui/**",
                                 "/swagger-ui.html",
@@ -56,9 +57,29 @@ public class SecurityConfig {
                                 "/api/entreprises/**"
                         ).permitAll()
 
+                        .requestMatchers("/api/demandes-stage/**").authenticated()
+
                         .requestMatchers(HttpMethod.POST, "/api/reunions-finales/**").permitAll()
 
                         .anyRequest().authenticated()
+                )
+                .exceptionHandling(ex -> ex
+                        // Garantit que les 401/403 produits par Spring Security lui-meme
+                        // retournent du JSON coherent avec le GlobalExceptionHandler,
+                        // plutot que la reponse HTML/texte par defaut.
+                        .authenticationEntryPoint((request, response, authException) -> {
+                            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                            response.setContentType("application/json;charset=UTF-8");
+                            response.getWriter().write("{\"message\":\"" + authException.getMessage() + "\"}");
+                        })
+                        .accessDeniedHandler((request, response, accessDeniedException) -> {
+                            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                            response.setContentType("application/json;charset=UTF-8");
+                            String msg = accessDeniedException.getMessage() != null
+                                    ? accessDeniedException.getMessage()
+                                    : "Acces refuse.";
+                            response.getWriter().write("{\"message\":\"" + msg + "\"}");
+                        })
                 )
                 .authenticationProvider(authenticationProvider)
                 .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);

@@ -28,19 +28,19 @@ public class OffreStageController {
     private final OffreStageService offreStageService;
 
     @PostMapping
-    @PreAuthorize("hasAnyRole('RESPONSABLE_ENTREPRISE', 'RESPONSABLE_SERVICE_STAGES', 'RESPONSABLE_UNIVERSITAIRE_STAGES', 'ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_ENTREPRISE', 'RESPONSABLE_STAGE', 'ADMINISTRATEUR')")
     public ResponseEntity<OffreStageResponse> create(@RequestBody CreateOffreStageRequest request) {
         return new ResponseEntity<>(offreStageService.createOffre(request), HttpStatus.CREATED);
     }
 
     @PutMapping("/{id:\\d+}")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_ENTREPRISE', 'RESPONSABLE_SERVICE_STAGES', 'RESPONSABLE_UNIVERSITAIRE_STAGES', 'ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_ENTREPRISE', 'RESPONSABLE_STAGE', 'ADMINISTRATEUR')")
     public ResponseEntity<OffreStageResponse> update(@PathVariable Long id, @RequestBody CreateOffreStageRequest request) {
         return ResponseEntity.ok(offreStageService.updateOffre(id, request));
     }
 
     @GetMapping("/en-attente-validation")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES', 'RESPONSABLE_UNIVERSITAIRE_STAGES', 'ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE', 'ADMINISTRATEUR')")
     public ResponseEntity<List<OffreStageResponse>> getOffresEnAttenteValidation() {
         List<OffreStageResponse> offers = offreStageService.getOffresEnAttenteValidation();
         log.info("GET /api/offres/en-attente-validation -> {} offre(s) en attente", offers.size());
@@ -58,7 +58,7 @@ public class OffreStageController {
     }
 
     @GetMapping("/toutes")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES', 'RESPONSABLE_UNIVERSITAIRE_STAGES', 'ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE', 'ADMINISTRATEUR')")
     public ResponseEntity<List<OffreStageResponse>> getToutesPourGestion() {
         List<OffreStageResponse> offers = offreStageService.getToutesOffresPourGestion();
         log.info("GET /api/offres/toutes -> {} offre(s) visible(s) pour gestion universitaire", offers.size());
@@ -66,7 +66,7 @@ public class OffreStageController {
     }
 
     @DeleteMapping("/{id:\\d+}")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES', 'RESPONSABLE_UNIVERSITAIRE_STAGES', 'ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE', 'ADMINISTRATEUR')")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         offreStageService.deleteOffre(id);
         return ResponseEntity.noContent().build();
@@ -81,7 +81,7 @@ public class OffreStageController {
     }
 
     @PatchMapping("/{offreId:\\d+}/approuver")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES', 'RESPONSABLE_UNIVERSITAIRE_STAGES', 'ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE', 'ADMINISTRATEUR')")
     public ResponseEntity<OffreStageResponse> approuverOffre(
             @PathVariable Long offreId,
             @RequestBody ApprouverOffreStageRequest request
@@ -96,7 +96,7 @@ public class OffreStageController {
     }
 
     @PatchMapping("/{offreId:\\d+}/approuver/{responsableServiceStagesId:\\d+}")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES', 'RESPONSABLE_UNIVERSITAIRE_STAGES', 'ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE', 'ADMINISTRATEUR')")
     public ResponseEntity<OffreStageResponse> approuverOffreLegacy(
             @PathVariable Long offreId,
             @PathVariable Long responsableServiceStagesId
@@ -105,7 +105,7 @@ public class OffreStageController {
     }
 
     @PutMapping("/{offreId:\\d+}/valider/{responsableServiceStagesId:\\d+}")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES', 'RESPONSABLE_UNIVERSITAIRE_STAGES', 'ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE', 'ADMINISTRATEUR')")
     public ResponseEntity<OffreStageResponse> validerOffreLegacy(
             @PathVariable Long offreId,
             @PathVariable Long responsableServiceStagesId
@@ -114,7 +114,7 @@ public class OffreStageController {
     }
 
     @PatchMapping("/{offreId:\\d+}/refuser")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES', 'RESPONSABLE_UNIVERSITAIRE_STAGES', 'ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE', 'ADMINISTRATEUR')")
     public ResponseEntity<OffreStageResponse> refuserOffre(
             @PathVariable Long offreId,
             @RequestBody(required = false) RefuserOffreStageRequest request
@@ -125,7 +125,7 @@ public class OffreStageController {
     }
 
     @PutMapping("/{offreId:\\d+}/refuser")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES', 'RESPONSABLE_UNIVERSITAIRE_STAGES', 'ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE', 'ADMINISTRATEUR')")
     public ResponseEntity<OffreStageResponse> refuserOffreLegacy(@PathVariable Long offreId) {
         return ResponseEntity.ok(offreStageService.refuserOffre(offreId, null));
     }

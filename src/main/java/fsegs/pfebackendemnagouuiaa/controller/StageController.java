@@ -1,19 +1,13 @@
 package fsegs.pfebackendemnagouuiaa.controller;
 
 import fsegs.pfebackendemnagouuiaa.dto.CreateStageRequest;
-import fsegs.pfebackendemnagouuiaa.dto.RapportEnqueteSatisfactionResponse;
-import fsegs.pfebackendemnagouuiaa.dto.StageEnqueteSectionStatusResponse;
 import fsegs.pfebackendemnagouuiaa.entities.Stage;
 import fsegs.pfebackendemnagouuiaa.services.StageService;
 import lombok.RequiredArgsConstructor;
-import org.springframework.core.io.Resource;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
-import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
@@ -52,7 +46,7 @@ public class StageController {
     }
 
     @PutMapping("/{stageId}/affecter-encadrant-academique/{encadrantId}")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR')")
     public ResponseEntity<Stage> affecterEncadrantAcademique(
             @PathVariable Long stageId,
             @PathVariable Long encadrantId
@@ -100,19 +94,25 @@ public class StageController {
         return ResponseEntity.ok(stageService.getStageCourantPourStagiaireAuthentifie());
     }
 
+    @GetMapping("/mon-entreprise")
+    @PreAuthorize("hasRole('RESPONSABLE_ENTREPRISE')")
+    public ResponseEntity<List<Stage>> getStagesPourMonEntreprise() {
+        return ResponseEntity.ok(stageService.getStagesPourResponsableEntrepriseAuthentifie());
+    }
+
     @GetMapping("/entreprise/{entrepriseId}")
     public ResponseEntity<List<Stage>> getByEntreprise(@PathVariable Long entrepriseId) {
         return ResponseEntity.ok(stageService.getStagesByEntreprise(entrepriseId));
     }
 
     @GetMapping("/encadrant-academique/{encadrantId}")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR')")
     public ResponseEntity<List<Stage>> getByEncadrantAcademique(@PathVariable Long encadrantId) {
         return ResponseEntity.ok(stageService.getStagesByEncadrantAcademique(encadrantId));
     }
 
     @GetMapping("/encadrant-professionnel/{encadrantId}")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR')")
     public ResponseEntity<List<Stage>> getByEncadrantProfessionnel(@PathVariable Long encadrantId) {
         return ResponseEntity.ok(stageService.getStagesByEncadrantProfessionnel(encadrantId));
     }
@@ -129,6 +129,18 @@ public class StageController {
         return ResponseEntity.ok(stageService.getStagesPourEncadrantProfessionnelAuthentifie());
     }
 
+    /**
+     * Déclenche manuellement la vérification des stages éligibles au démarrage.
+     * Réservé aux rôles RESPONSABLE_STAGE et ADMINISTRATEUR.
+     * Utile pour les tests ou pour forcer le déclenchement hors du cron nocturne.
+     */
+    @PostMapping("/declencher-eligibles")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR')")
+    public ResponseEntity<Map<String, Integer>> declencherStagesEligibles() {
+        int declenches = stageService.declencherStagesEligibles();
+        return ResponseEntity.ok(Map.of("stagesDeclenchés", declenches));
+    }
+
     @PostMapping("/creer-depuis-offre/{offreId}/stagiaire/{stagiaireId}")
     public ResponseEntity<Stage> creerDepuisOffre(
             @PathVariable Long offreId,
@@ -140,7 +152,7 @@ public class StageController {
         );
     }
     @PutMapping("/{stageId}/valider-sujet/{encadrantId}")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR')")
     public ResponseEntity<Stage> validerSujetParEncadrant(
             @PathVariable Long stageId,
             @PathVariable Long encadrantId
@@ -149,7 +161,7 @@ public class StageController {
     }
 
     @PutMapping("/{stageId}/refuser-sujet/{encadrantId}")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR')")
     public ResponseEntity<Stage> refuserSujetParEncadrant(
             @PathVariable Long stageId,
             @PathVariable Long encadrantId
@@ -185,34 +197,4 @@ public class StageController {
         return ResponseEntity.ok(stageService.genererRapportStage(stageId));
     }
 
-    @PreAuthorize("isAuthenticated()")
-    @GetMapping("/{stageId:\\d+}/enquete-section-status")
-    public ResponseEntity<StageEnqueteSectionStatusResponse> getEnqueteSectionStatus(@PathVariable Long stageId) {
-        return ResponseEntity.ok(stageService.getEnqueteSectionStatus(stageId));
-    }
-
-    @PreAuthorize("hasRole('RESPONSABLE_ENTREPRISE')")
-    @PostMapping(value = "/{stageId:\\d+}/rapport-enquete/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<RapportEnqueteSatisfactionResponse> uploadRapportEnquete(@PathVariable Long stageId,
-                                                                                   @RequestParam("file") MultipartFile file) {
-        return ResponseEntity.ok(stageService.uploadRapportEnquete(stageId, file));
-    }
-
-    @PreAuthorize("isAuthenticated()")
-    @GetMapping("/{stageId:\\d+}/rapport-enquete/metadata")
-    public ResponseEntity<RapportEnqueteSatisfactionResponse> getRapportEnqueteMetadata(@PathVariable Long stageId) {
-        return ResponseEntity.ok(stageService.getRapportEnqueteMetadata(stageId));
-    }
-
-    @PreAuthorize("isAuthenticated()")
-    @GetMapping("/{stageId:\\d+}/rapport-enquete")
-    public ResponseEntity<Resource> getRapportEnquete(@PathVariable Long stageId) {
-        RapportEnqueteSatisfactionResponse metadata = stageService.getRapportEnqueteMetadata(stageId);
-        Resource resource = stageService.getRapportEnqueteResource(stageId);
-
-        return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + metadata.getNomFichier() + "\"")
-                .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                .body(resource);
-    }
 }

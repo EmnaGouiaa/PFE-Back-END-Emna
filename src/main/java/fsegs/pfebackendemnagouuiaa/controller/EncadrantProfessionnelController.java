@@ -58,6 +58,11 @@ public class EncadrantProfessionnelController {
         return ResponseEntity.ok(encadrantProfessionnelService.getByEntrepriseId(entrepriseId));
     }
 
+    @GetMapping("/by-entreprise/{entrepriseId}")
+    public ResponseEntity<List<EncadrantProfessionnelDto>> getByEntrepriseAlias(@PathVariable Long entrepriseId) {
+        return ResponseEntity.ok(encadrantProfessionnelService.getByEntrepriseId(entrepriseId));
+    }
+
     @PreAuthorize("hasAnyRole('ADMINISTRATEUR','RESPONSABLE_ENTREPRISE')")
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {

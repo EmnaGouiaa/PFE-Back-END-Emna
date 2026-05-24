@@ -15,8 +15,6 @@ public interface DemandeCreationCompteEntrepriseRepository extends JpaRepository
 
     List<DemandeCreationCompteEntreprise> findByStatut(StatutDemande statut);
 
-    List<DemandeCreationCompteEntreprise> findByStatutAdmin(StatutValidation statutAdmin);
-
     List<DemandeCreationCompteEntreprise> findByStatutResponsableStages(StatutValidation statutResponsableStages);
 
     List<DemandeCreationCompteEntreprise> findByNomEntrepriseContainingIgnoreCase(String nomEntreprise);

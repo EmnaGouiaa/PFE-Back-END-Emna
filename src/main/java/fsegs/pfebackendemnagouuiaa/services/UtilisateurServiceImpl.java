@@ -1,5 +1,6 @@
 package fsegs.pfebackendemnagouuiaa.services;
 
+import fsegs.pfebackendemnagouuiaa.dto.ChangeRoleRequest;
 import fsegs.pfebackendemnagouuiaa.dto.CreateUserRequest;
 import fsegs.pfebackendemnagouuiaa.dto.UpdateEmailRequest;
 import fsegs.pfebackendemnagouuiaa.dto.UpdateEmailResponse;
@@ -20,8 +21,10 @@ import fsegs.pfebackendemnagouuiaa.exception.AccountCreationException;
 import fsegs.pfebackendemnagouuiaa.exception.AccountEmailDeliveryException;
 import fsegs.pfebackendemnagouuiaa.exception.DuplicateFieldException;
 import fsegs.pfebackendemnagouuiaa.mapper.UtilisateurMapper;
+import fsegs.pfebackendemnagouuiaa.entities.Filiere;
 import fsegs.pfebackendemnagouuiaa.repository.CahierStageRepository;
 import fsegs.pfebackendemnagouuiaa.repository.ConventionStageRepository;
+import fsegs.pfebackendemnagouuiaa.repository.FiliereRepository;
 import fsegs.pfebackendemnagouuiaa.repository.StageRepository;
 import fsegs.pfebackendemnagouuiaa.repository.UtilisateurRepository;
 import jakarta.persistence.EntityNotFoundException;
@@ -59,12 +62,32 @@ public class UtilisateurServiceImpl implements UtilisateurService {
     private final ConventionStageRepository conventionStageRepository;
     private final CahierStageRepository cahierStageRepository;
     private final NotificationService notificationService;
+    private final FiliereRepository filiereRepository;
+    private final MatriculeGeneratorService matriculeGeneratorService;
 
     @Override
     public UserResponse createUser(CreateUserRequest request) {
         validateAdminManagedRoleCreation(request.getRole());
 
+        // Le niveau est obligatoire pour un stagiaire et n'est defini que par l'administrateur.
+        if (request.getRole() == Role.STAGIAIRE && request.getNiveau() == null) {
+            throw new IllegalArgumentException("Le niveau du stagiaire est obligatoire.");
+        }
+
+        // La filiere est obligatoire pour un stagiaire.
+        if (request.getRole() == Role.STAGIAIRE && request.getFiliereId() == null) {
+            throw new IllegalArgumentException("La filiere est obligatoire pour un stagiaire.");
+        }
+
         Utilisateur utilisateur = UtilisateurMapper.toEntity(request);
+
+        // Affecter la filiere au stagiaire apres la creation de l'entite.
+        if (utilisateur instanceof Stagiaire stagiaire && request.getFiliereId() != null) {
+            Filiere filiere = filiereRepository.findById(request.getFiliereId())
+                    .orElseThrow(() -> new EntityNotFoundException(
+                            "Filiere introuvable avec l'identifiant : " + request.getFiliereId()));
+            stagiaire.setFiliere(filiere);
+        }
         String email;
         String telephone;
         String matricule;
@@ -72,7 +95,14 @@ public class UtilisateurServiceImpl implements UtilisateurService {
         try {
             email = contactUniquenessService.normalizeAndValidateRequiredEmail(request.getEmail(), "email");
             telephone = contactUniquenessService.normalizeAndValidateOptionalPhone(request.getTelephone(), "telephone");
-            matricule = contactUniquenessService.normalizeAndValidateOptionalMatricule(request.getMatricule(), "matricule");
+            // Pour un STAGIAIRE, le matricule est genere automatiquement (MAT + YY + NNNN).
+            // Toute valeur fournie par le client est ignoree afin de garantir l'unicite et le format.
+            if (utilisateur instanceof Stagiaire) {
+                matricule = matriculeGeneratorService.generateNextStagiaireMatricule();
+                log.info("Matricule stagiaire auto-genere : {}", matricule);
+            } else {
+                matricule = contactUniquenessService.normalizeAndValidateOptionalMatricule(request.getMatricule(), "matricule");
+            }
             contactUniquenessService.validateUserIdentityForCreate(email, telephone, matricule);
         } catch (IllegalArgumentException ex) {
             log.warn(
@@ -174,6 +204,24 @@ public class UtilisateurServiceImpl implements UtilisateurService {
         UtilisateurMapper.updateEntity(utilisateur, request);
         utilisateur.setEmail(existingEmail);
         utilisateur.setTelephone(telephone);
+
+        // Champs propres au stagiaire modifiables par l'administrateur : filiere + niveau.
+        // Ignores silencieusement pour les autres roles (le mapper ne les pose pas non plus).
+        if (utilisateur instanceof Stagiaire stagiaire) {
+            if (request.getNiveau() != null) {
+                if (request.getNiveau() < 1) {
+                    throw new IllegalArgumentException("Le niveau doit etre un entier positif.");
+                }
+                stagiaire.setNiveau(request.getNiveau());
+            }
+            if (request.getFiliereId() != null) {
+                Filiere filiere = filiereRepository.findById(request.getFiliereId())
+                        .orElseThrow(() -> new EntityNotFoundException(
+                                "Filiere introuvable avec l'identifiant : " + request.getFiliereId()));
+                stagiaire.setFiliere(filiere);
+            }
+        }
+
         Utilisateur updated = utilisateurRepository.save(utilisateur);
         return UtilisateurMapper.toResponse(updated);
     }
@@ -202,7 +250,7 @@ public class UtilisateurServiceImpl implements UtilisateurService {
     @Transactional
     public UserResponse updateProfile(Long id, UpdateProfileRequest request) {
         Utilisateur utilisateur = findOwnedUser(id);
-        String previousSignature = utilisateur.getNomFichierSignature();
+        String previousSignature = utilisateur.getUrlSignature();
 
         ensureEmailIsNotChangedByProfilePatch(utilisateur, request);
         ensureProfileRequestMatchesRole(utilisateur, request);
@@ -277,16 +325,15 @@ public class UtilisateurServiceImpl implements UtilisateurService {
             responsableServiceStages.setService(requireNonBlank(request.getService(), "Le service ne peut pas etre vide"));
         }
 
-        if (request.getNomFichierSignature() != null) {
-            utilisateur.setNomFichierSignature(requireNonBlank(
-                    request.getNomFichierSignature(),
-                    "Le nom du fichier de signature ne peut pas etre vide"
-            ));
+        if (request.getUrlSignature() != null) {
+            // An empty string means the user explicitly removed their signature.
+            String sig = request.getUrlSignature().trim();
+            utilisateur.setUrlSignature(sig.isEmpty() ? null : sig);
         }
 
         Utilisateur updated = utilisateurRepository.save(utilisateur);
         synchroniserDonneesStagiaireLiees(updated);
-        notifierStagiairesSiSignatureAjouteeOuMiseAJour(updated, previousSignature, request.getNomFichierSignature() != null);
+        notifierStagiairesSiSignatureAjouteeOuMiseAJour(updated, previousSignature, request.getUrlSignature() != null);
         return UtilisateurMapper.toProfileResponse(updated);
     }
 
@@ -308,7 +355,7 @@ public class UtilisateurServiceImpl implements UtilisateurService {
                 .filter(existing -> !existing.getId().equals(utilisateurId))
                 .isPresent();
         if (emailAlreadyUsed) {
-            throw new IllegalArgumentException("Cette adresse e-mail est déjà utilisée");
+            throw new IllegalArgumentException("Cette adresse e-mail est déjé utilisée");
         }
 
         String currentEmail = normalizeEmailValue(utilisateur.getEmail());
@@ -317,7 +364,7 @@ public class UtilisateurServiceImpl implements UtilisateurService {
             try {
                 utilisateur = utilisateurRepository.saveAndFlush(utilisateur);
             } catch (DataIntegrityViolationException ex) {
-                throw new IllegalArgumentException("Cette adresse e-mail est déjà utilisée", ex);
+                throw new IllegalArgumentException("Cette adresse e-mail est déjé utilisée", ex);
             }
         }
 
@@ -326,7 +373,7 @@ public class UtilisateurServiceImpl implements UtilisateurService {
         String token = jwtService.generateToken(utilisateur);
 
         return UpdateEmailResponse.builder()
-                .message("Adresse e-mail modifiée avec succès")
+                .message("Adresse e-mail modifiée avec succés")
                 .token(token)
                 .userId(utilisateur.getId())
                 .nom(utilisateur.getNom())
@@ -419,6 +466,46 @@ public class UtilisateurServiceImpl implements UtilisateurService {
         utilisateur.setMatricule(buildDeletedUniqueValue("deleted-matricule", utilisateur.getId(), utilisateur.getMatricule()));
 
         utilisateurRepository.save(utilisateur);
+    }
+
+    @Override
+    @Transactional
+    public UserResponse changeUserRole(Long id, ChangeRoleRequest request) {
+        Utilisateur utilisateur = utilisateurRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Utilisateur introuvable avec l'id : " + id));
+
+        if (Boolean.TRUE.equals(utilisateur.getSupprime())) {
+            throw new EntityNotFoundException("Utilisateur introuvable avec l'id : " + id);
+        }
+
+        Role nouveauRole;
+        try {
+            String roleStr = request.getRole().trim().toUpperCase(Locale.ROOT);
+            if (roleStr.startsWith("ROLE_")) {
+                roleStr = roleStr.substring("ROLE_".length());
+            }
+            nouveauRole = Role.valueOf(roleStr);
+        } catch (IllegalArgumentException ex) {
+            throw new IllegalArgumentException(
+                    "Role invalide : \"" + request.getRole() + "\". "
+                    + "Les roles valides sont : " + java.util.Arrays.toString(Role.values()) + "."
+            );
+        }
+
+        Role ancienRole = utilisateur.getRole();
+        if (ancienRole == nouveauRole) {
+            UserResponse response = UtilisateurMapper.toResponse(utilisateur);
+            response.setMessage("Le role est deja \"" + nouveauRole.name() + "\". Aucune modification effectuee.");
+            return response;
+        }
+
+        utilisateur.setRole(nouveauRole);
+        Utilisateur updated = utilisateurRepository.save(utilisateur);
+        log.info("Role modifie pour l'utilisateur id={}: {} -> {}", id, ancienRole, nouveauRole);
+
+        UserResponse response = UtilisateurMapper.toResponse(updated);
+        response.setMessage("Role modifie avec succes.");
+        return response;
     }
 
     private UserResponse updateUserActivation(Long id, boolean active) {
@@ -552,7 +639,7 @@ public class UtilisateurServiceImpl implements UtilisateurService {
             return;
         }
 
-        String currentSignature = utilisateur.getNomFichierSignature();
+        String currentSignature = utilisateur.getUrlSignature();
         if (!hasText(currentSignature) || normalize(currentSignature).equals(normalize(previousSignature))) {
             return;
         }
@@ -610,51 +697,11 @@ public class UtilisateurServiceImpl implements UtilisateurService {
     }
 
     private void synchroniserConventionStagiaire(Long stageId, Stagiaire stagiaire, String nomCompletStagiaire) {
-        conventionStageRepository.findByStageId(stageId)
-                .ifPresent(convention -> {
-                    boolean updated = false;
-
-                    if (convention.getSignataireStagiaireId() != null
-                            && convention.getSignataireStagiaireId().equals(stagiaire.getId())
-                            && !sameText(convention.getNomSignataireStagiaire(), nomCompletStagiaire)) {
-                        convention.setNomSignataireStagiaire(nomCompletStagiaire);
-                        updated = true;
-                    }
-
-                    if (hasText(stagiaire.getNomFichierSignature())
-                            && !sameText(convention.getImageSignatureStagiaire(), stagiaire.getNomFichierSignature())) {
-                        convention.setImageSignatureStagiaire(stagiaire.getNomFichierSignature());
-                        updated = true;
-                    }
-
-                    if (updated) {
-                        conventionStageRepository.save(convention);
-                    }
-                });
+        // Signature data is now stored in the Signature collection; no denormalized fields to sync.
     }
 
     private void synchroniserCahierStageStagiaire(Long stageId, Stagiaire stagiaire, String nomCompletStagiaire) {
-        cahierStageRepository.findByStageId(stageId)
-                .ifPresent(cahierStage -> {
-                    boolean updated = false;
-
-                    if (cahierStage.getSignataireStagiaireId() != null
-                            && cahierStage.getSignataireStagiaireId().equals(stagiaire.getId())
-                            && !sameText(cahierStage.getNomSignataireStagiaire(), nomCompletStagiaire)) {
-                        cahierStage.setNomSignataireStagiaire(nomCompletStagiaire);
-                        updated = true;
-                    }
-
-                    if (hasText(stagiaire.getNomFichierSignature())
-                            && !sameText(cahierStage.getImageSignatureStagiaire(), stagiaire.getNomFichierSignature())) {
-                        cahierStage.setImageSignatureStagiaire(stagiaire.getNomFichierSignature());
-                        updated = true;
-                    }
-
-                    if (updated) {
-                        cahierStageRepository.save(cahierStage);
-                    }
-                });
+        // Signature data is now stored in the Signature collection; no denormalized fields to sync.
     }
 
     private String buildFullName(Utilisateur utilisateur) {

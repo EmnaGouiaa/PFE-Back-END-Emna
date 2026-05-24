@@ -33,7 +33,20 @@ public class CreateUserRequest {
 
     private Boolean actif;
 
-    private String nomFichierSignature;
+    private String urlSignature;
+
+    /**
+     * Identifiant de la filiere du stagiaire.
+     * Obligatoire lors de la creation d'un compte STAGIAIRE.
+     * Ignore pour les autres roles.
+     */
+    private Long filiereId;
+
+    /**
+     * Niveau du stagiaire. Saisi uniquement par l'administrateur lors de la création
+     * d'un compte STAGIAIRE. Ignoré pour les autres rôles.
+     */
+    private Integer niveau;
 
     @NotNull(message = "Le role est obligatoire")
     private Role role;

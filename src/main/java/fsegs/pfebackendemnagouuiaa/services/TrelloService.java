@@ -23,14 +23,28 @@ public class TrelloService {
         System.out.println("KEY=" + trelloProperties.getKey());
         System.out.println("TOKEN=" + trelloProperties.getToken());
     }
-    public Map<String, Object> createBoard(String boardName) {
-        String encodedName = URLEncoder.encode(boardName, StandardCharsets.UTF_8);
-        String url = "https://api.trello.com/1/boards/?name=" + encodedName
-                + "&defaultLists=false"
-                + "&key=" + trelloProperties.getKey()
-                + "&token=" + trelloProperties.getToken();
+    public boolean isEnabled() {
+        return trelloProperties.isEnabled();
+    }
 
-        return restTemplate.postForObject(url, null, Map.class);
+    public Map<String, Object> createBoard(String boardName) {
+        if (!trelloProperties.isEnabled()) {
+            return null;
+        }
+        String encodedName = URLEncoder.encode(boardName, StandardCharsets.UTF_8);
+        StringBuilder url = new StringBuilder("https://api.trello.com/1/boards/?name=")
+                .append(encodedName)
+                .append("&defaultLists=false")
+                .append("&key=").append(trelloProperties.getKey())
+                .append("&token=").append(trelloProperties.getToken());
+
+        // Si un workspace est configure, creer le board dans ce workspace specifique.
+        String wsId = trelloProperties.getWorkspaceId();
+        if (wsId != null && !wsId.isBlank()) {
+            url.append("&idOrganization=").append(wsId.trim());
+        }
+
+        return restTemplate.postForObject(url.toString(), null, Map.class);
     }
 
     public Map<String, Object> createList(String boardId, String listName) {

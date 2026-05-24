@@ -16,4 +16,7 @@ public class CreateOffreStageRequest {
     private Long entrepriseId;
     private Long publieeParId;
     private Long valideeParId;
+
+    /** Identifiant de l'encadrant professionnel existant (meme entreprise que l'offre). */
+    private Long encadrantProId;
 }

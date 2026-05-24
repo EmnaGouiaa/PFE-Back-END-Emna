@@ -13,7 +13,7 @@ public class ResponsableServiceStagesResponseDTO {
     private String email;
     private String telephone;
     private Boolean actif;
-    private String nomFichierSignature;
+    private String urlSignature;
     private String role;
 
     private String service;

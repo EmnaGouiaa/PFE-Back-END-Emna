@@ -20,7 +20,7 @@ public class CritereEvaluationMapperImpl implements CritereEvaluationMapper {
         dto.setDescription(entity.getDescription());
         dto.setCategorie(entity.getCategorie());
         dto.setBareme(entity.getBareme());
-        dto.setCommentaireGeneral(entity.getCommentaireGeneral());
+        dto.setCommentaireGeneral(entity.getConsigne());
         dto.setPartie(entity.getPartie());
 
         if (entity.getFiche() != null) {
@@ -42,7 +42,7 @@ public class CritereEvaluationMapperImpl implements CritereEvaluationMapper {
         entity.setDescription(dto.getDescription());
         entity.setCategorie(dto.getCategorie());
         entity.setBareme(dto.getBareme());
-        entity.setCommentaireGeneral(dto.getCommentaireGeneral());
+        entity.setConsigne(dto.getCommentaireGeneral());
         entity.setPartie(dto.getPartie());
 
         if (dto.getFicheId() != null) {

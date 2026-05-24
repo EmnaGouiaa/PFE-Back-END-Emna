@@ -11,7 +11,7 @@ public class ResponsableServiceStagesRequestDTO {
     private String motDePasse;
     private String telephone;
     private Boolean actif;
-    private String nomFichierSignature;
+    private String urlSignature;
 
     private String service;
 }

@@ -40,6 +40,7 @@ public class Stage {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(length = 500)
     private String titre;
 
     private LocalDate dateDebut;
@@ -50,10 +51,13 @@ public class Stage {
 
     private Integer nbSemaine;
 
+    @Column(length = 500)
     private String niveauSouhaite;
 
     @Enumerated(EnumType.STRING)
     private StatutStage statut;
+
+    @Column(columnDefinition = "TEXT")
     private String sujet;
     private String trelloBoardId;
     private String trelloBoardUrl;
@@ -121,13 +125,7 @@ public class Stage {
     @JsonIgnore
     private Set<Absence> absences = new HashSet<>();
 
-    @OneToMany(mappedBy = "stage", cascade = CascadeType.ALL, orphanRemoval = true)
-    @JsonIgnore
-    private List<EnqueteSatisfaction> enquetesSatisfaction = new ArrayList<>();
-
     private Boolean sectionEvaluationOuverte = Boolean.FALSE;
-
-    private Boolean sectionEnqueteOuverte = Boolean.FALSE;
 
     private Boolean notificationOuvertureEspacesEnvoyee = Boolean.FALSE;
 }

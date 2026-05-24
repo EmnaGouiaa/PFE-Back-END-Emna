@@ -17,7 +17,7 @@ public class UserResponse {
     private String telephone;
     private String adresse;
     private Boolean actif;
-    private String nomFichierSignature;
+    private String urlSignature;
     private Role role;
     private String matricule;
     private String grade;

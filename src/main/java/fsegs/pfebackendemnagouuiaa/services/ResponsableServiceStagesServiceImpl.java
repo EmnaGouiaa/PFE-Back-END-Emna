@@ -21,7 +21,7 @@ public class ResponsableServiceStagesServiceImpl implements ResponsableServiceSt
     @Override
     public ResponsableServiceStagesResponseDTO create(ResponsableServiceStagesRequestDTO dto) {
         if (repository.existsByEmail(dto.getEmail())) {
-            throw new RuntimeException("Email déjà utilisé");
+            throw new RuntimeException("Email déjé utilisé");
         }
 
         ResponsableServiceStages responsable = mapper.toEntity(dto);
@@ -38,7 +38,7 @@ public class ResponsableServiceStagesServiceImpl implements ResponsableServiceSt
         if (dto.getEmail() != null &&
                 !dto.getEmail().equals(existing.getEmail()) &&
                 repository.existsByEmail(dto.getEmail())) {
-            throw new RuntimeException("Email déjà utilisé");
+            throw new RuntimeException("Email déjé utilisé");
         }
 
         mapper.updateEntityFromDto(dto, existing);

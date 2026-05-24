@@ -23,19 +23,30 @@ public class CritereEvaluationController {
         return ResponseEntity.ok(service.create(dto));
     }
 
-    @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','RESPONSABLE_SERVICE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','RESPONSABLE_STAGE','ADMINISTRATEUR')")
     @GetMapping("/{id}")
     public ResponseEntity<CritereEvaluationDto> getById(@PathVariable Long id) {
         return ResponseEntity.ok(service.getById(id));
     }
 
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES','ADMINISTRATEUR','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE')")
     @GetMapping
     public ResponseEntity<List<CritereEvaluationDto>> getAll() {
         return ResponseEntity.ok(service.getAll());
     }
 
-    @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','RESPONSABLE_SERVICE_STAGES','ADMINISTRATEUR')")
+    /**
+     * Retourne les critères globaux (templates sans fiche) utilisés comme modèle
+     * lors de l'initialisation d'une fiche d'évaluation.
+     * Accessible à tous les utilisateurs authentifiés pour la lecture.
+     */
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/globaux")
+    public ResponseEntity<List<CritereEvaluationDto>> getGlobaux() {
+        return ResponseEntity.ok(service.getGlobaux());
+    }
+
+    @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','RESPONSABLE_STAGE','ADMINISTRATEUR')")
     @GetMapping("/fiche/{ficheId}")
     public ResponseEntity<List<CritereEvaluationDto>> getByFiche(@PathVariable Long ficheId) {
         return ResponseEntity.ok(service.getByFicheId(ficheId));

@@ -21,7 +21,7 @@ public class StagiaireMapper {
         stagiaire.setMotDePasse(dto.getMotDePasse());
         stagiaire.setTelephone(dto.getTelephone());
         stagiaire.setActif(dto.getActif() != null ? dto.getActif() : true);
-        stagiaire.setNomFichierSignature(dto.getNomFichierSignature());
+        stagiaire.setUrlSignature(dto.getUrlSignature());
 
         stagiaire.setMatricule(dto.getMatricule());
         stagiaire.setDateNaiss(dto.getDateNaiss());
@@ -45,7 +45,7 @@ public class StagiaireMapper {
                 .telephone(stagiaire.getTelephone())
                 .adresse(stagiaire.getAdresse())
                 .actif(stagiaire.getActif())
-                .nomFichierSignature(stagiaire.getNomFichierSignature())
+                .urlSignature(stagiaire.getUrlSignature())
                 .role(stagiaire.getRole() != null ? stagiaire.getRole().name() : null)
                 .matricule(stagiaire.getMatricule())
                 .dateNaiss(stagiaire.getDateNaiss())
@@ -71,7 +71,7 @@ public class StagiaireMapper {
         stagiaire.setMotDePasse(dto.getMotDePasse());
         stagiaire.setTelephone(dto.getTelephone());
         stagiaire.setActif(dto.getActif() != null ? dto.getActif() : true);
-        stagiaire.setNomFichierSignature(dto.getNomFichierSignature());
+        stagiaire.setUrlSignature(dto.getUrlSignature());
 
         stagiaire.setMatricule(dto.getMatricule());
         stagiaire.setDateNaiss(dto.getDateNaiss());

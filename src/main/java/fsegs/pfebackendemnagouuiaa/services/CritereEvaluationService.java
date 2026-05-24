@@ -17,4 +17,7 @@ public interface CritereEvaluationService {
     CritereEvaluationDto update(Long id, CritereEvaluationDto dto);
 
     void delete(Long id);
+
+    /** Retourne les critères globaux (sans fiche) qui servent de templates. */
+    List<CritereEvaluationDto> getGlobaux();
 }

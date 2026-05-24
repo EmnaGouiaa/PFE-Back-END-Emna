@@ -15,6 +15,12 @@ public interface EncadrantProfessionnelRepository extends JpaRepository<Encadran
 
     List<EncadrantProfessionnel> findByEntrepriseId(Long entrepriseId);
 
+    /**
+     * Returns only active (non-soft-deleted) encadrants for the given entreprise.
+     * Used by getByEntrepriseId to avoid exposing soft-deleted accounts.
+     */
+    List<EncadrantProfessionnel> findByEntrepriseIdAndSupprimeIsFalse(Long entrepriseId);
+
     boolean existsByEmail(String email);
     
 }

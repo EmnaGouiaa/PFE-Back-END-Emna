@@ -9,7 +9,6 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class ReunionFinaleFormulairesUpdateRequest {
 
-    private String urlFormEvaluation;
     private String urlFormSatisfaction;
     private String titreEnqueteSatisfaction;
     private String descriptionEnqueteSatisfaction;

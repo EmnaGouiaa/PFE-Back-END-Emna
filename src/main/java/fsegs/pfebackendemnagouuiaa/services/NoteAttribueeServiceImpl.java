@@ -5,6 +5,7 @@ import fsegs.pfebackendemnagouuiaa.entities.CleNoteAttribuee;
 import fsegs.pfebackendemnagouuiaa.entities.CritereEvaluation;
 import fsegs.pfebackendemnagouuiaa.entities.FicheEvaluation;
 import fsegs.pfebackendemnagouuiaa.entities.NoteAttribuee;
+import fsegs.pfebackendemnagouuiaa.entities.ResponsableEntreprise;
 import fsegs.pfebackendemnagouuiaa.entities.Role;
 import fsegs.pfebackendemnagouuiaa.entities.Stage;
 import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
@@ -43,7 +44,7 @@ public class NoteAttribueeServiceImpl implements NoteAttribueeService {
         CritereEvaluation critere = critereEvaluationRepository.findById(dto.getCritereEvaluationId())
                 .orElseThrow(() -> new EntityNotFoundException("Critere d'evaluation introuvable."));
 
-        CleNoteAttribuee id = new CleNoteAttribuee(dto.getCritereEvaluationId(), dto.getFicheEvaluationId());
+        CleNoteAttribuee id = new CleNoteAttribuee(dto.getFicheEvaluationId(), dto.getCritereEvaluationId());
         if (noteAttribueeRepository.findById(id).isPresent()) {
             throw new IllegalArgumentException("Une note existe deja pour cette fiche et ce critere.");
         }
@@ -65,7 +66,7 @@ public class NoteAttribueeServiceImpl implements NoteAttribueeService {
     @Override
     @Transactional(readOnly = true)
     public NoteAttribueeDto getById(Long ficheEvaluationId, Long critereEvaluationId) {
-        CleNoteAttribuee id = new CleNoteAttribuee(critereEvaluationId, ficheEvaluationId);
+        CleNoteAttribuee id = new CleNoteAttribuee(ficheEvaluationId, critereEvaluationId);
         NoteAttribuee entity = noteAttribueeRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Note attribuee introuvable."));
         ensureCanView(entity.getFicheEvaluation());
@@ -106,7 +107,7 @@ public class NoteAttribueeServiceImpl implements NoteAttribueeService {
     @Override
     @Transactional
     public NoteAttribueeDto update(Long ficheEvaluationId, Long critereEvaluationId, NoteAttribueeDto dto) {
-        CleNoteAttribuee id = new CleNoteAttribuee(critereEvaluationId, ficheEvaluationId);
+        CleNoteAttribuee id = new CleNoteAttribuee(ficheEvaluationId, critereEvaluationId);
         NoteAttribuee entity = noteAttribueeRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Note attribuee introuvable."));
 
@@ -135,7 +136,7 @@ public class NoteAttribueeServiceImpl implements NoteAttribueeService {
     @Override
     @Transactional
     public void delete(Long ficheEvaluationId, Long critereEvaluationId) {
-        CleNoteAttribuee id = new CleNoteAttribuee(critereEvaluationId, ficheEvaluationId);
+        CleNoteAttribuee id = new CleNoteAttribuee(ficheEvaluationId, critereEvaluationId);
         NoteAttribuee entity = noteAttribueeRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Note attribuee introuvable."));
 
@@ -211,12 +212,15 @@ public class NoteAttribueeServiceImpl implements NoteAttribueeService {
         Stage stage = fiche.getStage();
         return switch (utilisateur.getRole()) {
             case ADMINISTRATEUR,
-                    RESPONSABLE_SERVICE_STAGES,
-                    RESPONSABLE_UNIVERSITAIRE_STAGES -> true;
+                    RESPONSABLE_STAGE -> true;
             case ENCADRANT_PROFESSIONNEL -> stage.getEncadrantProfessionnel() != null
                     && stage.getEncadrantProfessionnel().getId().equals(utilisateur.getId());
-            case RESPONSABLE_ENTREPRISE -> stage.getTuteurEntreprise() != null
-                    && stage.getTuteurEntreprise().getId().equals(utilisateur.getId());
+            case RESPONSABLE_ENTREPRISE -> {
+                if (!(utilisateur instanceof ResponsableEntreprise re)) yield false;
+                yield re.getEntreprise() != null
+                        && stage.getEntreprise() != null
+                        && re.getEntreprise().getId().equals(stage.getEntreprise().getId());
+            }
             case ENCADRANT_ACADEMIQUE -> stage.getEncadrantAcademique() != null
                     && stage.getEncadrantAcademique().getId().equals(utilisateur.getId());
             case STAGIAIRE -> stage.getStagiaire() != null

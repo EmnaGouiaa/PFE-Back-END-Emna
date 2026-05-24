@@ -23,4 +23,6 @@ public interface FicheEvaluationService {
     FicheEvaluationDto remplirPartieEncadrantProfessionnel(Long ficheId, Long userId, FicheEvaluationDto dto);
     FicheEvaluationDto remplirPartieResponsableEntreprise(Long ficheId, Long userId, FicheEvaluationDto dto);
     FicheEvaluationDto enregistrerNotesEncadrantProfessionnel(Long ficheId, Long userId, List<NoteAttribueeDto> notes);
+
+    FicheEvaluationDto enregistrerNotesResponsableEntreprise(Long ficheId, Long userId, List<NoteAttribueeDto> notes);
 }

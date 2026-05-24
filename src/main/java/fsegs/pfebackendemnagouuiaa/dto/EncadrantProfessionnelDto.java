@@ -39,4 +39,7 @@ public class EncadrantProfessionnelDto {
     private String service;
     private Long entrepriseId;
     private String entrepriseNom;
+
+    /** Reflects the actif flag from Utilisateur. Read-only from frontend — managed by admin toggle. */
+    private Boolean actif;
 }

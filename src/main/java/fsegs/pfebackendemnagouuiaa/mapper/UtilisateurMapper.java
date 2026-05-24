@@ -22,7 +22,7 @@ public class UtilisateurMapper {
             "prenom",
             "telephone",
             "adresse",
-            "nomFichierSignature"
+            "urlSignature"
     );
 
     private UtilisateurMapper() {
@@ -31,7 +31,13 @@ public class UtilisateurMapper {
     public static Utilisateur toEntity(CreateUserRequest request) {
         Utilisateur utilisateur = instantiateByRole(request.getRole());
         populateCommonFields(utilisateur, request.getNom(), request.getPrenom(), request.getEmail(),
-                request.getTelephone(), request.getMatricule(), request.getActif(), request.getNomFichierSignature(), request.getRole());
+                request.getTelephone(), request.getMatricule(), request.getActif(), request.getUrlSignature(), request.getRole());
+
+        // Le niveau est propre au stagiaire et n'est defini que par l'administrateur.
+        if (utilisateur instanceof Stagiaire stagiaire) {
+            stagiaire.setNiveau(request.getNiveau());
+        }
+
         return utilisateur;
     }
 
@@ -41,7 +47,7 @@ public class UtilisateurMapper {
         utilisateur.setEmail(request.getEmail());
         utilisateur.setTelephone(request.getTelephone());
         utilisateur.setActif(request.getActif());
-        utilisateur.setNomFichierSignature(request.getNomFichierSignature());
+        utilisateur.setUrlSignature(request.getUrlSignature());
         utilisateur.setRole(request.getRole());
     }
 
@@ -54,7 +60,7 @@ public class UtilisateurMapper {
         response.setTelephone(utilisateur.getTelephone());
         response.setAdresse(utilisateur.getAdresse());
         response.setActif(utilisateur.getActif());
-        response.setNomFichierSignature(utilisateur.getNomFichierSignature());
+        response.setUrlSignature(utilisateur.getUrlSignature());
         response.setRole(utilisateur.getRole());
         response.setMatricule(utilisateur.getMatricule());
         response.setDoitChangerMotDePasse(utilisateur.getDoitChangerMotDePasse());
@@ -109,7 +115,7 @@ public class UtilisateurMapper {
                 case STAGIAIRE -> allowedFields.addAll(List.of("dateNaiss", "matricule"));
                 case RESPONSABLE_ENTREPRISE, ENCADRANT_PROFESSIONNEL -> allowedFields.addAll(List.of("poste", "service"));
                 case ENCADRANT_ACADEMIQUE -> allowedFields.addAll(List.of("grade", "specialite"));
-                case RESPONSABLE_SERVICE_STAGES, RESPONSABLE_UNIVERSITAIRE_STAGES -> allowedFields.addAll(List.of("service"));
+                case RESPONSABLE_STAGE -> allowedFields.addAll(List.of("service"));
                 default -> {
                 }
             }
@@ -146,7 +152,7 @@ public class UtilisateurMapper {
 
         return switch (utilisateur.getRole()) {
             case STAGIAIRE, ENCADRANT_PROFESSIONNEL -> List.of("CONVENTION", "FICHE_EVALUATION", "CAHIER_STAGE");
-            case ENCADRANT_ACADEMIQUE, RESPONSABLE_SERVICE_STAGES, RESPONSABLE_UNIVERSITAIRE_STAGES -> List.of("CONVENTION", "CAHIER_STAGE");
+            case ENCADRANT_ACADEMIQUE, RESPONSABLE_STAGE -> List.of("CONVENTION", "CAHIER_STAGE");
             case RESPONSABLE_ENTREPRISE -> List.of("CONVENTION", "FICHE_EVALUATION", "CAHIER_STAGE");
             default -> List.of();
         };
@@ -162,7 +168,7 @@ public class UtilisateurMapper {
             case ENCADRANT_ACADEMIQUE -> new EncadrantAcademique();
             case ENCADRANT_PROFESSIONNEL -> new EncadrantProfessionnel();
             case RESPONSABLE_ENTREPRISE -> new ResponsableEntreprise();
-            case RESPONSABLE_SERVICE_STAGES -> new ResponsableServiceStages();
+            case RESPONSABLE_STAGE -> new ResponsableServiceStages();
             default -> new Utilisateur();
         };
     }
@@ -175,7 +181,7 @@ public class UtilisateurMapper {
             String telephone,
             String matricule,
             Boolean actif,
-            String nomFichierSignature,
+            String urlSignature,
             Role role
     ) {
         utilisateur.setNom(nom);
@@ -183,7 +189,7 @@ public class UtilisateurMapper {
         utilisateur.setEmail(email);
         utilisateur.setTelephone(telephone);
         utilisateur.setActif(actif != null ? actif : true);
-        utilisateur.setNomFichierSignature(nomFichierSignature);
+        utilisateur.setUrlSignature(urlSignature);
         utilisateur.setMatricule(matricule);
         utilisateur.setRole(role);
     }

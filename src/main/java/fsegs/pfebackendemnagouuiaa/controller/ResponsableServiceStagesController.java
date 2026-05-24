@@ -43,6 +43,6 @@ public class ResponsableServiceStagesController {
     @DeleteMapping("/{id}")
     public ResponseEntity<String> delete(@PathVariable Long id) {
         service.delete(id);
-        return ResponseEntity.ok("ResponsableServiceStages supprimé avec succès");
+        return ResponseEntity.ok("ResponsableServiceStages supprimé avec succés");
     }
 }

@@ -32,8 +32,20 @@ public class UpdateUserRequest {
     @NotNull(message = "Le statut actif est obligatoire")
     private Boolean actif;
 
-    private String nomFichierSignature;
+    private String urlSignature;
 
     @NotNull(message = "Le role est obligatoire")
     private Role role;
+
+    /**
+     * Identifiant de la filiere du stagiaire — modifiable par l'administrateur.
+     * Ignore pour les autres roles. Null pour conserver la valeur existante.
+     */
+    private Long filiereId;
+
+    /**
+     * Niveau d'etude du stagiaire — modifiable par l'administrateur.
+     * Ignore pour les autres roles. Null pour conserver la valeur existante.
+     */
+    private Integer niveau;
 }

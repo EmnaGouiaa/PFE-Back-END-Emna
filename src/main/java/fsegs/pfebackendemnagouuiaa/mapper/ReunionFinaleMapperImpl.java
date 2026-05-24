@@ -3,7 +3,6 @@ package fsegs.pfebackendemnagouuiaa.mapper;
 import fsegs.pfebackendemnagouuiaa.dto.ReunionFinaleDto;
 import fsegs.pfebackendemnagouuiaa.entities.ReunionFinale;
 import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
-import fsegs.pfebackendemnagouuiaa.mapper.ReunionFinaleMapper;
 import org.springframework.stereotype.Component;
 
 import java.util.Set;
@@ -26,17 +25,12 @@ public class ReunionFinaleMapperImpl implements ReunionFinaleMapper {
         dto.setHeure(entity.getHeure());
         dto.setObservation(entity.getObservation());
         dto.setCompteRendu(entity.getCompteRendu());
-        dto.setNote(entity.getNote());
-        dto.setUrlFormEvaluation(entity.getUrlFormEvaluation());
-        dto.setUrlFormSatisfaction(entity.getUrlFormSatisfaction());
-        dto.setTitreEnqueteSatisfaction(entity.getTitreEnqueteSatisfaction());
-        dto.setDescriptionEnqueteSatisfaction(entity.getDescriptionEnqueteSatisfaction());
 
         if (entity.getStage() != null) {
             dto.setStageId(entity.getStage().getId());
             dto.setStageTitre(entity.getStage().getTitre());
             if (entity.getStage().getStagiaire() != null) {
-        dto.setStagiaireNom((entity.getStage().getStagiaire().getPrenom() + " " + entity.getStage().getStagiaire().getNom()).trim());
+                dto.setStagiaireNom((entity.getStage().getStagiaire().getPrenom() + " " + entity.getStage().getStagiaire().getNom()).trim());
             }
             if (entity.getStage().getEntreprise() != null) {
                 dto.setEntrepriseNom(entity.getStage().getEntreprise().getNom());
@@ -85,11 +79,6 @@ public class ReunionFinaleMapperImpl implements ReunionFinaleMapper {
         entity.setHeure(dto.getHeure());
         entity.setObservation(dto.getObservation());
         entity.setCompteRendu(dto.getCompteRendu());
-        entity.setNote(dto.getNote());
-        entity.setUrlFormEvaluation(dto.getUrlFormEvaluation());
-        entity.setUrlFormSatisfaction(dto.getUrlFormSatisfaction());
-        entity.setTitreEnqueteSatisfaction(dto.getTitreEnqueteSatisfaction());
-        entity.setDescriptionEnqueteSatisfaction(dto.getDescriptionEnqueteSatisfaction());
 
         return entity;
     }

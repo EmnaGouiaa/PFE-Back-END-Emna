@@ -50,9 +50,75 @@ public class AdminCompanyAccountServiceImpl implements AdminCompanyAccountServic
 
     @Override
     public AdminCompanyAccountResponse create(AdminCompanyAccountRequest request) {
-        throw new IllegalArgumentException(
-                "La creation du representant doit se faire depuis une entreprise existante."
+        // Le formulaire "+ Nouvelle fiche" cree l'entreprise ET son representant en une
+        // seule soumission. On valide d'abord les donnees (unicite email/telephone), puis
+        // dans une meme transaction : (1) creation de l'entreprise, (2) recuperation de son
+        // id genere, (3) creation du representant rattache a cette entreprise.
+        NormalizedCompanyAccountRequest normalized = normalizeForCreate(request);
+        final String generatedPassword = generatePassword();
+
+        PersistedCompanyAccount persisted;
+        try {
+            persisted = transactionTemplate().execute(status -> {
+                // 1. Creer d'abord l'entreprise.
+                Entreprise entreprise = Entreprise.builder()
+                        .nom(normalized.nomEntreprise())
+                        .email(normalized.emailEntreprise())
+                        .telephone(normalized.telephoneEntreprise())
+                        .adresse(normalized.adresse())
+                        .secteurActivite(normalized.secteurActivite())
+                        .build();
+                // 2. saveAndFlush garantit que l'id de l'entreprise est genere et disponible.
+                Entreprise savedEntreprise = entrepriseRepository.saveAndFlush(entreprise);
+
+                // 3. Creer ensuite le representant lie a l'entreprise tout juste creee.
+                ResponsableEntreprise representant = ResponsableEntreprise.builder()
+                        .nom(normalized.nomResponsable())
+                        .prenom(normalized.prenomResponsable())
+                        .email(normalized.emailResponsable())
+                        .telephone(normalized.telephoneResponsable())
+                        .motDePasse(passwordEncoder.encode(generatedPassword))
+                        .doitChangerMotDePasse(true)
+                        .role(Role.RESPONSABLE_ENTREPRISE)
+                        .actif(true)
+                        .supprime(false)
+                        .entreprise(savedEntreprise)
+                        .build();
+                ResponsableEntreprise savedRepresentant = responsableEntrepriseRepository.saveAndFlush(representant);
+
+                return new PersistedCompanyAccount(savedEntreprise, savedRepresentant, generatedPassword, true);
+            });
+        } catch (DuplicateFieldException | IllegalArgumentException | EntityNotFoundException ex) {
+            // Erreurs metier/validation : on les laisse remonter telles quelles.
+            throw ex;
+        } catch (RuntimeException ex) {
+            log.error(
+                    "Echec de creation de l'entreprise ou du representant. entreprise={}, emailResponsable={}",
+                    safeValue(request.getNomEntreprise()),
+                    safeValue(request.getEmailResponsable()),
+                    ex
+            );
+            throw new AccountCreationException("Echec de la creation du compte.", ex);
+        }
+
+        if (persisted == null || persisted.representant() == null) {
+            log.error(
+                    "Echec de creation entreprise/representant sans exception explicite. entreprise={}, emailResponsable={}",
+                    safeValue(request.getNomEntreprise()),
+                    safeValue(request.getEmailResponsable())
+            );
+            throw new AccountCreationException("Echec de la creation du compte.");
+        }
+
+        AdminCompanyAccountResponse response = toResponse(persisted.entreprise(), persisted.representant());
+        applyEmailOutcome(
+                response,
+                persisted.representant(),
+                persisted.generatedPassword(),
+                "Entreprise et representant crees avec succes. Les identifiants ont ete envoyes par email.",
+                "Entreprise et representant crees, mais l'envoi de l'email a echoue."
         );
+        return response;
     }
 
     @Override
@@ -132,7 +198,7 @@ public class AdminCompanyAccountServiceImpl implements AdminCompanyAccountServic
     @Override
     public RepresentantEntrepriseResponse createRepresentantEntreprise(CreateRepresentantEntrepriseRequest request) {
         if (request == null) {
-            throw new IllegalArgumentException("La requête de création du représentant est obligatoire.");
+            throw new IllegalArgumentException("La requéte de création du représentant est obligatoire.");
         }
 
         String nom = requireText(request.getNom(), "Le nom est obligatoire.");

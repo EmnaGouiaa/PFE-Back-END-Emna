@@ -26,49 +26,49 @@ public class StageDocumentController {
     private final StageDocumentService stageDocumentService;
 
     @GetMapping("/documents")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_UNIVERSITAIRE_STAGES','RESPONSABLE_SERVICE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR')")
     public ResponseEntity<List<StageDocumentsOverviewDto>> listStageDocuments() {
         return ResponseEntity.ok(stageDocumentService.listStageDocuments());
     }
 
     @GetMapping("/{stageId:\\d+}/documents")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_UNIVERSITAIRE_STAGES','RESPONSABLE_SERVICE_STAGES','ADMINISTRATEUR','ENCADRANT_ACADEMIQUE','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','STAGIAIRE')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR','ENCADRANT_ACADEMIQUE','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','STAGIAIRE')")
     public ResponseEntity<StageDocumentsOverviewDto> getStageDocuments(@PathVariable Long stageId) {
         return ResponseEntity.ok(stageDocumentService.getStageDocuments(stageId));
     }
 
     @PostMapping("/{stageId:\\d+}/documents/convention/generer")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_UNIVERSITAIRE_STAGES','RESPONSABLE_SERVICE_STAGES','ADMINISTRATEUR','ENCADRANT_ACADEMIQUE')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR','ENCADRANT_ACADEMIQUE','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','STAGIAIRE')")
     public ResponseEntity<StageDocumentActionResponseDto> generateConventionPdf(@PathVariable Long stageId) {
         return ResponseEntity.ok(stageDocumentService.generateConventionPdf(stageId));
     }
 
     @GetMapping("/{stageId:\\d+}/documents/convention/pdf")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_UNIVERSITAIRE_STAGES','RESPONSABLE_SERVICE_STAGES','ADMINISTRATEUR','ENCADRANT_ACADEMIQUE','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','STAGIAIRE')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR','ENCADRANT_ACADEMIQUE','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','STAGIAIRE')")
     public ResponseEntity<byte[]> getConventionPdf(@PathVariable Long stageId) {
         return buildPdfResponse(stageDocumentService.getConventionPdf(stageId), "convention-stage-" + stageId + ".pdf");
     }
 
     @PostMapping("/{stageId:\\d+}/documents/fiche-evaluation/generer")
-    @PreAuthorize("hasAnyRole('ADMINISTRATEUR','ENCADRANT_PROFESSIONNEL')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR','ENCADRANT_ACADEMIQUE','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','STAGIAIRE')")
     public ResponseEntity<StageDocumentActionResponseDto> generateEvaluationPdf(@PathVariable Long stageId) {
         return ResponseEntity.ok(stageDocumentService.generateEvaluationPdf(stageId));
     }
 
     @GetMapping("/{stageId:\\d+}/documents/fiche-evaluation/pdf")
-    @PreAuthorize("hasAnyRole('ADMINISTRATEUR','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','STAGIAIRE')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR','ENCADRANT_ACADEMIQUE','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','STAGIAIRE')")
     public ResponseEntity<byte[]> getEvaluationPdf(@PathVariable Long stageId) {
         return buildPdfResponse(stageDocumentService.getEvaluationPdf(stageId), "fiche-evaluation-" + stageId + ".pdf");
     }
 
     @PostMapping("/{stageId:\\d+}/documents/cahier-stage/generer")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_UNIVERSITAIRE_STAGES','RESPONSABLE_SERVICE_STAGES','ADMINISTRATEUR','ENCADRANT_ACADEMIQUE','ENCADRANT_PROFESSIONNEL','STAGIAIRE')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR','ENCADRANT_ACADEMIQUE','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','STAGIAIRE')")
     public ResponseEntity<StageDocumentActionResponseDto> generateLogbookPdf(@PathVariable Long stageId) {
         return ResponseEntity.ok(stageDocumentService.generateLogbookPdf(stageId));
     }
 
     @GetMapping("/{stageId:\\d+}/documents/cahier-stage/pdf")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_UNIVERSITAIRE_STAGES','RESPONSABLE_SERVICE_STAGES','ADMINISTRATEUR','ENCADRANT_ACADEMIQUE','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','STAGIAIRE')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR','ENCADRANT_ACADEMIQUE','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','STAGIAIRE')")
     public ResponseEntity<byte[]> getLogbookPdf(@PathVariable Long stageId) {
         return buildPdfResponse(stageDocumentService.getLogbookPdf(stageId), "cahier-stage-" + stageId + ".pdf");
     }

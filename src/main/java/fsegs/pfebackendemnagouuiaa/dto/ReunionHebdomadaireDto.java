@@ -25,8 +25,5 @@ public class ReunionHebdomadaireDto {
 
     private Set<Long> participantIds;
 
-    private Integer numSemaine;
-    private String objectifsSemaineProchaine;
-
     private Long cahierStageId;
 }

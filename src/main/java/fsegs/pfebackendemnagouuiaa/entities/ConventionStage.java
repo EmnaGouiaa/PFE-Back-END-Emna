@@ -6,10 +6,17 @@ import lombok.*;
 import lombok.experimental.SuperBuilder;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
+/**
+ * Convention de stage.
+ * <p>
+ * Les anciens champs de signature (signeeEncPro, nomSignataireEncPro, etc.) ont été supprimés.
+ * La liste {@link #signatures} remplace l'ensemble des booléens et champs role-spécifiques.
+ * </p>
+ */
 @Entity
 @Table(name = "conventions_stage")
 @Data
@@ -17,6 +24,7 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class ConventionStage {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -25,47 +33,43 @@ public class ConventionStage {
     private Integer numConv;
 
     private LocalDate dateDebut;
-
     private LocalDate dateFin;
 
-    private Boolean signeeEncAca = false;
-    private Long signataireEncAcaId;
-    private String roleSignatureEncAca;
-    private String nomSignataireEncAca;
-    private String imageSignatureEncAca;
-    private LocalDateTime dateSignatureEncAca;
+    // ── Signatures ─────────────────────────────────────────────────────────────
 
-    private Boolean signeeEncPro = false;
-    private Long signataireEncProId;
-    private String roleSignatureEncPro;
-    private String nomSignataireEncPro;
-    private String imageSignatureEncPro;
-    private LocalDateTime dateSignatureEncPro;
+    @OneToMany(cascade = CascadeType.ALL, orphanRemoval = true)
+    @JoinColumn(name = "convention_stage_id")
+    @Builder.Default
+    private List<Signature> signatures = new ArrayList<>();
 
-    private Boolean signeeEntreprise = false;
-    private Long signataireEntrepriseId;
-    private String roleSignatureEntreprise;
-    private String nomSignataireEntreprise;
-    private String imageSignatureEntreprise;
-    private LocalDateTime dateSignatureEntreprise;
+    // ── Méthodes métier ────────────────────────────────────────────────────────
 
-    private Boolean signeeResp = false;
-    private Long signataireResponsableUniversitaireId;
-    private String roleSignatureResponsableUniversitaire;
-    private String imageSignatureResponsableUniversitaire;
+    /**
+     * Retourne {@code true} si ce document a été signé par la partie identifiée par {@code role}.
+     */
+    public boolean estSignePar(RoleSignature role) {
+        return signatures.stream().anyMatch(s -> s.getRoleSignature() == role);
+    }
 
-    private LocalDateTime dateSignatureResponsableUniversitaire;
+    /**
+     * Retourne la signature de la partie identifiée par {@code role}, si elle existe.
+     */
+    public Optional<Signature> getSignaturePour(RoleSignature role) {
+        return signatures.stream().filter(s -> s.getRoleSignature() == role).findFirst();
+    }
 
-    private String nomResponsableUniversitaireSignataire;
+    /**
+     * Retourne {@code true} si les 5 parties ont signé.
+     */
+    public boolean estCompletementSigne() {
+        return estSignePar(RoleSignature.ENCADRANT_ACADEMIQUE)
+                && estSignePar(RoleSignature.ENCADRANT_PROFESSIONNEL)
+                && estSignePar(RoleSignature.RESPONSABLE_ENTREPRISE)
+                && estSignePar(RoleSignature.RESPONSABLE_UNIVERSITAIRE)
+                && estSignePar(RoleSignature.STAGIAIRE);
+    }
 
-    private Boolean signeeStagiaire = false;
-    private Long signataireStagiaireId;
-    private String roleSignatureStagiaire;
-    private String nomSignataireStagiaire;
-    private String imageSignatureStagiaire;
-    private LocalDateTime dateSignatureStagiaire;
-
-    private Boolean statutSignatures = false;
+    // ── Relations ──────────────────────────────────────────────────────────────
 
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "stage_id", unique = true)

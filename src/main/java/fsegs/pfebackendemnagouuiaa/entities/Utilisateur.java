@@ -63,7 +63,10 @@ public class Utilisateur implements UserDetails {
     @Column(nullable = false)
     private Role role;
 
-    private String nomFichierSignature ;
+    /** URL, chemin ou donnee Base-64 de la signature manuscrite de l'utilisateur.
+     *  Stocke en LONGTEXT pour accepter les images encodees en Base-64 (~100-500 Ko). */
+    @Column(columnDefinition = "LONGTEXT")
+    private String urlSignature;
 
     // Méthodes de sécurité Spring
     @Override 
@@ -96,7 +99,7 @@ public class Utilisateur implements UserDetails {
     @Override 
     @JsonIgnore
     public boolean isEnabled() { 
-        // Si la valeur est null en base (pour les vieux comptes), on considère qu'il est actif
+        // Si la valeur est null en base (pour les vieux comptes), on considére qu'il est actif
         return !Boolean.FALSE.equals(this.actif) && !Boolean.TRUE.equals(this.supprime);
     }
 

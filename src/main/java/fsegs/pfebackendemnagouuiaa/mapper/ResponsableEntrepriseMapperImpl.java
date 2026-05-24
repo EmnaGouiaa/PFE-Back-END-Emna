@@ -45,6 +45,9 @@ public class ResponsableEntrepriseMapperImpl implements ResponsableEntrepriseMap
         entity.setTelephone(dto.getTelephone());
         entity.setPoste(dto.getPoste());
         entity.setService(dto.getService());
+        // @Builder.Default is not honoured by the no-arg constructor; set explicitly so that
+        // newly created accounts have actif=true instead of null in the DB.
+        entity.setActif(true);
         return entity;
     }
 }

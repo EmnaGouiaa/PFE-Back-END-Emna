@@ -12,7 +12,7 @@ public class StagiaireRequestDTO {
     private String motDePasse;
     private String telephone;
     private Boolean actif;
-    private String nomFichierSignature;
+    private String urlSignature;
 
     private String matricule;
     private LocalDate dateNaiss;

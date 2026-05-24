@@ -1,8 +1,6 @@
 package fsegs.pfebackendemnagouuiaa.controller;
 
-import fsegs.pfebackendemnagouuiaa.dto.EnqueteSatisfactionDto;
 import fsegs.pfebackendemnagouuiaa.dto.ReunionFinaleDto;
-import fsegs.pfebackendemnagouuiaa.dto.ReunionFinaleFormulairesUpdateRequest;
 import fsegs.pfebackendemnagouuiaa.services.ReunionFinaleService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -25,35 +23,22 @@ public class ReunionFinaleController {
         return new ResponseEntity<>(reunionFinaleService.create(dto), HttpStatus.CREATED);
     }
 
-    @PreAuthorize("hasAnyRole('STAGIAIRE','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('STAGIAIRE','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','RESPONSABLE_STAGE','ADMINISTRATEUR')")
     @GetMapping("/{id}")
     public ResponseEntity<ReunionFinaleDto> getById(@PathVariable Long id) {
         return ResponseEntity.ok(reunionFinaleService.getById(id));
     }
 
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR')")
     @GetMapping
     public ResponseEntity<List<ReunionFinaleDto>> getAll() {
         return ResponseEntity.ok(reunionFinaleService.getAll());
     }
 
-    @PreAuthorize("hasAnyRole('STAGIAIRE','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('STAGIAIRE','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','RESPONSABLE_STAGE','ADMINISTRATEUR')")
     @GetMapping("/stage/{stageId}")
     public ResponseEntity<List<ReunionFinaleDto>> getByStageId(@PathVariable Long stageId) {
         return ResponseEntity.ok(reunionFinaleService.getByStageId(stageId));
-    }
-
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
-    @PatchMapping("/{id}/formulaires")
-    public ResponseEntity<ReunionFinaleDto> updateFormulaires(@PathVariable Long id,
-                                                              @RequestBody ReunionFinaleFormulairesUpdateRequest request) {
-        return ResponseEntity.ok(reunionFinaleService.updateFormulaires(id, request));
-    }
-
-    @PreAuthorize("hasAnyRole('STAGIAIRE','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE')")
-    @GetMapping("/{id}/enquete-satisfaction")
-    public ResponseEntity<EnqueteSatisfactionDto> getEnqueteSatisfaction(@PathVariable Long id) {
-        return ResponseEntity.ok(reunionFinaleService.getEnqueteSatisfaction(id));
     }
 
     @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE')")

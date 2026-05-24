@@ -33,8 +33,12 @@ import fsegs.pfebackendemnagouuiaa.entities.ConventionStage;
 import fsegs.pfebackendemnagouuiaa.entities.FicheEvaluation;
 import fsegs.pfebackendemnagouuiaa.entities.Reunion;
 import fsegs.pfebackendemnagouuiaa.entities.ReunionFinale;
+import fsegs.pfebackendemnagouuiaa.entities.ResponsableEntreprise;
 import fsegs.pfebackendemnagouuiaa.entities.Role;
+import fsegs.pfebackendemnagouuiaa.entities.RoleSignature;
+import fsegs.pfebackendemnagouuiaa.entities.Signature;
 import fsegs.pfebackendemnagouuiaa.entities.Stage;
+import fsegs.pfebackendemnagouuiaa.entities.StatutDocument;
 import fsegs.pfebackendemnagouuiaa.entities.StatutStage;
 import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
 import fsegs.pfebackendemnagouuiaa.repository.AbsenceRepository;
@@ -44,6 +48,7 @@ import fsegs.pfebackendemnagouuiaa.repository.FicheEvaluationRepository;
 import fsegs.pfebackendemnagouuiaa.repository.ReunionRepository;
 import fsegs.pfebackendemnagouuiaa.repository.ReunionFinaleRepository;
 import fsegs.pfebackendemnagouuiaa.repository.StageRepository;
+import fsegs.pfebackendemnagouuiaa.repository.UtilisateurRepository;
 import fsegs.pfebackendemnagouuiaa.security.JwtService;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -96,6 +101,7 @@ public class StageDocumentServiceImpl implements StageDocumentService {
     private final ReunionFinaleRepository reunionFinaleRepository;
     private final ReunionRepository reunionRepository;
     private final AbsenceRepository absenceRepository;
+    private final UtilisateurRepository utilisateurRepository;
     private final ConventionStageService conventionStageService;
     private final FicheEvaluationService ficheEvaluationService;
     private final CahierStageService cahierStageService;
@@ -252,8 +258,10 @@ public class StageDocumentServiceImpl implements StageDocumentService {
                 blockers.isEmpty() ? "Disponible" : "En attente de signatures",
                 joinReasons(blockers)
         );
-        status.setSigneeParResponsableUniversitaire(Boolean.TRUE.equals(item.getSigneeResp()));
-        status.setDateSignatureResponsableUniversitaire(formatDateTime(item.getDateSignatureResponsableUniversitaire()));
+        status.setSigneeParResponsableUniversitaire(item.estSignePar(RoleSignature.RESPONSABLE_UNIVERSITAIRE));
+        status.setDateSignatureResponsableUniversitaire(formatDateTime(
+                item.getSignaturePour(RoleSignature.RESPONSABLE_UNIVERSITAIRE)
+                        .map(Signature::getDateSignature).orElse(null)));
         return status;
     }
 
@@ -319,11 +327,36 @@ public class StageDocumentServiceImpl implements StageDocumentService {
                                                   boolean generationAutorisee,
                                                   String statut,
                                                   String raison) {
-        return new StageDocumentStatusDto(code, libelle, documentId, disponible, genere, generationAutorisee, statut, raison, false, "");
+        StatutDocument statutDocument = resolveStatutDocument(disponible, genere, raison);
+        StageDocumentStatusDto dto = new StageDocumentStatusDto(
+                code, libelle, documentId, disponible, genere, generationAutorisee,
+                statut, raison, false, "", statutDocument);
+        return dto;
     }
 
     private StageDocumentStatusDto missingStatus(String code, String libelle, String reason, boolean generationAutorisee) {
-        return new StageDocumentStatusDto(code, libelle, null, false, false, generationAutorisee, "Manquant", reason, false, "");
+        StageDocumentStatusDto dto = new StageDocumentStatusDto(
+                code, libelle, null, false, false, generationAutorisee,
+                "Manquant", reason, false, "", StatutDocument.BROUILLON);
+        return dto;
+    }
+
+    /**
+     * Détermine le {@link StatutDocument} à partir des indicateurs de disponibilité.
+     * La logique est purement automatique : aucune validation manuelle du responsable
+     * des stages n'entre en jeu.
+     */
+    private StatutDocument resolveStatutDocument(boolean disponible, boolean genere, String raisonAbsence) {
+        if (disponible) {
+            return StatutDocument.DISPONIBLE_IMPRESSION;
+        }
+        if (!genere) {
+            // Le document n'existe pas encore — brouillon ou non initialisé
+            return StatutDocument.BROUILLON;
+        }
+        // Le document existe mais des signatures manquent encore
+        boolean signaturesManquantes = raisonAbsence != null && raisonAbsence.toLowerCase().contains("signature");
+        return signaturesManquantes ? StatutDocument.EN_ATTENTE_SIGNATURES : StatutDocument.SIGNATURES_COMPLETES;
     }
 
     private Role getCurrentRole() {
@@ -342,10 +375,9 @@ public class StageDocumentServiceImpl implements StageDocumentService {
                     STAGIAIRE,
                     ENCADRANT_ACADEMIQUE,
                     ENCADRANT_PROFESSIONNEL,
-                    RESPONSABLE_SERVICE_STAGES,
-                    RESPONSABLE_UNIVERSITAIRE_STAGES -> true;
+                    RESPONSABLE_STAGE -> true;
             case RESPONSABLE_ENTREPRISE -> convention
-                    .map(item -> !Boolean.TRUE.equals(item.getSigneeEntreprise()))
+                    .map(item -> !item.estSignePar(RoleSignature.RESPONSABLE_ENTREPRISE))
                     .orElse(false);
             default -> false;
         };
@@ -361,8 +393,7 @@ public class StageDocumentServiceImpl implements StageDocumentService {
                     STAGIAIRE,
                     ENCADRANT_PROFESSIONNEL,
                     ENCADRANT_ACADEMIQUE,
-                    RESPONSABLE_SERVICE_STAGES,
-                    RESPONSABLE_UNIVERSITAIRE_STAGES,
+                    RESPONSABLE_STAGE,
                     RESPONSABLE_ENTREPRISE -> true;
             default -> false;
         };
@@ -378,10 +409,9 @@ public class StageDocumentServiceImpl implements StageDocumentService {
                     STAGIAIRE,
                     ENCADRANT_ACADEMIQUE,
                     ENCADRANT_PROFESSIONNEL,
-                    RESPONSABLE_SERVICE_STAGES,
-                    RESPONSABLE_UNIVERSITAIRE_STAGES -> true;
+                    RESPONSABLE_STAGE -> true;
             case RESPONSABLE_ENTREPRISE -> cahierStage
-                    .map(item -> !Boolean.TRUE.equals(item.getSigneeRespEntreprise()))
+                    .map(item -> !item.estSignePar(RoleSignature.RESPONSABLE_ENTREPRISE))
                     .orElse(false);
             default -> false;
         };
@@ -488,11 +518,11 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         validateCondition(convention != null, reasons, "La convention de stage n'est pas encore disponible.");
         if (convention != null) {
             addMissingSignatureReasons(reasons, List.of(
-                    signatureRequirement(Boolean.TRUE.equals(convention.getSigneeStagiaire()), "Signature stagiaire manquante."),
-                    signatureRequirement(Boolean.TRUE.equals(convention.getSigneeEncAca()), "Signature encadrant academique manquante."),
-                    signatureRequirement(Boolean.TRUE.equals(convention.getSigneeEncPro()), "Signature encadrant professionnel manquante."),
-                    signatureRequirement(Boolean.TRUE.equals(convention.getSigneeEntreprise()), "Signature representant entreprise manquante."),
-                    signatureRequirement(Boolean.TRUE.equals(convention.getSigneeResp()), "Signature responsable universitaire manquante.")
+                    signatureRequirement(convention.estSignePar(RoleSignature.STAGIAIRE), "Signature stagiaire manquante."),
+                    signatureRequirement(convention.estSignePar(RoleSignature.ENCADRANT_ACADEMIQUE), "Signature encadrant academique manquante."),
+                    signatureRequirement(convention.estSignePar(RoleSignature.ENCADRANT_PROFESSIONNEL), "Signature encadrant professionnel manquante."),
+                    signatureRequirement(convention.estSignePar(RoleSignature.RESPONSABLE_ENTREPRISE), "Signature representant entreprise manquante."),
+                    signatureRequirement(convention.estSignePar(RoleSignature.RESPONSABLE_UNIVERSITAIRE), "Signature responsable universitaire manquante.")
             ));
         }
         return reasons;
@@ -501,14 +531,16 @@ public class StageDocumentServiceImpl implements StageDocumentService {
     private List<String> getEvaluationPdfBlockingReasons(Stage stage, FicheEvaluation fiche) {
         List<String> reasons = new ArrayList<>();
         validateCondition(fiche != null, reasons, "La fiche d'evaluation n'est pas encore disponible.");
-        validateCondition(stage.getStatut() == StatutStage.TERMINE, reasons, "La fiche d'evaluation ne peut etre finalisee qu'apres la fin du stage.");
+        validateCondition(stage.getDateFin() != null, reasons, "La date de fin du stage est absente.");
+        if (stage.getDateFin() != null) {
+            validateCondition(!LocalDate.now().isBefore(stage.getDateFin()), reasons,
+                    "La fiche d'evaluation ne peut etre imprimee qu'a partir de la date de fin du stage.");
+        }
         if (fiche != null) {
             validateCondition(fiche.donneesCompletes(), reasons, "La fiche d'evaluation est incomplete : le formulaire doit etre entierement renseigne.");
             addMissingSignatureReasons(reasons, List.of(
-                    signatureRequirement(fiche.getSignatureEncadrantProfessionnel() != null && !fiche.getSignatureEncadrantProfessionnel().isBlank(),
-                            "Signature encadrant professionnel manquante."),
-                    signatureRequirement(fiche.getSignatureRepresentantEntreprise() != null && !fiche.getSignatureRepresentantEntreprise().isBlank(),
-                            "Signature representant entreprise manquante.")
+                    signatureRequirement(fiche.estSignePar(RoleSignature.ENCADRANT_PROFESSIONNEL), "Signature encadrant professionnel manquante."),
+                    signatureRequirement(fiche.estSignePar(RoleSignature.RESPONSABLE_ENTREPRISE), "Signature representant entreprise manquante.")
             ));
         }
         return reasons;
@@ -516,28 +548,46 @@ public class StageDocumentServiceImpl implements StageDocumentService {
 
     private List<String> getLogbookDraftCreationBlockingReasons(Stage stage) {
         List<String> reasons = new ArrayList<>();
+
+        // Condition obligatoire : la date systeme doit etre EGALE a la date de fin du stage.
         validateCondition(stage.getDateFin() != null, reasons, "La date de fin du stage est absente.");
         if (stage.getDateFin() != null) {
-            validateCondition(!LocalDate.now().isBefore(stage.getDateFin()),
+            validateCondition(LocalDate.now().isEqual(stage.getDateFin()),
                     reasons,
-                    "Le cahier de stage ne peut etre genere qu'au dernier jour du stage ou apres sa date de fin.");
+                    "Le cahier de stage ne peut etre genere que le jour de la date de fin du stage.");
         }
-        TrelloSnapshot trelloSnapshot = getTrelloSnapshot(stage);
-        validateCondition(trelloSnapshot.synchronizedBoard(), reasons, "Les taches Trello n'ont pas encore ete collectées ou synchronisees.");
-        validateCondition(!trelloSnapshot.tasks().isEmpty(), reasons, "Aucune tache Trello n'a ete collectee pour ce stage.");
-        validateCondition(!getMeetingsWithObservations(stage.getId()).isEmpty(), reasons, "Aucune observation de reunion n'est disponible pour ce stage.");
+
+        // Condition obligatoire : au moins une observation de reunion doit etre disponible.
+        validateCondition(!getMeetingsWithObservations(stage.getId()).isEmpty(),
+                reasons,
+                "Aucune observation de reunion n'est disponible pour ce stage.");
+
+        // Trello optionnel : si un tableau Trello est rattache au stage, sa synchronisation
+        // doit reussir. En l'absence de lien Trello, cela ne bloque pas la generation.
+        if (hasText(stage.getTrelloBoardId())) {
+            TrelloSnapshot trelloSnapshot = getTrelloSnapshot(stage);
+            validateCondition(trelloSnapshot.synchronizedBoard(),
+                    reasons,
+                    "Les taches Trello n'ont pas pu etre collectees ou synchronisees.");
+        }
+
         return reasons;
     }
 
     private List<String> getLogbookPdfBlockingReasons(Stage stage, CahierStage cahierStage) {
-        List<String> reasons = new ArrayList<>(getLogbookDraftCreationBlockingReasons(stage));
+        List<String> reasons = new ArrayList<>();
         validateCondition(cahierStage != null, reasons, "Le cahier de stage n'est pas encore initialise.");
+        validateCondition(stage.getDateFin() != null, reasons, "La date de fin du stage est absente.");
+        if (stage.getDateFin() != null) {
+            validateCondition(!LocalDate.now().isBefore(stage.getDateFin()), reasons,
+                    "Le cahier de stage ne peut etre imprime qu'a partir de la date de fin du stage.");
+        }
         if (cahierStage != null) {
             addMissingSignatureReasons(reasons, List.of(
-                    signatureRequirement(Boolean.TRUE.equals(cahierStage.getSigneeStagiaire()), "Signature stagiaire manquante."),
-                    signatureRequirement(Boolean.TRUE.equals(cahierStage.getSigneeEncAcad()), "Signature encadrant academique manquante."),
-                    signatureRequirement(Boolean.TRUE.equals(cahierStage.getSigneeEncPro()), "Signature encadrant professionnel manquante."),
-                    signatureRequirement(Boolean.TRUE.equals(cahierStage.getSigneeRespEntreprise()), "Signature representant entreprise manquante.")
+                    signatureRequirement(cahierStage.estSignePar(RoleSignature.STAGIAIRE), "Signature stagiaire manquante."),
+                    signatureRequirement(cahierStage.estSignePar(RoleSignature.ENCADRANT_ACADEMIQUE), "Signature encadrant academique manquante."),
+                    signatureRequirement(cahierStage.estSignePar(RoleSignature.ENCADRANT_PROFESSIONNEL), "Signature encadrant professionnel manquante."),
+                    signatureRequirement(cahierStage.estSignePar(RoleSignature.RESPONSABLE_ENTREPRISE), "Signature representant entreprise manquante.")
             ));
         }
         return reasons;
@@ -632,7 +682,7 @@ public class StageDocumentServiceImpl implements StageDocumentService {
                 PDF_SECONDARY_SOFT
         ));
 
-        document.add(new Paragraph("Document administratif genere depuis l'espace responsable universitaire.")
+        document.add(new Paragraph("Document administratif officiel genere automatiquement des que les signatures obligatoires sont completes.")
                 .setFontSize(9)
                 .setFontColor(PDF_MUTED)
                 .setMarginTop(8)
@@ -683,11 +733,11 @@ public class StageDocumentServiceImpl implements StageDocumentService {
 
         document.add(sectionTitle("Etat du cahier"));
         document.add(buildInfoTable(List.of(
-                new String[]{"Signature stagiaire", toStatus(cahierStage.getSigneeStagiaire())},
-                new String[]{"Signature encadrant academique", toStatus(cahierStage.getSigneeEncAcad())},
-                new String[]{"Signature encadrant professionnel", toStatus(cahierStage.getSigneeEncPro())},
-                new String[]{"Signature responsable entreprise", toStatus(cahierStage.getSigneeRespEntreprise())},
-                new String[]{"Statut global", Boolean.TRUE.equals(cahierStage.getEstSigne()) ? "Complet" : "Incomplet"}
+                new String[]{"Signature stagiaire", toStatus(cahierStage.estSignePar(RoleSignature.STAGIAIRE))},
+                new String[]{"Signature encadrant academique", toStatus(cahierStage.estSignePar(RoleSignature.ENCADRANT_ACADEMIQUE))},
+                new String[]{"Signature encadrant professionnel", toStatus(cahierStage.estSignePar(RoleSignature.ENCADRANT_PROFESSIONNEL))},
+                new String[]{"Signature responsable entreprise", toStatus(cahierStage.estSignePar(RoleSignature.RESPONSABLE_ENTREPRISE))},
+                new String[]{"Statut global", cahierStage.estCompletementSigne() ? "Complet" : "Incomplet"}
         )));
 
         document.add(sectionTitle("Taches Trello synchronisees"));
@@ -739,7 +789,7 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         rightCell.add(heroMeta("Convention", safeNumber(convention.getNumConv())));
         rightCell.add(heroMeta("Periode", formatDate(convention.getDateDebut()) + " - " + formatDate(convention.getDateFin())));
         rightCell.add(heroMeta("Generation", formatDateTime(LocalDateTime.now())));
-        rightCell.add(heroMeta("Statut", Boolean.TRUE.equals(convention.getStatutSignatures()) ? "Completement signee" : "Signatures en attente"));
+        rightCell.add(heroMeta("Statut", convention.estCompletementSigne() ? "Completement signee" : "Signatures en attente"));
         rightCell.add(heroMeta("Stage", safeText(stage.getTitre())));
 
         hero.addCell(leftCell);
@@ -770,11 +820,10 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         summary.addCell(summaryCell("Entreprise",
                 stage.getEntreprise() == null ? "-" : safeText(stage.getEntreprise().getNom())));
         summary.addCell(summaryCell("Responsable universitaire",
-                safeText(convention.getNomResponsableUniversitaireSignataire()).equals("-")
-                        ? "Responsable universitaire des stages"
-                        : safeText(convention.getNomResponsableUniversitaireSignataire())));
+                resolveSignerName(convention.getSignaturePour(RoleSignature.RESPONSABLE_UNIVERSITAIRE),
+                        "Responsable universitaire des stages")));
         summary.addCell(summaryCell("Signature globale",
-                Boolean.TRUE.equals(convention.getStatutSignatures()) ? "Complete" : "En cours"));
+                convention.estCompletementSigne() ? "Complete" : "En cours"));
 
         return summary;
     }
@@ -892,36 +941,20 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         table.addHeaderCell(signatureHeaderCell("Date"));
         table.addHeaderCell(signatureHeaderCell("Signature"));
 
-        addSignatureRow(table,
-                firstNonBlank(convention.getNomSignataireStagiaire(), stage.getStagiaire() == null ? "-" : buildFullName(stage.getStagiaire().getPrenom(), stage.getStagiaire().getNom())),
-                "Stagiaire",
-                Boolean.TRUE.equals(convention.getSigneeStagiaire()),
-                convention.getDateSignatureStagiaire(),
-                firstNonBlank(convention.getImageSignatureStagiaire(), stage.getStagiaire() == null ? "" : stage.getStagiaire().getNomFichierSignature()));
-        addSignatureRow(table,
-                firstNonBlank(convention.getNomSignataireEncAca(), stage.getEncadrantAcademique() == null ? "-" : buildFullName(stage.getEncadrantAcademique().getPrenom(), stage.getEncadrantAcademique().getNom())),
-                "Encadrant academique",
-                Boolean.TRUE.equals(convention.getSigneeEncAca()),
-                convention.getDateSignatureEncAca(),
-                firstNonBlank(convention.getImageSignatureEncAca(), stage.getEncadrantAcademique() == null ? "" : stage.getEncadrantAcademique().getNomFichierSignature()));
-        addSignatureRow(table,
-                firstNonBlank(convention.getNomSignataireEncPro(), stage.getEncadrantProfessionnel() == null ? "-" : buildFullName(stage.getEncadrantProfessionnel().getPrenom(), stage.getEncadrantProfessionnel().getNom())),
-                "Encadrant professionnel",
-                Boolean.TRUE.equals(convention.getSigneeEncPro()),
-                convention.getDateSignatureEncPro(),
-                firstNonBlank(convention.getImageSignatureEncPro(), stage.getEncadrantProfessionnel() == null ? "" : stage.getEncadrantProfessionnel().getNomFichierSignature()));
-        addSignatureRow(table,
-                firstNonBlank(convention.getNomSignataireEntreprise(), buildCompanyRepresentative(stage)),
-                "Entreprise",
-                Boolean.TRUE.equals(convention.getSigneeEntreprise()),
-                convention.getDateSignatureEntreprise(),
-                firstNonBlank(convention.getImageSignatureEntreprise(), stage.getTuteurEntreprise() == null ? "" : stage.getTuteurEntreprise().getNomFichierSignature()));
-        addSignatureRow(table,
-                firstNonBlank(convention.getNomResponsableUniversitaireSignataire(), "Responsable universitaire des stages"),
-                "Responsable universitaire",
-                Boolean.TRUE.equals(convention.getSigneeResp()),
-                convention.getDateSignatureResponsableUniversitaire(),
-                convention.getImageSignatureResponsableUniversitaire());
+        addConventionSigRow(table, convention, RoleSignature.STAGIAIRE, "Stagiaire",
+                stage.getStagiaire() == null ? "-" : buildFullName(stage.getStagiaire().getPrenom(), stage.getStagiaire().getNom()),
+                stage.getStagiaire() == null ? "" : stage.getStagiaire().getUrlSignature());
+        addConventionSigRow(table, convention, RoleSignature.ENCADRANT_ACADEMIQUE, "Encadrant academique",
+                stage.getEncadrantAcademique() == null ? "-" : buildFullName(stage.getEncadrantAcademique().getPrenom(), stage.getEncadrantAcademique().getNom()),
+                stage.getEncadrantAcademique() == null ? "" : stage.getEncadrantAcademique().getUrlSignature());
+        addConventionSigRow(table, convention, RoleSignature.ENCADRANT_PROFESSIONNEL, "Encadrant professionnel",
+                stage.getEncadrantProfessionnel() == null ? "-" : buildFullName(stage.getEncadrantProfessionnel().getPrenom(), stage.getEncadrantProfessionnel().getNom()),
+                stage.getEncadrantProfessionnel() == null ? "" : stage.getEncadrantProfessionnel().getUrlSignature());
+        addConventionSigRow(table, convention, RoleSignature.RESPONSABLE_ENTREPRISE, "Entreprise",
+                buildCompanyRepresentative(stage),
+                stage.getTuteurEntreprise() == null ? "" : stage.getTuteurEntreprise().getUrlSignature());
+        addConventionSigRow(table, convention, RoleSignature.RESPONSABLE_UNIVERSITAIRE, "Responsable universitaire",
+                "Responsable universitaire des stages", "");
 
         container.addCell(new Cell().setBorder(Border.NO_BORDER).setPadding(0).add(table));
         return container;
@@ -1004,7 +1037,7 @@ public class StageDocumentServiceImpl implements StageDocumentService {
                 .setBold()
                 .setFontColor(ColorConstants.DARK_GRAY));
 
-        document.add(new Paragraph("Document administratif genere depuis l'espace responsable universitaire")
+        document.add(new Paragraph("Document administratif officiel genere automatiquement des que les signatures obligatoires sont completes.")
                 .setTextAlignment(TextAlignment.CENTER)
                 .setFontSize(9)
                 .setFontColor(ColorConstants.GRAY)
@@ -1092,16 +1125,16 @@ public class StageDocumentServiceImpl implements StageDocumentService {
                 buildSectionCard("Partie 1 : Encadrant professionnel", buildInfoContentTable(List.of(
                         new String[]{"Points forts", safeText(fiche.getPointFortEncadrantPro())},
                         new String[]{"Axes d'amelioration", safeText(fiche.getAxeAmeliorationEncadrantPro())},
-                        new String[]{"Nom du signataire", safeText(fiche.getNomSignataireEncadrantProfessionnel())},
-                        new String[]{"Role", safeText(fiche.getRoleSignatureEncadrantProfessionnel())},
-                        new String[]{"Date", formatDateTime(fiche.getDateSignatureEncadrantProfessionnel())}
+                        new String[]{"Nom du signataire", resolveSignerName(fiche.getSignaturePour(RoleSignature.ENCADRANT_PROFESSIONNEL), "-")},
+                        new String[]{"Role", RoleSignature.ENCADRANT_PROFESSIONNEL.name()},
+                        new String[]{"Date", fiche.getSignaturePour(RoleSignature.ENCADRANT_PROFESSIONNEL).map(s -> formatDateTime(s.getDateSignature())).orElse("-")}
                 )), PDF_PRIMARY_SOFT),
                 buildSectionCard("Partie 2 : Representant de l'entreprise", buildInfoContentTable(List.of(
                         new String[]{"Points forts", safeText(fiche.getPointFortResponsableEntreprise())},
                         new String[]{"Axes d'amelioration", safeText(fiche.getAxeAmeliorationResponsableEntreprise())},
-                        new String[]{"Nom du signataire", safeText(fiche.getNomSignataireRepresentantEntreprise())},
-                        new String[]{"Role", safeText(fiche.getRoleSignatureRepresentantEntreprise())},
-                        new String[]{"Date", formatDateTime(fiche.getDateSignatureRepresentantEntreprise())}
+                        new String[]{"Nom du signataire", resolveSignerName(fiche.getSignaturePour(RoleSignature.RESPONSABLE_ENTREPRISE), "-")},
+                        new String[]{"Role", RoleSignature.RESPONSABLE_ENTREPRISE.name()},
+                        new String[]{"Date", fiche.getSignaturePour(RoleSignature.RESPONSABLE_ENTREPRISE).map(s -> formatDateTime(s.getDateSignature())).orElse("-")}
                 )), PDF_SECONDARY_SOFT)
         ));
 
@@ -1328,55 +1361,95 @@ public class StageDocumentServiceImpl implements StageDocumentService {
     }
 
     private List<SignaturePdfRow> buildEvaluationSignatureRows(Stage stage, FicheEvaluation fiche) {
+        Optional<Signature> epSig = fiche.getSignaturePour(RoleSignature.ENCADRANT_PROFESSIONNEL);
+        Optional<Signature> reSig = fiche.getSignaturePour(RoleSignature.RESPONSABLE_ENTREPRISE);
+        String fallbackEp = stage.getEncadrantProfessionnel() == null ? "-" : buildFullName(stage.getEncadrantProfessionnel().getPrenom(), stage.getEncadrantProfessionnel().getNom());
+        String urlEp = stage.getEncadrantProfessionnel() == null ? "" : firstNonBlank(stage.getEncadrantProfessionnel().getUrlSignature(), "");
+        String urlRe = stage.getTuteurEntreprise() == null ? "" : firstNonBlank(stage.getTuteurEntreprise().getUrlSignature(), "");
         return List.of(
                 new SignaturePdfRow(
-                        firstNonBlank(fiche.getNomSignataireEncadrantProfessionnel(), stage.getEncadrantProfessionnel() == null ? "-" : buildFullName(stage.getEncadrantProfessionnel().getPrenom(), stage.getEncadrantProfessionnel().getNom())),
+                        resolveSignerName(epSig, fallbackEp),
                         "Encadrant professionnel",
-                        fiche.getSignatureEncadrantProfessionnel() != null && !fiche.getSignatureEncadrantProfessionnel().isBlank(),
-                        fiche.getDateSignatureEncadrantProfessionnel(),
-                        firstNonBlank(fiche.getSignatureEncadrantProfessionnel(), stage.getEncadrantProfessionnel() == null ? "" : stage.getEncadrantProfessionnel().getNomFichierSignature())
+                        epSig.isPresent(),
+                        epSig.map(Signature::getDateSignature).orElse(null),
+                        resolveSignerUrl(epSig, urlEp)
                 ),
                 new SignaturePdfRow(
-                        firstNonBlank(fiche.getNomSignataireRepresentantEntreprise(), buildCompanyRepresentative(stage)),
+                        resolveSignerName(reSig, buildCompanyRepresentative(stage)),
                         "Representant entreprise",
-                        fiche.getSignatureRepresentantEntreprise() != null && !fiche.getSignatureRepresentantEntreprise().isBlank(),
-                        fiche.getDateSignatureRepresentantEntreprise(),
-                        firstNonBlank(fiche.getSignatureRepresentantEntreprise(), stage.getTuteurEntreprise() == null ? "" : stage.getTuteurEntreprise().getNomFichierSignature())
+                        reSig.isPresent(),
+                        reSig.map(Signature::getDateSignature).orElse(null),
+                        resolveSignerUrl(reSig, urlRe)
                 )
         );
     }
 
     private List<SignaturePdfRow> buildLogbookSignatureRows(Stage stage, CahierStage cahierStage) {
+        Optional<Signature> stSig = cahierStage.getSignaturePour(RoleSignature.STAGIAIRE);
+        Optional<Signature> eaSig = cahierStage.getSignaturePour(RoleSignature.ENCADRANT_ACADEMIQUE);
+        Optional<Signature> epSig = cahierStage.getSignaturePour(RoleSignature.ENCADRANT_PROFESSIONNEL);
+        Optional<Signature> reSig = cahierStage.getSignaturePour(RoleSignature.RESPONSABLE_ENTREPRISE);
         return List.of(
                 new SignaturePdfRow(
-                        firstNonBlank(cahierStage.getNomSignataireStagiaire(), stage.getStagiaire() == null ? "-" : buildFullName(stage.getStagiaire().getPrenom(), stage.getStagiaire().getNom())),
+                        resolveSignerName(stSig, stage.getStagiaire() == null ? "-" : buildFullName(stage.getStagiaire().getPrenom(), stage.getStagiaire().getNom())),
                         "Stagiaire",
-                        Boolean.TRUE.equals(cahierStage.getSigneeStagiaire()),
-                        cahierStage.getDateSignatureStagiaire(),
-                        firstNonBlank(cahierStage.getImageSignatureStagiaire(), stage.getStagiaire() == null ? "" : stage.getStagiaire().getNomFichierSignature())
+                        stSig.isPresent(),
+                        stSig.map(Signature::getDateSignature).orElse(null),
+                        resolveSignerUrl(stSig, stage.getStagiaire() == null ? "" : firstNonBlank(stage.getStagiaire().getUrlSignature(), ""))
                 ),
                 new SignaturePdfRow(
-                        firstNonBlank(cahierStage.getNomSignataireEncAcad(), stage.getEncadrantAcademique() == null ? "-" : buildFullName(stage.getEncadrantAcademique().getPrenom(), stage.getEncadrantAcademique().getNom())),
+                        resolveSignerName(eaSig, stage.getEncadrantAcademique() == null ? "-" : buildFullName(stage.getEncadrantAcademique().getPrenom(), stage.getEncadrantAcademique().getNom())),
                         "Encadrant academique",
-                        Boolean.TRUE.equals(cahierStage.getSigneeEncAcad()),
-                        cahierStage.getDateSignatureEncAcad(),
-                        firstNonBlank(cahierStage.getImageSignatureEncAcad(), stage.getEncadrantAcademique() == null ? "" : stage.getEncadrantAcademique().getNomFichierSignature())
+                        eaSig.isPresent(),
+                        eaSig.map(Signature::getDateSignature).orElse(null),
+                        resolveSignerUrl(eaSig, stage.getEncadrantAcademique() == null ? "" : firstNonBlank(stage.getEncadrantAcademique().getUrlSignature(), ""))
                 ),
                 new SignaturePdfRow(
-                        firstNonBlank(cahierStage.getNomSignataireEncPro(), stage.getEncadrantProfessionnel() == null ? "-" : buildFullName(stage.getEncadrantProfessionnel().getPrenom(), stage.getEncadrantProfessionnel().getNom())),
+                        resolveSignerName(epSig, stage.getEncadrantProfessionnel() == null ? "-" : buildFullName(stage.getEncadrantProfessionnel().getPrenom(), stage.getEncadrantProfessionnel().getNom())),
                         "Encadrant professionnel",
-                        Boolean.TRUE.equals(cahierStage.getSigneeEncPro()),
-                        cahierStage.getDateSignatureEncPro(),
-                        firstNonBlank(cahierStage.getImageSignatureEncPro(), stage.getEncadrantProfessionnel() == null ? "" : stage.getEncadrantProfessionnel().getNomFichierSignature())
+                        epSig.isPresent(),
+                        epSig.map(Signature::getDateSignature).orElse(null),
+                        resolveSignerUrl(epSig, stage.getEncadrantProfessionnel() == null ? "" : firstNonBlank(stage.getEncadrantProfessionnel().getUrlSignature(), ""))
                 ),
                 new SignaturePdfRow(
-                        firstNonBlank(cahierStage.getNomSignataireRespEntreprise(), buildCompanyRepresentative(stage)),
+                        resolveSignerName(reSig, buildCompanyRepresentative(stage)),
                         "Representant entreprise",
-                        Boolean.TRUE.equals(cahierStage.getSigneeRespEntreprise()),
-                        cahierStage.getDateSignatureRespEntreprise(),
-                        firstNonBlank(cahierStage.getImageSignatureRespEntreprise(), stage.getTuteurEntreprise() == null ? "" : stage.getTuteurEntreprise().getNomFichierSignature())
+                        reSig.isPresent(),
+                        reSig.map(Signature::getDateSignature).orElse(null),
+                        resolveSignerUrl(reSig, stage.getTuteurEntreprise() == null ? "" : firstNonBlank(stage.getTuteurEntreprise().getUrlSignature(), ""))
                 )
         );
+    }
+
+    private String resolveSignerName(Optional<Signature> sigOpt, String fallback) {
+        return sigOpt
+                .flatMap(sig -> sig.getSignataireId() != null
+                        ? utilisateurRepository.findById(sig.getSignataireId())
+                        : Optional.empty())
+                .map(u -> buildFullName(u.getPrenom(), u.getNom()))
+                .orElse(fallback);
+    }
+
+    private String resolveSignerUrl(Optional<Signature> sigOpt, String fallback) {
+        return sigOpt
+                .flatMap(sig -> sig.getSignataireId() != null
+                        ? utilisateurRepository.findById(sig.getSignataireId())
+                        : Optional.empty())
+                .map(Utilisateur::getUrlSignature)
+                .filter(url -> url != null && !url.isBlank())
+                .orElse(fallback == null ? "" : fallback);
+    }
+
+    private void addConventionSigRow(Table table, ConventionStage convention, RoleSignature role,
+                                     String qualite, String fallbackName, String fallbackUrl) {
+        Optional<Signature> sigOpt = convention.getSignaturePour(role);
+        boolean signed = sigOpt.isPresent();
+        addSignatureRow(table,
+                resolveSignerName(sigOpt, fallbackName),
+                qualite,
+                signed,
+                sigOpt.map(Signature::getDateSignature).orElse(null),
+                signed ? resolveSignerUrl(sigOpt, fallbackUrl) : "");
     }
 
     private Optional<Image> loadSignatureImage(String signatureSource) {
@@ -1554,11 +1627,16 @@ public class StageDocumentServiceImpl implements StageDocumentService {
                 .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifie introuvable."));
         Long userId = utilisateur.getId();
         boolean allowed = switch (utilisateur.getRole()) {
-            case ADMINISTRATEUR, RESPONSABLE_SERVICE_STAGES, RESPONSABLE_UNIVERSITAIRE_STAGES -> true;
+            case ADMINISTRATEUR, RESPONSABLE_STAGE -> true;
             case STAGIAIRE -> stage.getStagiaire() != null && userId.equals(stage.getStagiaire().getId());
             case ENCADRANT_ACADEMIQUE -> stage.getEncadrantAcademique() != null && userId.equals(stage.getEncadrantAcademique().getId());
             case ENCADRANT_PROFESSIONNEL -> stage.getEncadrantProfessionnel() != null && userId.equals(stage.getEncadrantProfessionnel().getId());
-            case RESPONSABLE_ENTREPRISE -> stage.getTuteurEntreprise() != null && userId.equals(stage.getTuteurEntreprise().getId());
+            case RESPONSABLE_ENTREPRISE -> {
+                if (!(utilisateur instanceof ResponsableEntreprise re)) yield false;
+                yield re.getEntreprise() != null
+                        && stage.getEntreprise() != null
+                        && re.getEntreprise().getId().equals(stage.getEntreprise().getId());
+            }
             default -> false;
         };
 

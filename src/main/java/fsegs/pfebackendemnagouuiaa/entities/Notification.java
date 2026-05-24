@@ -24,7 +24,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Entity
-@Table(name = "notification")
+@Table(name = "notifications")
 @Data
 @Builder
 @NoArgsConstructor
@@ -41,11 +41,11 @@ public class Notification {
     @Column(nullable = false, length = 1200)
     private String body;
 
-    @Column(name = "date_creation", nullable = false)
+    @Column(name = "date_creation", columnDefinition = "DATETIME DEFAULT CURRENT_TIMESTAMP")
     private LocalDateTime dateCreation;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "type_notification", nullable = false)
+    @Column(name = "type_notification", nullable = false, length = 100)
     private TypeNotification typeNotification;
 
     @ManyToOne(fetch = FetchType.LAZY)

@@ -35,10 +35,4 @@ public class ReunionFinaleDto {
     private Long encadrantCreateurId;
 
     private Set<Long> participantIds;
-
-    private Integer note;
-    private String urlFormEvaluation;
-    private String urlFormSatisfaction;
-    private String titreEnqueteSatisfaction;
-    private String descriptionEnqueteSatisfaction;
 }

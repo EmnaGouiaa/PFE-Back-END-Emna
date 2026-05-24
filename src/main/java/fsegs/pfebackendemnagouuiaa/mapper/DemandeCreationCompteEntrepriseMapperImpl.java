@@ -17,8 +17,8 @@ public class DemandeCreationCompteEntrepriseMapperImpl implements DemandeCreatio
         DemandeCreationCompteEntrepriseDto dto = new DemandeCreationCompteEntrepriseDto();
         dto.setId(entity.getId());
         dto.setDateDemande(entity.getDateDemande());
-        dto.setStatutAdmin(entity.getStatutAdmin());
         dto.setStatutResponsableStages(entity.getStatutResponsableStages());
+        dto.setCommentaireResponsableStages(entity.getCommentaireResponsableStages());
 
         dto.setNomEntreprise(entity.getNomEntreprise());
         dto.setEmailEntreprise(entity.getEmailEntreprise());
@@ -31,22 +31,12 @@ public class DemandeCreationCompteEntrepriseMapperImpl implements DemandeCreatio
         dto.setEmailResponsable(entity.getEmailResponsable());
         dto.setTelephoneResponsable(entity.getTelephoneResponsable());
 
-        dto.setValideeParAdminId(entity.getValideeParAdminId());
-        dto.setValideeParEncadrantId(entity.getValideeParEncadrantId());
         dto.setCreeLe(entity.getCreeLe());
         dto.setMisAJourLe(entity.getMisAJourLe());
 
         if (entity.getStagiaire() != null) {
             dto.setStagiaireId(entity.getStagiaire().getId());
             dto.setStagiaireNom(entity.getStagiaire().getNom() + " " + entity.getStagiaire().getPrenom());
-        }
-
-        if (entity.getValideeParEncadrantAcademique() != null) {
-            dto.setValideeParEncadrantAcademiqueId(entity.getValideeParEncadrantAcademique().getId());
-            dto.setValideeParEncadrantAcademiqueNom(
-                    entity.getValideeParEncadrantAcademique().getNom() + " " +
-                            entity.getValideeParEncadrantAcademique().getPrenom()
-            );
         }
 
         return dto;
@@ -61,8 +51,8 @@ public class DemandeCreationCompteEntrepriseMapperImpl implements DemandeCreatio
         DemandeCreationCompteEntreprise entity = new DemandeCreationCompteEntreprise();
         entity.setId(dto.getId());
         entity.setDateDemande(dto.getDateDemande());
-        entity.setStatutAdmin(dto.getStatutAdmin());
         entity.setStatutResponsableStages(dto.getStatutResponsableStages());
+        entity.setCommentaireResponsableStages(dto.getCommentaireResponsableStages());
 
         entity.setNomEntreprise(dto.getNomEntreprise());
         entity.setEmailEntreprise(dto.getEmailEntreprise());
@@ -75,8 +65,6 @@ public class DemandeCreationCompteEntrepriseMapperImpl implements DemandeCreatio
         entity.setEmailResponsable(dto.getEmailResponsable());
         entity.setTelephoneResponsable(dto.getTelephoneResponsable());
 
-        entity.setValideeParAdminId(dto.getValideeParAdminId());
-        entity.setValideeParEncadrantId(dto.getValideeParEncadrantId());
         entity.setCreeLe(dto.getCreeLe());
         entity.setMisAJourLe(dto.getMisAJourLe());
 

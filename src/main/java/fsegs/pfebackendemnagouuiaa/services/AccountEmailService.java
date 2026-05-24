@@ -1,501 +1,277 @@
 package fsegs.pfebackendemnagouuiaa.services;
 
 import fsegs.pfebackendemnagouuiaa.dto.MailTestResponse;
-import fsegs.pfebackendemnagouuiaa.exception.AccountEmailDeliveryException;
-import jakarta.annotation.PostConstruct;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.env.Environment;
-import org.springframework.mail.MailAuthenticationException;
-import org.springframework.mail.MailException;
-import org.springframework.mail.MailSendException;
-import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.JavaMailSenderImpl;
 import org.springframework.mail.javamail.MimeMessageHelper;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
-import java.nio.charset.StandardCharsets;
-import java.net.ConnectException;
-import java.net.UnknownHostException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Locale;
 
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class AccountEmailService {
-    private static final DateTimeFormatter RESET_EXPIRATION_FORMAT = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
+
+    private static final DateTimeFormatter DATE_FR = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
 
     private final JavaMailSender mailSender;
-    private final Environment environment;
-
-    @Value("${app.frontend.url:http://localhost:4200/connexion}")
-    private String applicationLink;
 
     @Value("${spring.mail.username:no-reply@pfe.local}")
     private String fromAddress;
 
-    @Value("${spring.mail.host:}")
+    @Value("${spring.mail.host:smtp.gmail.com}")
     private String smtpHost;
 
-    @Value("${spring.mail.port:0}")
+    @Value("${spring.mail.port:587}")
     private int smtpPort;
 
-    @Value("${spring.mail.password:}")
-    private String smtpPassword;
+    @Value("${app.frontend.url:http://localhost:4200/connexion}")
+    private String applicationLink;
 
-    @Value("${spring.mail.properties.mail.smtp.auth:false}")
-    private boolean smtpAuthEnabled;
+    // ─── Création de compte ──────────────────────────────────────────────────
 
-    @Value("${spring.mail.properties.mail.smtp.starttls.enable:false}")
-    private boolean startTlsEnabled;
-
-    @PostConstruct
-    void logMailConfigurationStatus() {
-        logResolvedSmtpConfiguration("Demarrage");
-        log.info(
-                "Configuration SMTP chargee. host={}, port={}, username={}, auth={}, starttls={}",
-                safeValue(smtpHost),
-                smtpPort,
-                maskEmail(fromAddress),
-                smtpAuthEnabled,
-                startTlsEnabled
-        );
-
-        if (!isMailConfigurationUsable()) {
-            log.warn(
-                "Configuration SMTP incomplete ou invalide. host={}, port={}, usernamePresent={}, passwordPresent={}",
-                safeValue(smtpHost),
-                smtpPort,
-                hasText(fromAddress),
-                hasText(getNormalizedSmtpPassword())
-            );
+    @Async
+    public void sendAccountCreatedEmailAsync(String prenom, String email, String motDePasse) {
+        try {
+            sendAccountCreatedEmail(prenom, email, motDePasse);
+        } catch (Exception ex) {
+            log.warn("[EMAIL] Échec envoi création compte pour {} : {}", email, ex.getMessage());
         }
     }
 
-    public void sendAccountCreatedEmail(String firstName, String email, String generatedPassword) {
-        sendEmail(
+    public void sendAccountCreatedEmail(String prenom, String email, String motDePasse) {
+        String sujet = "Création de votre compte - Plateforme de gestion des stages";
+        String corps = buildEmailCreationCompte(
+                prenom,
                 email,
-                "Création de votre compte - Plateforme de gestion des stages",
-                buildMessage(
-                        firstName,
-                        email,
-                        generatedPassword,
-                        "Votre compte a été créé sur la plateforme de gestion des stages.",
-                        "Merci de vous connecter dès réception de cet e-mail et de changer votre mot de passe après votre première connexion."
-                )
+                motDePasse,
+                "Votre compte a été créé sur la Plateforme de gestion des stages.",
+                "Merci de vous connecter dès réception et de modifier votre mot de passe lors de votre première connexion."
         );
+        sendHtml(email, sujet, corps);
     }
 
-    public void sendProfessionalSupervisorAccountCreatedEmail(String firstName, String email, String generatedPassword) {
-        sendEmail(
+    public void sendProfessionalSupervisorAccountCreatedEmail(String prenom, String email, String motDePasse) {
+        String sujet = "Bienvenue - Votre accès Encadrant Professionnel";
+        String corps = buildEmailCreationCompte(
+                prenom,
                 email,
-                "Bienvenue - Votre accès encadrant professionnel",
-                buildMessage(
-                        firstName,
-                        email,
-                        generatedPassword,
-                        "Votre compte Encadrant Professionnel a été créé afin de vous permettre de suivre les stages de votre entreprise.",
-                        "Nous vous invitons à vous connecter rapidement, à vérifier vos informations et à changer votre mot de passe après votre première connexion."
-                )
+                motDePasse,
+                "Votre compte Encadrant Professionnel a été créé afin de vous permettre de suivre les stages de votre entreprise.",
+                "Nous vous invitons à vérifier vos informations et à modifier votre mot de passe lors de votre première connexion."
         );
+        sendHtml(email, sujet, corps);
     }
 
-    public void sendPasswordResetCodeEmail(String firstName, String email, String code, LocalDateTime expirationDate) {
-        String recipient = firstName == null || firstName.isBlank() ? "Bonjour" : "Bonjour " + firstName;
-        String body = recipient + ",\n\n"
-                + "Vous avez demandé la réinitialisation de votre mot de passe sur la plateforme de gestion des stages.\n\n"
-                + "Votre code de vérification est : " + code + "\n"
-                + "Ce code expire le : " + RESET_EXPIRATION_FORMAT.format(expirationDate) + "\n\n"
-                + "Si vous n'êtes pas à l'origine de cette demande, ignorez simplement cet e-mail.\n\n"
-                + "Cordialement,\n"
-                + "Administration - Plateforme de gestion des stages";
+    // ─── Réinitialisation mot de passe ───────────────────────────────────────
 
-        sendEmail(
-                email,
-                "Code de reinitialisation de mot de passe - Plateforme de gestion des stages",
-                body
-        );
+    public void sendPasswordResetCodeEmail(String prenom, String email, String code, LocalDateTime expiration) {
+        String sujet = "Code de réinitialisation - Plateforme de gestion des stages";
+        String corps = buildEmailReinitialisationMotDePasse(prenom, code, DATE_FR.format(expiration));
+        sendHtml(email, sujet, corps);
     }
 
-    public void testSmtpConnection() {
-        validateMailConfiguration();
-        logResolvedSmtpConfiguration("Test SMTP");
-
-        if (mailSender instanceof JavaMailSenderImpl javaMailSender) {
-            try {
-                javaMailSender.setPassword(getNormalizedSmtpPassword());
-                javaMailSender.testConnection();
-                log.info(
-                        "Connexion SMTP validee avec succes. host={}, port={}, username={}",
-                        safeValue(smtpHost),
-                        smtpPort,
-                        maskEmail(fromAddress)
-                );
-                return;
-            } catch (MessagingException ex) {
-                throw buildDeliveryException(
-                        "Validation de la connexion SMTP impossible.",
-                        null,
-                        ex
-                );
-            }
-        }
-
-        log.warn("Le bean JavaMailSender n'est pas une instance de JavaMailSenderImpl; testConnection() indisponible.");
-    }
-
-    public void sendTestEmail(String recipientEmail) {
-        String normalizedRecipient = normalizeRecipient(recipientEmail);
-        testSmtpConnection();
-        sendEmail(
-                normalizedRecipient,
-                "Test SMTP - Plateforme de gestion des stages",
-                "Ceci est un e-mail de test.\n\n"
-                        + "SMTP authentifié avec succès pour : " + maskEmail(fromAddress) + "\n"
-                        + "Destinataire : " + normalizedRecipient + "\n"
-                        + "Lien de l'application : " + applicationLink + "\n"
-                        + "Si vous recevez cet e-mail, la configuration SMTP est fonctionnelle.",
-                true
-        );
-    }
+    // ─── Test SMTP (AdminMailController) ─────────────────────────────────────
 
     public MailTestResponse testSmtpAndSend(String recipientEmail) {
-        String normalizedRecipient = normalizeRecipient(recipientEmail);
-        testSmtpConnection();
-        sendTestEmail(normalizedRecipient);
+        String to = recipientEmail.trim();
+        String corps = buildEmailNotification(
+                "Administrateur",
+                "Ceci est un e-mail de test. La configuration SMTP est opérationnelle. "
+                + "Les caractères français s'affichent correctement : é è à ù ç ê ô î û."
+        );
+        sendHtml(to, "Test SMTP - Plateforme de gestion des stages", corps);
         return MailTestResponse.builder()
                 .authenticationOk(true)
                 .emailSent(true)
-                .host(safeValue(smtpHost))
+                .host(smtpHost)
                 .port(smtpPort)
-                .username(maskEmail(resolveFromAddress()))
-                .recipientEmail(normalizedRecipient)
-                .message("Authentification SMTP validee et email de test envoye avec succes.")
+                .username(fromAddress)
+                .recipientEmail(to)
+                .message("Email de test envoyé avec succès en UTF-8.")
                 .build();
     }
 
-    private void sendEmail(String email, String subject, String body) {
-        sendEmail(email, subject, body, false);
-    }
+    // ─── Envoi interne UTF-8 ─────────────────────────────────────────────────
 
-    private void sendEmail(String email, String subject, String body, boolean testEmail) {
-        String normalizedRecipient = normalizeRecipient(email);
-        String normalizedSubject = normalizeSubject(subject);
-        String normalizedBody = normalizeBody(body);
-        validateMailConfiguration();
-        applyNormalizedPasswordToSender();
-
+    private void sendHtml(String to, String subject, String htmlContent) {
         try {
-            sendMimeEmail(normalizedRecipient, normalizedSubject, normalizedBody, testEmail);
-        } catch (MailException | MessagingException primaryException) {
-            log.warn(
-                    "Premier essai d'envoi email echoue. recipient={}, mode=MIME, diagnostic={}",
-                    normalizedRecipient,
-                    diagnoseFailure(primaryException)
-            );
-
-            try {
-                sendSimpleTextEmail(normalizedRecipient, normalizedSubject, normalizedBody, testEmail);
-            } catch (MailException fallbackException) {
-                fallbackException.addSuppressed(primaryException);
-                throw buildDeliveryException(
-                        "Le compte a ete cree, mais l'e-mail n'a pas pu etre envoye.",
-                        normalizedRecipient,
-                        fallbackException
-                );
-            }
+            MimeMessage message = mailSender.createMimeMessage();
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
+            helper.setFrom(fromAddress);
+            helper.setTo(to);
+            helper.setSubject(subject);
+            helper.setText(htmlContent, true);
+            mailSender.send(message);
+            log.info("[EMAIL] Envoyé à {} : {}", to, subject);
+        } catch (MessagingException ex) {
+            log.error("[EMAIL] Échec envoi à {} : {}", to, ex.getMessage());
+            throw new RuntimeException("Échec d'envoi de l'email vers " + to, ex);
         }
     }
 
-    private void sendMimeEmail(String recipient, String subject, String body, boolean testEmail)
-            throws MessagingException, MailException {
-        MimeMessage mimeMessage = mailSender.createMimeMessage();
-        MimeMessageHelper helper = new MimeMessageHelper(mimeMessage, false, StandardCharsets.UTF_8.name());
-        helper.setFrom(resolveFromAddress());
-        helper.setTo(recipient);
-        helper.setSubject(subject);
-        helper.setText(body, false);
+    // ─── Constructeurs de contenu HTML ────────────────────────────────────────
 
-        log.info(
-                "Tentative d'envoi email {}. recipient={}, from={}, subject={}, bodyLength={}, mode=MIME",
-                testEmail ? "de test" : "applicatif",
-                recipient,
-                maskEmail(resolveFromAddress()),
-                subject,
-                body.length()
-        );
-        mailSender.send(mimeMessage);
-        log.info(
-                "Email {} envoye avec succes. recipient={}, from={}, mode=MIME",
-                testEmail ? "de test" : "applicatif",
-                recipient,
-                maskEmail(resolveFromAddress())
-        );
-    }
+    private String buildEmailCreationCompte(String prenom, String email,
+                                            String motDePasse, String intro, String note) {
+        String nom = esc(prenom != null && !prenom.isBlank() ? prenom : "Utilisateur");
+        return wrapHtml(
+            "<h2 style='margin:0 0 12px;color:#1e1b4b;font-size:19px;'>Bonjour " + nom + " &#128075;</h2>"
+          + "<p style='color:#4b5563;font-size:14px;line-height:1.6;margin:0 0 20px;'>" + esc(intro) + "</p>"
 
-    private void sendSimpleTextEmail(String recipient, String subject, String body, boolean testEmail) {
-        SimpleMailMessage message = new SimpleMailMessage();
-        message.setFrom(resolveFromAddress());
-        message.setTo(recipient);
-        message.setSubject(subject);
-        message.setText(body);
+          + "<table width='100%' cellpadding='0' cellspacing='0' "
+          + "style='background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;margin-bottom:24px;'>"
+          + "<tr><td style='padding:20px 24px;'>"
+          + "<p style='margin:0 0 14px;font-size:12px;font-weight:700;color:#7c3aed;"
+          + "text-transform:uppercase;letter-spacing:1px;'>Vos identifiants de connexion</p>"
 
-        log.info(
-                "Nouvel essai d'envoi email {}. recipient={}, from={}, subject={}, bodyLength={}, mode=SimpleMailMessage",
-                testEmail ? "de test" : "applicatif",
-                recipient,
-                maskEmail(resolveFromAddress()),
-                subject,
-                body.length()
-        );
-        mailSender.send(message);
-        log.info(
-                "Email {} envoye avec succes. recipient={}, from={}, mode=SimpleMailMessage",
-                testEmail ? "de test" : "applicatif",
-                recipient,
-                maskEmail(resolveFromAddress())
+          + "<table width='100%' cellpadding='0' cellspacing='0'>"
+          + "<tr>"
+          + "<td style='padding:8px 0;border-bottom:1px solid #ede9fe;width:36%;"
+          + "font-size:13px;color:#6b7280;font-weight:600;'>&#128231; Email</td>"
+          + "<td style='padding:8px 0;border-bottom:1px solid #ede9fe;"
+          + "font-size:13px;color:#111827;'>" + esc(email) + "</td>"
+          + "</tr>"
+          + "<tr>"
+          + "<td style='padding:10px 0 0;font-size:13px;color:#6b7280;font-weight:600;'>&#128273; Mot de passe</td>"
+          + "<td style='padding:10px 0 0;'>"
+          + "<code style='background:#4f46e5;color:#fff;padding:4px 12px;border-radius:6px;"
+          + "font-size:14px;font-weight:700;letter-spacing:2px;'>" + esc(motDePasse) + "</code>"
+          + "</td>"
+          + "</tr>"
+          + "</table>"
+          + "</td></tr></table>"
+
+          + "<table width='100%' cellpadding='0' cellspacing='0' "
+          + "style='background:#fffbeb;border-left:4px solid #f59e0b;border-radius:0 8px 8px 0;margin-bottom:28px;'>"
+          + "<tr><td style='padding:14px 18px;'>"
+          + "<p style='margin:0;color:#92400e;font-size:13px;line-height:1.6;'>"
+          + "&#9888;&#65039; " + esc(note)
+          + "</p></td></tr></table>"
+
+          + "<table width='100%' cellpadding='0' cellspacing='0'><tr><td align='center'>"
+          + "<a href='" + applicationLink + "' "
+          + "style='display:inline-block;background:#4f46e5;color:#fff;padding:13px 36px;"
+          + "border-radius:8px;text-decoration:none;font-size:15px;font-weight:700;'>"
+          + "Se connecter &#8594;"
+          + "</a></td></tr></table>"
         );
     }
 
-    private String buildMessage(
-            String firstName,
-            String email,
-            String generatedPassword,
-            String welcomeLine,
-            String followUpLine
-    ) {
-        String recipient = firstName == null || firstName.isBlank() ? "Bonjour" : "Bonjour " + firstName;
-        return recipient + ",\n\n"
-                + welcomeLine + "\n\n"
-                + "Voici vos identifiants de connexion :\n"
-                + "Email : " + email + "\n"
-                + "Mot de passe temporaire : " + generatedPassword + "\n"
-                + "Lien de l'application : " + applicationLink + "\n\n"
-                + followUpLine + "\n\n"
-                + "Cordialement,\n"
-                + "Administration - Plateforme de gestion des stages";
-    }
+    private String buildEmailReinitialisationMotDePasse(String prenom, String code, String expiration) {
+        String nom = esc(prenom != null && !prenom.isBlank() ? prenom : "Utilisateur");
+        return wrapHtml(
+            "<h2 style='margin:0 0 12px;color:#1e1b4b;font-size:19px;'>Bonjour " + nom + ",</h2>"
+          + "<p style='color:#4b5563;font-size:14px;line-height:1.6;margin:0 0 24px;'>"
+          + "Vous avez demandé la réinitialisation de votre mot de passe. "
+          + "Voici votre code de vérification à usage unique :"
+          + "</p>"
 
-    private void validateMailConfiguration() {
-        if (!isMailConfigurationUsable()) {
-            String details = "Configuration SMTP invalide: host="
-                    + safeValue(smtpHost)
-                    + ", port=" + smtpPort
-                    + ", usernamePresent=" + hasText(fromAddress)
-                    + ", passwordPresent=" + hasText(getNormalizedSmtpPassword());
-            log.error(details);
-            throw new AccountEmailDeliveryException(
-                    "La configuration SMTP est incomplete ou invalide.",
-                    details,
-                    null
-            );
-        }
-        if (isPlaceholderPassword(getNormalizedSmtpPassword())) {
-            String details = "Mot de passe SMTP invalide: remplacez le placeholder par un nouveau mot de passe d'application Gmail sans espaces.";
-            log.error(details);
-            throw new AccountEmailDeliveryException(
-                    "La configuration SMTP est invalide.",
-                    details,
-                    null
-            );
-        }
-    }
+          + "<table width='100%' cellpadding='0' cellspacing='0' style='margin-bottom:24px;'>"
+          + "<tr><td align='center'>"
+          + "<div style='background:#f5f3ff;border:2px dashed #7c3aed;border-radius:12px;"
+          + "padding:24px 32px;display:inline-block;'>"
+          + "<p style='margin:0 0 6px;font-size:11px;font-weight:700;color:#7c3aed;"
+          + "text-transform:uppercase;letter-spacing:2px;'>Code de vérification</p>"
+          + "<p style='margin:0;font-size:38px;font-weight:900;letter-spacing:10px;"
+          + "color:#1e1b4b;font-family:monospace;'>" + esc(code) + "</p>"
+          + "</div>"
+          + "</td></tr></table>"
 
-    private boolean isMailConfigurationUsable() {
-        return hasText(smtpHost) && smtpPort > 0 && hasText(fromAddress) && hasText(getNormalizedSmtpPassword());
-    }
+          + "<table width='100%' cellpadding='0' cellspacing='0' "
+          + "style='background:#f5f3ff;border:1px solid #ddd6fe;border-radius:8px;margin-bottom:20px;'>"
+          + "<tr><td style='padding:13px 20px;text-align:center;'>"
+          + "<p style='margin:0;color:#4f46e5;font-size:13px;font-weight:600;'>"
+          + "&#9203; Ce code expire le : <strong>" + esc(expiration) + "</strong>"
+          + "</p></td></tr></table>"
 
-    private String resolveFromAddress() {
-        return hasText(fromAddress) ? fromAddress.trim() : "no-reply@pfe.local";
-    }
-
-    private String normalizeRecipient(String email) {
-        if (!hasText(email)) {
-            throw new IllegalArgumentException("Le destinataire de l'email est obligatoire.");
-        }
-        return email.trim();
-    }
-
-    private void applyNormalizedPasswordToSender() {
-        if (mailSender instanceof JavaMailSenderImpl javaMailSender) {
-            javaMailSender.setPassword(getNormalizedSmtpPassword());
-        }
-    }
-
-    private String normalizeSubject(String subject) {
-        if (!hasText(subject)) {
-            throw new IllegalArgumentException("Le sujet de l'e-mail est obligatoire.");
-        }
-        return subject
-                .replace("\r", " ")
-                .replace("\n", " ")
-                .replace("\u0000", "")
-                .trim();
-    }
-
-    private String normalizeBody(String body) {
-        if (!hasText(body)) {
-            throw new IllegalArgumentException("Le contenu de l'e-mail est obligatoire.");
-        }
-        return body.replace("\u0000", "").trim();
-    }
-
-    private AccountEmailDeliveryException buildDeliveryException(String userMessage, String recipient, Exception ex) {
-        String diagnostic = diagnoseFailure(ex);
-        log.error(
-                "Echec d'envoi email. recipient={}, host={}, port={}, username={}, diagnostic={}",
-                recipient == null ? "<non fourni>" : recipient,
-                safeValue(smtpHost),
-                smtpPort,
-                maskEmail(resolveFromAddress()),
-                diagnostic,
-                ex
-        );
-        return new AccountEmailDeliveryException(userMessage, diagnostic, ex);
-    }
-
-    private String diagnoseFailure(Throwable throwable) {
-        Throwable rootCause = getRootCause(throwable);
-        String rootMessage = rootCause.getMessage() == null ? "<aucun message>" : rootCause.getMessage();
-        String lowerMessage = rootMessage.toLowerCase(Locale.ROOT);
-
-        if (throwable instanceof MailAuthenticationException || hasCauseOfType(throwable, "AuthenticationFailedException")) {
-            return "Echec d'authentification SMTP: verifiez le username, le mot de passe ou le mot de passe d'application Gmail. Cause=" + rootMessage;
-        }
-        if (lowerMessage.contains("username and password not accepted")
-                || lowerMessage.contains("Mauvaises informations d'identification")
-                || lowerMessage.contains("535")
-                || lowerMessage.contains("534")) {
-            return "Identifiants SMTP refuses: mauvais username/password ou authentification Gmail bloquee. Cause=" + rootMessage;
-        }
-        if (lowerMessage.contains("app password")) {
-            return "Gmail exige un mot de passe d'application. Cause=" + rootMessage;
-        }
-        if (hasCauseInstance(throwable, UnknownHostException.class) || lowerMessage.contains("unknown host")) {
-            return "Serveur SMTP introuvable: host invalide ou DNS indisponible. Cause=" + rootMessage;
-        }
-        if (hasCauseInstance(throwable, ConnectException.class)
-                || lowerMessage.contains("connection refusé")
-                || lowerMessage.contains("connect timed out")) {
-            return "Connexion SMTP impossible: serveur injoignable, port bloque ou pare-feu. Cause=" + rootMessage;
-        }
-        if (lowerMessage.contains("starttls")
-                || lowerMessage.contains("tls")
-                || lowerMessage.contains("ssl")) {
-            return "Probleme TLS/STARTTLS avec le serveur SMTP. Cause=" + rootMessage;
-        }
-        if (throwable instanceof MailSendException
-                || lowerMessage.contains(" addresses invalides")
-                || lowerMessage.contains("recipient address rejected")
-                || lowerMessage.contains("550")
-                || lowerMessage.contains("553")
-                || lowerMessage.contains("554")) {
-            return "Destinataire invalide ou rejete par le serveur SMTP. Cause=" + rootMessage;
-        }
-        if (lowerMessage.contains("provider")
-                || lowerMessage.contains("transport")
-                || lowerMessage.contains("classnotfound")) {
-            return "Probleme de dependance ou de provider mail. Cause=" + rootMessage;
-        }
-
-        return "Echec SMTP non categorise (" + rootCause.getClass().getSimpleName() + "): " + rootMessage;
-    }
-
-    private Throwable getRootCause(Throwable throwable) {
-        Throwable current = throwable;
-        while (current.getCause() != null && current.getCause() != current) {
-            current = current.getCause();
-        }
-        return current;
-    }
-
-    private boolean hasCauseInstance(Throwable throwable, Class<?> type) {
-        Throwable current = throwable;
-        while (current != null) {
-            if (type.isInstance(current)) {
-                return true;
-            }
-            current = current.getCause();
-        }
-        return false;
-    }
-
-    private boolean hasCauseOfType(Throwable throwable, String simpleClassName) {
-        Throwable current = throwable;
-        while (current != null) {
-            if (current.getClass().getSimpleName().equals(simpleClassName)) {
-                return true;
-            }
-            current = current.getCause();
-        }
-        return false;
-    }
-
-    private boolean hasText(String value) {
-        return value != null && !value.trim().isEmpty();
-    }
-
-    private String getNormalizedSmtpPassword() {
-        if (smtpPassword == null) {
-            return "";
-        }
-        return smtpPassword.replaceAll("\\s+", "");
-    }
-
-    private boolean isPlaceholderPassword(String password) {
-        if (!hasText(password)) {
-            return false;
-        }
-
-        String normalized = password.trim().toUpperCase(Locale.ROOT);
-        return normalized.equals("NOUVEAU_APP_PASSWORD_SANS_ESPACES")
-                || normalized.equals("NOUVEAU_MOT_DE_PASSE_APPLICATION_SANS_ESPACES");
-    }
-
-    private String safeValue(String value) {
-        return hasText(value) ? value.trim() : "<vide>";
-    }
-
-    private void logResolvedSmtpConfiguration(String context) {
-        String rawPassword = environment.getProperty("spring.mail.password");
-        String normalizedPassword = getNormalizedSmtpPassword();
-        boolean passwordContainsWhitespace = rawPassword != null && !rawPassword.equals(normalizedPassword);
-        boolean passwordLooksLikePlaceholder = isPlaceholderPassword(normalizedPassword);
-        log.info(
-                "{} - Diagnostic SMTP. spring.mail.host={}, spring.mail.port={}, spring.mail.username={}, passwordPresent={}, passwordLength={}, passwordContainsWhitespace={}, passwordLooksLikePlaceholder={}, envMailHostPresent={}, envMailPortPresent={}, envMailUsernamePresent={}, envMailPasswordPresent={}, envSpringMailPasswordPresent={}",
-                context,
-                safeValue(environment.getProperty("spring.mail.host")),
-                safeValue(environment.getProperty("spring.mail.port")),
-                maskEmail(environment.getProperty("spring.mail.username")),
-                hasText(rawPassword),
-                normalizedPassword.length(),
-                passwordContainsWhitespace,
-                passwordLooksLikePlaceholder,
-                hasText(environment.getProperty("MAIL_HOST")),
-                hasText(environment.getProperty("MAIL_PORT")),
-                hasText(environment.getProperty("MAIL_USERNAME")),
-                hasText(environment.getProperty("MAIL_PASSWORD")),
-                hasText(environment.getProperty("SPRING_MAIL_PASSWORD"))
+          + "<table width='100%' cellpadding='0' cellspacing='0' "
+          + "style='background:#fef2f2;border-left:4px solid #ef4444;border-radius:0 8px 8px 0;'>"
+          + "<tr><td style='padding:14px 18px;'>"
+          + "<p style='margin:0;color:#991b1b;font-size:13px;line-height:1.6;'>"
+          + "&#128274; Si vous n'êtes pas à l'origine de cette demande, ignorez cet e-mail. "
+          + "Votre mot de passe restera inchangé."
+          + "</p></td></tr></table>"
         );
     }
 
-    private String maskEmail(String email) {
-        if (!hasText(email)) {
-            return "<vide>";
-        }
+    private String buildEmailNotification(String prenom, String messageTexte) {
+        String nom = esc(prenom != null && !prenom.isBlank() ? prenom : "Utilisateur");
+        return wrapHtml(
+            "<h2 style='margin:0 0 12px;color:#1e1b4b;font-size:19px;'>Bonjour " + nom + ",</h2>"
+          + "<table width='100%' cellpadding='0' cellspacing='0' "
+          + "style='background:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;margin:16px 0 24px;'>"
+          + "<tr><td style='padding:20px 24px;'>"
+          + "<p style='margin:0;color:#374151;font-size:14px;line-height:1.7;'>" + esc(messageTexte) + "</p>"
+          + "</td></tr></table>"
+          + "<table width='100%' cellpadding='0' cellspacing='0'><tr><td align='center'>"
+          + "<a href='" + applicationLink + "' "
+          + "style='display:inline-block;background:#4f46e5;color:#fff;padding:13px 36px;"
+          + "border-radius:8px;text-decoration:none;font-size:14px;font-weight:700;'>"
+          + "Accéder à la plateforme &#8594;"
+          + "</a></td></tr></table>"
+        );
+    }
 
-        String trimmed = email.trim();
-        int atIndex = trimmed.indexOf('@');
-        if (atIndex <= 1) {
-            return "***" + (atIndex >= 0 ? trimmed.substring(atIndex) : "");
-        }
+    /** Enveloppe HTML commune : header violet + footer — encodage UTF-8 garanti. */
+    private String wrapHtml(String contenu) {
+        return "<!DOCTYPE html>"
+             + "<html lang='fr'><head>"
+             + "<meta charset='UTF-8'/>"
+             + "<meta name='viewport' content='width=device-width,initial-scale=1'/>"
+             + "</head>"
+             + "<body style='margin:0;padding:0;background:#f0f4ff;"
+             + "font-family:Arial,Helvetica,sans-serif;'>"
+             + "<table width='100%' cellpadding='0' cellspacing='0' "
+             + "style='background:#f0f4ff;padding:36px 16px;'>"
+             + "<tr><td align='center'>"
+             + "<table width='600' cellpadding='0' cellspacing='0' "
+             + "style='max-width:600px;width:100%;border-radius:12px;overflow:hidden;"
+             + "box-shadow:0 4px 20px rgba(79,70,229,0.12);'>"
 
-        return trimmed.charAt(0) + "***" + trimmed.substring(atIndex);
+             // Header
+             + "<tr><td style='background:linear-gradient(135deg,#4f46e5,#7c3aed);"
+             + "padding:30px 40px;text-align:center;'>"
+             + "<p style='margin:0 0 6px;font-size:22px;'>&#127979;</p>"
+             + "<h1 style='margin:0;color:#fff;font-size:20px;font-weight:700;'>"
+             + "Plateforme de Gestion des Stages</h1>"
+             + "<p style='margin:6px 0 0;color:rgba(255,255,255,0.80);font-size:12px;'>"
+             + "Université — Service des Stages</p>"
+             + "</td></tr>"
+
+             // Body
+             + "<tr><td style='background:#fff;padding:36px 40px;'>"
+             + contenu
+             + "</td></tr>"
+
+             // Footer
+             + "<tr><td style='background:#f9fafb;border-top:1px solid #e5e7eb;"
+             + "padding:22px 40px;text-align:center;'>"
+             + "<p style='margin:0 0 4px;color:#374151;font-size:13px;font-weight:600;'>"
+             + "Cordialement, l'Administration</p>"
+             + "<p style='margin:0 0 8px;color:#6b7280;font-size:12px;'>"
+             + "Plateforme de Gestion des Stages — Université</p>"
+             + "<p style='margin:0;color:#9ca3af;font-size:11px;'>"
+             + "Cet e-mail est généré automatiquement. Merci de ne pas y répondre.</p>"
+             + "</td></tr>"
+
+             + "</table></td></tr></table>"
+             + "</body></html>";
+    }
+
+    /** Échappe les caractères HTML pour éviter toute injection. */
+    private String esc(String v) {
+        if (v == null) return "";
+        return v.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;");
     }
 }

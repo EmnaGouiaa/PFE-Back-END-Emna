@@ -174,7 +174,7 @@ public class AbsenceServiceImpl implements AbsenceService {
         Utilisateur utilisateur = getAuthenticatedUser();
         Long userId = utilisateur.getId();
         boolean allowed = switch (utilisateur.getRole()) {
-            case ADMINISTRATEUR, RESPONSABLE_SERVICE_STAGES, RESPONSABLE_UNIVERSITAIRE_STAGES -> true;
+            case ADMINISTRATEUR, RESPONSABLE_STAGE -> true;
             case STAGIAIRE -> stage.getStagiaire() != null && userId.equals(stage.getStagiaire().getId());
             case ENCADRANT_ACADEMIQUE -> stage.getEncadrantAcademique() != null && userId.equals(stage.getEncadrantAcademique().getId());
             case ENCADRANT_PROFESSIONNEL -> stage.getEncadrantProfessionnel() != null && userId.equals(stage.getEncadrantProfessionnel().getId());

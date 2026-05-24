@@ -14,6 +14,9 @@ public interface StageRepository extends JpaRepository<Stage, Long> {
 
     List<Stage> findByStagiaireId(Long stagiaireId);
 
+    /** Stages dont le stagiaire a été supprimé (stagiaire_id IS NULL) — orphelins à nettoyer. */
+    List<Stage> findByStagiaireIsNull();
+
     List<Stage> findByDuree(Integer duree);
 
     List<Stage> findByNbSemaine(Integer nbSemaine);
@@ -40,5 +43,13 @@ public interface StageRepository extends JpaRepository<Stage, Long> {
 
     boolean existsByOffreSourceId(Long offreSourceId);
 
+    boolean existsByStagiaireIdAndStatutIn(Long stagiaireId, List<StatutStage> statuts);
+
     List<Stage> findByDateFinLessThanEqualAndStatutIn(LocalDate dateFin, List<StatutStage> statuts);
+
+    /** Retourne tous les stages dont le statut est dans la liste fournie. */
+    List<Stage> findByStatutIn(List<StatutStage> statuts);
+
+    /** Vérifie si un encadrant académique a déjà validé le sujet d'au moins un stage. */
+    boolean existsBySujetValideParId(Long encadrantId);
 }

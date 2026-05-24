@@ -35,19 +35,19 @@ public class StagiaireController {
     }
 
     @GetMapping("/sans-stage")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR')")
     public ResponseEntity<List<StagiaireResponseDTO>> getSansStage() {
         return ResponseEntity.ok(stagiaireService.getSansStage());
     }
 
     @GetMapping("/search")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR')")
     public ResponseEntity<StagiaireResponseDTO> searchByEmail(@RequestParam String email) {
         return ResponseEntity.ok(stagiaireService.searchByEmail(email));
     }
 
     @PatchMapping("/{id}/affecter-encadrant-academique/{encadrantId}")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR')")
     public ResponseEntity<AffectationEncadrantAcademiqueResponse> affecterEncadrantAcademique(
             @PathVariable Long id,
             @PathVariable Long encadrantId
@@ -64,6 +64,6 @@ public class StagiaireController {
     @DeleteMapping("/{id}")
     public ResponseEntity<String> delete(@PathVariable Long id) {
         stagiaireService.delete(id);
-        return ResponseEntity.ok("Stagiaire supprimé avec succès");
+        return ResponseEntity.ok("Stagiaire supprimé avec succés");
     }
 }

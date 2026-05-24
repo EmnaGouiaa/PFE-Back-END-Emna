@@ -1,5 +1,6 @@
 package fsegs.pfebackendemnagouuiaa.services;
 
+import fsegs.pfebackendemnagouuiaa.dto.ChangeRoleRequest;
 import fsegs.pfebackendemnagouuiaa.dto.CreateUserRequest;
 import fsegs.pfebackendemnagouuiaa.dto.UpdateEmailRequest;
 import fsegs.pfebackendemnagouuiaa.dto.UpdateEmailResponse;
@@ -25,4 +26,5 @@ public interface UtilisateurService {
     UserResponse deactivateUser(Long id);
     UserResponse activateUser(Long id);
     void deleteUser(Long id);
+    UserResponse changeUserRole(Long id, ChangeRoleRequest request);
 }

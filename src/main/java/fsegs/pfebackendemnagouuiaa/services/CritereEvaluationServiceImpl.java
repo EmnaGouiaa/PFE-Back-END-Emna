@@ -29,7 +29,7 @@ public class CritereEvaluationServiceImpl implements CritereEvaluationService {
                     .orElseThrow(() -> new RuntimeException("Fiche introuvable"));
             entity.setFiche(fiche);
             if (fiche.estVerrouillee()) {
-                throw new RuntimeException("Impossible d'ajouter un critère : la fiche d'évaluation est verrouillée");
+                throw new RuntimeException("Impossible d'ajouter un critére : la fiche d'évaluation est verrouillée");
             }
         }
 
@@ -40,7 +40,7 @@ public class CritereEvaluationServiceImpl implements CritereEvaluationService {
     @Override
     public CritereEvaluationDto getById(Long id) {
         return mapper.toDto(repository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Critère introuvable")));
+                .orElseThrow(() -> new RuntimeException("Critére introuvable")));
     }
 
     @Override
@@ -62,21 +62,21 @@ public class CritereEvaluationServiceImpl implements CritereEvaluationService {
     @Override
     public CritereEvaluationDto update(Long id, CritereEvaluationDto dto) {
         CritereEvaluation entity = repository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Critère introuvable"));
+                .orElseThrow(() -> new RuntimeException("Critére introuvable"));
 
         if (entity.getFiche() != null && entity.getFiche().estVerrouillee()) {
-            throw new RuntimeException("Impossible de modifier un critère : la fiche d'évaluation est verrouillée");
+            throw new RuntimeException("Impossible de modifier un critére : la fiche d'évaluation est verrouillée");
         }
 
         if (dto.getPartie() == null) {
-            throw new RuntimeException("La partie du critère est obligatoire");
+            throw new RuntimeException("La partie du critére est obligatoire");
         }
 
         entity.setLibelle(dto.getLibelle());
         entity.setDescription(dto.getDescription());
         entity.setCategorie(dto.getCategorie());
         entity.setBareme(dto.getBareme());
-        entity.setCommentaireGeneral(dto.getCommentaireGeneral());
+        entity.setConsigne(dto.getCommentaireGeneral());
         entity.setPartie(dto.getPartie());
 
         return mapper.toDto(repository.save(entity));
@@ -85,5 +85,13 @@ public class CritereEvaluationServiceImpl implements CritereEvaluationService {
     @Override
     public void delete(Long id) {
         repository.deleteById(id);
+    }
+
+    @Override
+    public List<CritereEvaluationDto> getGlobaux() {
+        return repository.findByFicheIsNull()
+                .stream()
+                .map(mapper::toDto)
+                .toList();
     }
 }

@@ -1,16 +1,21 @@
 package fsegs.pfebackendemnagouuiaa.services;
 
 import fsegs.pfebackendemnagouuiaa.dto.CahierStageDto;
+import fsegs.pfebackendemnagouuiaa.dto.SignerCahierRequest;
 import fsegs.pfebackendemnagouuiaa.entities.CahierStage;
+import fsegs.pfebackendemnagouuiaa.entities.ResponsableEntreprise;
 import fsegs.pfebackendemnagouuiaa.entities.Role;
+import fsegs.pfebackendemnagouuiaa.entities.RoleSignature;
+import fsegs.pfebackendemnagouuiaa.entities.Signature;
 import fsegs.pfebackendemnagouuiaa.entities.Stage;
 import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
 import fsegs.pfebackendemnagouuiaa.mapper.CahierStageMapper;
 import fsegs.pfebackendemnagouuiaa.repository.CahierStageRepository;
 import fsegs.pfebackendemnagouuiaa.repository.StageRepository;
 import fsegs.pfebackendemnagouuiaa.security.JwtService;
-import fsegs.pfebackendemnagouuiaa.services.CahierStageService;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -18,6 +23,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class CahierStageServiceImpl implements CahierStageService {
 
@@ -40,12 +46,7 @@ public class CahierStageServiceImpl implements CahierStageService {
             entity.setDateGeneration(LocalDate.now());
         }
 
-        initBooleans(entity);
-
-        CahierStage saved = cahierStageRepository.save(entity);
-        updateEtatSignature(saved);
-
-        return cahierStageMapper.toDto(cahierStageRepository.save(saved));
+        return cahierStageMapper.toDto(cahierStageRepository.save(entity));
     }
 
     @Override
@@ -64,19 +65,13 @@ public class CahierStageServiceImpl implements CahierStageService {
             entity.setDateGeneration(LocalDate.now());
         }
 
-        initBooleans(entity);
-
-        CahierStage saved = cahierStageRepository.save(entity);
-        updateEtatSignature(saved);
-
-        return cahierStageMapper.toDto(cahierStageRepository.save(saved));
+        return cahierStageMapper.toDto(cahierStageRepository.save(entity));
     }
 
     @Override
     public CahierStageDto getById(Long id) {
         CahierStage entity = cahierStageRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Cahier introuvable avec l'id : " + id));
-
         return cahierStageMapper.toDto(entity);
     }
 
@@ -84,7 +79,6 @@ public class CahierStageServiceImpl implements CahierStageService {
     public CahierStageDto getByStageId(Long stageId) {
         CahierStage entity = cahierStageRepository.findByStageId(stageId)
                 .orElseThrow(() -> new RuntimeException("Cahier introuvable pour le stage id : " + stageId));
-
         return cahierStageMapper.toDto(entity);
     }
 
@@ -104,124 +98,101 @@ public class CahierStageServiceImpl implements CahierStageService {
         entity.setDateGeneration(dto.getDateGeneration());
         entity.setDateSignature(dto.getDateSignature());
 
-        CahierStage updated = cahierStageRepository.save(entity);
-        updateEtatSignature(updated);
-
-        return cahierStageMapper.toDto(cahierStageRepository.save(updated));
+        return cahierStageMapper.toDto(cahierStageRepository.save(entity));
     }
 
     @Override
-    public CahierStageDto signerParStagiaire(Long id) {
-        return signer(id, TypeSignature.STAGIAIRE);
+    public CahierStageDto signerParStagiaire(Long id, SignerCahierRequest request) {
+        return signer(id, TypeSignature.STAGIAIRE, request);
     }
 
     @Override
-    public CahierStageDto signerParEncadrantAcademique(Long id) {
-        return signer(id, TypeSignature.ENCADRANT_ACADEMIQUE);
+    public CahierStageDto signerParEncadrantAcademique(Long id, SignerCahierRequest request) {
+        return signer(id, TypeSignature.ENCADRANT_ACADEMIQUE, request);
     }
 
     @Override
-    public CahierStageDto signerParEncadrantProfessionnel(Long id) {
-        return signer(id, TypeSignature.ENCADRANT_PROFESSIONNEL);
+    public CahierStageDto signerParEncadrantProfessionnel(Long id, SignerCahierRequest request) {
+        return signer(id, TypeSignature.ENCADRANT_PROFESSIONNEL, request);
     }
 
     @Override
-    public CahierStageDto signerParResponsableEntreprise(Long id) {
-        return signer(id, TypeSignature.RESPONSABLE_ENTREPRISE);
+    public CahierStageDto signerParResponsableEntreprise(Long id, SignerCahierRequest request) {
+        return signer(id, TypeSignature.RESPONSABLE_ENTREPRISE, request);
     }
 
     @Override
     public void delete(Long id) {
         CahierStage entity = cahierStageRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Cahier introuvable avec l'id : " + id));
-
         cahierStageRepository.delete(entity);
     }
 
-    private CahierStageDto signer(Long id, TypeSignature typeSignature) {
-        CahierStage cahier = getCahierEntity(id);
+    // ── Logique de signature ───────────────────────────────────────────────────
+
+    private CahierStageDto signer(Long id, TypeSignature typeSignature, SignerCahierRequest request) {
+        // ── 1. Cahier de stage charge (404 si absent via global exception handler) ───────
+        CahierStage cahier = cahierStageRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Cahier introuvable avec l'id : " + id));
+
         Utilisateur utilisateur = getAuthenticatedSigner(typeSignature);
         ensureSignerBelongsToStage(cahier.getStage(), utilisateur, typeSignature);
-        LocalDateTime signedAt = LocalDateTime.now();
-        String signatureImage = requireSavedSignature(utilisateur);
-        String signerName = buildFullName(utilisateur);
-        String signerRole = utilisateur.getRole().name();
 
-        switch (typeSignature) {
-            case STAGIAIRE -> {
-                if (Boolean.TRUE.equals(cahier.getSigneeStagiaire())) {
-                    throw new RuntimeException("Le cahier est deja signe par le stagiaire.");
-                }
-                cahier.setSigneeStagiaire(true);
-                cahier.setSignataireStagiaireId(utilisateur.getId());
-                cahier.setRoleSignatureStagiaire(signerRole);
-                cahier.setNomSignataireStagiaire(signerName);
-                cahier.setImageSignatureStagiaire(signatureImage);
-                cahier.setDateSignatureStagiaire(signedAt);
-            }
-            case ENCADRANT_ACADEMIQUE -> {
-                if (Boolean.TRUE.equals(cahier.getSigneeEncAcad())) {
-                    throw new RuntimeException("Le cahier est deja signe par l'encadrant academique.");
-                }
-                cahier.setSigneeEncAcad(true);
-                cahier.setSignataireEncAcadId(utilisateur.getId());
-                cahier.setRoleSignatureEncAcad(signerRole);
-                cahier.setNomSignataireEncAcad(signerName);
-                cahier.setImageSignatureEncAcad(signatureImage);
-                cahier.setDateSignatureEncAcad(signedAt);
-            }
-            case ENCADRANT_PROFESSIONNEL -> {
-                if (Boolean.TRUE.equals(cahier.getSigneeEncPro())) {
-                    throw new RuntimeException("Le cahier est deja signe par l'encadrant professionnel.");
-                }
-                cahier.setSigneeEncPro(true);
-                cahier.setSignataireEncProId(utilisateur.getId());
-                cahier.setRoleSignatureEncPro(signerRole);
-                cahier.setNomSignataireEncPro(signerName);
-                cahier.setImageSignatureEncPro(signatureImage);
-                cahier.setDateSignatureEncPro(signedAt);
-            }
-            case RESPONSABLE_ENTREPRISE -> {
-                if (Boolean.TRUE.equals(cahier.getSigneeRespEntreprise())) {
-                    throw new RuntimeException("Le cahier est deja signe par le representant entreprise.");
-                }
-                cahier.setSigneeRespEntreprise(true);
-                cahier.setSignataireRespEntrepriseId(utilisateur.getId());
-                cahier.setRoleSignatureRespEntreprise(signerRole);
-                cahier.setNomSignataireRespEntreprise(signerName);
-                cahier.setImageSignatureRespEntreprise(signatureImage);
-                cahier.setDateSignatureRespEntreprise(signedAt);
-            }
+        RoleSignature role = roleSignature(typeSignature);
+
+        // ── 2. Une signature ne peut pas etre modifiee/dupliquee apres enregistrement (E5) ─
+        if (cahier.estSignePar(role)) {
+            log.warn("AUDIT signature - tentative de re-signature refusee. cahierId={}, role={}, utilisateurId={}",
+                    cahier.getId(), role, utilisateur.getId());
+            throw new IllegalArgumentException("Vous avez déjà signé ce document.");
         }
 
+        // ── 3. Resolution de l'image de signature ─────────────────────────────────────────
+        // Priorite : (a) image fournie dans la requete si non vide, (b) sinon image stockee
+        // sur le profil de l'utilisateur authentifie. Si aucune source n'est disponible :
+        // erreur explicite invitant a renseigner la signature de profil.
+        String signatureImage = null;
+        if (request != null && request.getSignatureImage() != null && !request.getSignatureImage().isBlank()) {
+            signatureImage = request.getSignatureImage().trim();
+        } else if (utilisateur.getUrlSignature() != null && !utilisateur.getUrlSignature().isBlank()) {
+            signatureImage = utilisateur.getUrlSignature().trim();
+        }
+
+        if (signatureImage == null) {
+            // E4 — aucune signature disponible (ni body, ni profil)
+            log.warn("AUDIT signature - aucune image disponible. cahierId={}, utilisateurId={}",
+                    cahier.getId(), utilisateur.getId());
+            throw new IllegalArgumentException("Veuillez enregistrer votre signature dans votre profil avant de continuer.");
+        }
+
+        // Validation legere du format si une image est fournie (pas une URL relative bidon).
+        if (!signatureImage.startsWith("data:image/")
+                && !signatureImage.startsWith("http://")
+                && !signatureImage.startsWith("https://")
+                && !signatureImage.startsWith("/")) {
+            throw new IllegalArgumentException(
+                    "Format d'image de signature invalide : data URL (data:image/...) ou URL attendue.");
+        }
+
+        // ── 4. Creation de la signature avec image + horodatage + identite ────────────────
+        Signature sig = new Signature();
+        sig.setRoleSignature(role);
+        sig.setSignataireId(utilisateur.getId());
+        sig.setDateSignature(LocalDateTime.now());
+        sig.setUrlSignature(signatureImage);
+        cahier.getSignatures().add(sig);
+
         cahier.setDateSignature(LocalDate.now());
-        updateEtatSignature(cahier);
 
-        CahierStage saved = cahierStageRepository.save(cahier);
-        return cahierStageMapper.toDto(saved);
-    }
+        CahierStageDto result = cahierStageMapper.toDto(cahierStageRepository.save(cahier));
 
-    private CahierStage getCahierEntity(Long id) {
-        return cahierStageRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Cahier introuvable avec l'id : " + id));
-    }
+        // ── 5. Audit log (minimal via slf4j ; remplacable par une table dediee) ───────────
+        log.info("AUDIT signature - cahier signe. cahierId={}, role={}, utilisateurId={}, email={}, dateSignature={}",
+                cahier.getId(), role, utilisateur.getId(),
+                utilisateur.getEmail(),
+                sig.getDateSignature());
 
-    private void initBooleans(CahierStage entity) {
-        if (entity.getEstSigne() == null) entity.setEstSigne(false);
-        if (entity.getSigneeEncAcad() == null) entity.setSigneeEncAcad(false);
-        if (entity.getSigneeEncPro() == null) entity.setSigneeEncPro(false);
-        if (entity.getSigneeRespEntreprise() == null) entity.setSigneeRespEntreprise(false);
-        if (entity.getSigneeStagiaire() == null) entity.setSigneeStagiaire(false);
-    }
-
-    private void updateEtatSignature(CahierStage entity) {
-        boolean allSigned =
-                Boolean.TRUE.equals(entity.getSigneeEncAcad()) &&
-                        Boolean.TRUE.equals(entity.getSigneeEncPro()) &&
-                        Boolean.TRUE.equals(entity.getSigneeRespEntreprise()) &&
-                        Boolean.TRUE.equals(entity.getSigneeStagiaire());
-
-        entity.setEstSigne(allSigned);
+        return result;
     }
 
     private Utilisateur getAuthenticatedSigner(TypeSignature typeSignature) {
@@ -236,20 +207,23 @@ public class CahierStageServiceImpl implements CahierStageService {
     }
 
     private void ensureSignerBelongsToStage(Stage stage, Utilisateur utilisateur, TypeSignature typeSignature) {
-        if (stage == null) {
-            throw new RuntimeException("Aucun stage n'est associe a ce cahier.");
-        }
+        if (stage == null) throw new RuntimeException("Aucun stage n'est associe a ce cahier.");
 
         boolean authorized = switch (typeSignature) {
             case STAGIAIRE -> stage.getStagiaire() != null && stage.getStagiaire().getId().equals(utilisateur.getId());
             case ENCADRANT_ACADEMIQUE -> stage.getEncadrantAcademique() != null && stage.getEncadrantAcademique().getId().equals(utilisateur.getId());
             case ENCADRANT_PROFESSIONNEL -> stage.getEncadrantProfessionnel() != null && stage.getEncadrantProfessionnel().getId().equals(utilisateur.getId());
-            case RESPONSABLE_ENTREPRISE -> stage.getTuteurEntreprise() != null && stage.getTuteurEntreprise().getId().equals(utilisateur.getId());
+            case RESPONSABLE_ENTREPRISE -> {
+                // Check that the logged-in user belongs to the same company as the stage,
+                // not that they are the specific tuteurEntreprise person (who may be null).
+                if (!(utilisateur instanceof ResponsableEntreprise re)) yield false;
+                yield stage.getEntreprise() != null
+                        && re.getEntreprise() != null
+                        && stage.getEntreprise().getId().equals(re.getEntreprise().getId());
+            }
         };
 
-        if (!authorized) {
-            throw new RuntimeException("Action non autorisee : vous n'etes pas associe a ce document.");
-        }
+        if (!authorized) throw new RuntimeException("Action non autorisee : vous n'etes pas associe a ce document.");
     }
 
     private Role expectedRole(TypeSignature typeSignature) {
@@ -261,24 +235,22 @@ public class CahierStageServiceImpl implements CahierStageService {
         };
     }
 
-    private String requireSavedSignature(Utilisateur utilisateur) {
-        if (utilisateur.getNomFichierSignature() == null || utilisateur.getNomFichierSignature().isBlank()) {
-            throw new RuntimeException("Please add your signature in your profile before signing this document.");
-        }
-
-        return utilisateur.getNomFichierSignature().trim();
+    private RoleSignature roleSignature(TypeSignature t) {
+        return switch (t) {
+            case STAGIAIRE -> RoleSignature.STAGIAIRE;
+            case ENCADRANT_ACADEMIQUE -> RoleSignature.ENCADRANT_ACADEMIQUE;
+            case ENCADRANT_PROFESSIONNEL -> RoleSignature.ENCADRANT_PROFESSIONNEL;
+            case RESPONSABLE_ENTREPRISE -> RoleSignature.RESPONSABLE_ENTREPRISE;
+        };
     }
 
-    private String buildFullName(Utilisateur utilisateur) {
-        String fullName = ((utilisateur.getPrenom() == null ? "" : utilisateur.getPrenom().trim()) + " "
-                + (utilisateur.getNom() == null ? "" : utilisateur.getNom().trim())).trim();
-        return fullName.isBlank() ? "Utilisateur" : fullName;
+    private void requireSavedSignature(Utilisateur utilisateur) {
+        if (utilisateur.getUrlSignature() == null || utilisateur.getUrlSignature().isBlank()) {
+            throw new RuntimeException("Veuillez ajouter votre signature à votre profil avant de signer ce document.");
+        }
     }
 
     private enum TypeSignature {
-        STAGIAIRE,
-        ENCADRANT_ACADEMIQUE,
-        ENCADRANT_PROFESSIONNEL,
-        RESPONSABLE_ENTREPRISE
+        STAGIAIRE, ENCADRANT_ACADEMIQUE, ENCADRANT_PROFESSIONNEL, RESPONSABLE_ENTREPRISE
     }
 }

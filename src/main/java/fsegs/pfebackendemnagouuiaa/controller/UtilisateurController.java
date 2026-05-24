@@ -1,5 +1,6 @@
 package fsegs.pfebackendemnagouuiaa.controller;
 
+import fsegs.pfebackendemnagouuiaa.dto.ChangeRoleRequest;
 import fsegs.pfebackendemnagouuiaa.dto.CreateUserRequest;
 import fsegs.pfebackendemnagouuiaa.dto.UpdateEmailRequest;
 import fsegs.pfebackendemnagouuiaa.dto.UpdateEmailResponse;
@@ -110,5 +111,12 @@ public class UtilisateurController {
     public ResponseEntity<Void> deleteUser(@PathVariable Long id) {
         utilisateurService.deleteUser(id);
         return ResponseEntity.noContent().build();
+    }
+
+    @PreAuthorize("hasRole('ADMINISTRATEUR')")
+    @PatchMapping("/{id}/role")
+    public ResponseEntity<UserResponse> changeUserRole(@PathVariable Long id,
+                                                       @Valid @RequestBody ChangeRoleRequest request) {
+        return ResponseEntity.ok(utilisateurService.changeUserRole(id, request));
     }
 }

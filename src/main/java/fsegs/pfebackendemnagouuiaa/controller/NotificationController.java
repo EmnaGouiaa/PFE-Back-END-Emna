@@ -52,6 +52,14 @@ public class NotificationController {
     }
 
     @PreAuthorize("isAuthenticated()")
+    @PutMapping("/utilisateur/{userId}/read-all")
+    public Map<String, Object> markAllAsRead(@PathVariable Long userId) {
+        ensureCanAccessUserNotifications(userId);
+        int count = notificationService.markAllAsRead(userId);
+        return Map.of("markedAsRead", count);
+    }
+
+    @PreAuthorize("isAuthenticated()")
     @PutMapping("/destinataire/{id}/read")
     public NotificationDestinataireResponse markAsRead(@PathVariable Long id) {
         ensureCanAccessNotificationDestinataire(id);

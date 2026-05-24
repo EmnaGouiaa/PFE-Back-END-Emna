@@ -12,7 +12,7 @@ public class UpdateEmailRequest {
 
     @NotBlank(message = "La nouvelle adresse e-mail est obligatoire.")
     @Email(message = "Format d'e-mail invalide.")
-    @Size(max = 150, message = "L'adresse e-mail ne doit pas dépasser 150 caractères.")
+    @Size(max = 150, message = "L'adresse e-mail ne doit pas dépasser 150 caractéres.")
     private String email;
 
     @NotBlank(message = "Le mot de passe actuel est obligatoire.")

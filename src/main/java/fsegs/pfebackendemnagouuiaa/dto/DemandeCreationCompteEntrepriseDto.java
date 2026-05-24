@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -18,7 +19,6 @@ public class DemandeCreationCompteEntrepriseDto {
 
     private LocalDate dateDemande;
 
-    private StatutValidation statutAdmin;
     private StatutValidation statutResponsableStages;
 
     private String nomEntreprise;
@@ -32,11 +32,7 @@ public class DemandeCreationCompteEntrepriseDto {
     private String emailResponsable;
     private String telephoneResponsable;
 
-    private Long valideeParAdminId;
-    private Long valideeParEncadrantId;
-
-    private Long valideeParEncadrantAcademiqueId;
-    private String valideeParEncadrantAcademiqueNom;
+    private String commentaireResponsableStages;
 
     private LocalDateTime creeLe;
     private LocalDateTime misAJourLe;

@@ -27,6 +27,8 @@ public class EncadrantProfessionnelMapperImpl implements EncadrantProfessionnelM
             dto.setEntrepriseNom(entity.getEntreprise().getNom());
         }
 
+        dto.setActif(entity.getActif());
+
         return dto;
     }
 
@@ -44,6 +46,8 @@ public class EncadrantProfessionnelMapperImpl implements EncadrantProfessionnelM
         entity.setTelephone(dto.getTelephone());
         entity.setPoste(dto.getPoste());
         entity.setService(dto.getService());
+        // @Builder.Default is not honoured by the no-arg constructor; set explicitly.
+        entity.setActif(dto.getActif() != null ? dto.getActif() : true);
         return entity;
     }
 }

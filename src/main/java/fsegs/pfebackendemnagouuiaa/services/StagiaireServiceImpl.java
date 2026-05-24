@@ -20,6 +20,9 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityNotFoundException;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
@@ -30,6 +33,7 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 @Transactional
+@Slf4j
 public class StagiaireServiceImpl implements StagiaireService {
     private final StagiaireRepository stagiaireRepository;
     private final StagiaireMapper stagiaireMapper;
@@ -48,7 +52,14 @@ public class StagiaireServiceImpl implements StagiaireService {
             throw new RuntimeException("Email déjà utilisé");
         }
 
-        if (dto.getMatricule() != null && stagiaireRepository.existsByMatricule(dto.getMatricule())) {
+        if (dto.getMatricule() == null || dto.getMatricule().isBlank()) {
+            throw new IllegalArgumentException("Le matricule est obligatoire.");
+        }
+        if (dto.getFiliereId() == null) {
+            throw new IllegalArgumentException("La filière est obligatoire.");
+        }
+
+        if (stagiaireRepository.existsByMatricule(dto.getMatricule())) {
             throw new RuntimeException("Matricule déjà utilisé");
         }
 
@@ -74,13 +85,13 @@ public class StagiaireServiceImpl implements StagiaireService {
         if (dto.getEmail() != null &&
                 !dto.getEmail().equals(existing.getEmail()) &&
                 stagiaireRepository.existsByEmail(dto.getEmail())) {
-            throw new RuntimeException("Email déjà utilisé");
+            throw new RuntimeException("Email déjé utilisé");
         }
 
         if (dto.getMatricule() != null &&
                 !dto.getMatricule().equals(existing.getMatricule()) &&
                 stagiaireRepository.existsByMatricule(dto.getMatricule())) {
-            throw new RuntimeException("Matricule déjà utilisé");
+            throw new RuntimeException("Matricule déjé utilisé");
         }
 
         stagiaireMapper.updateEntityFromDto(dto, existing);
@@ -144,17 +155,22 @@ public class StagiaireServiceImpl implements StagiaireService {
         EncadrantAcademique encadrant = encadrantAcademiqueRepository.findById(encadrantId)
                 .orElseThrow(() -> new EntityNotFoundException("Encadrant academique introuvable"));
 
-        if (stagiaire.getEncadrantAcademique() != null
-                && stagiaire.getEncadrantAcademique().getId() != null
-                && stagiaire.getEncadrantAcademique().getId().equals(encadrantId)) {
-            throw new IllegalStateException("Un encadrant academique est deja affecte a cet etudiant.");
+        boolean alreadyAssigned = stagiaire.getEncadrantAcademique() != null
+                && encadrantId.equals(stagiaire.getEncadrantAcademique().getId());
+        if (alreadyAssigned) {
+            return AffectationEncadrantAcademiqueResponse.builder()
+                    .message("Cet encadrant academique est deja affecte a cet etudiant.")
+                    .stagiaire(toResponseDTO(stagiaire))
+                    .build();
         }
 
+        boolean isModification = stagiaire.getEncadrantAcademique() != null;
         stagiaire.setEncadrantAcademique(encadrant);
         Stagiaire saved = stagiaireRepository.save(stagiaire);
 
         synchroniserStagesActifs(saved, encadrant);
-        notifierEncadrantAffecteAuxStagesActifs(saved, encadrant);
+        notifierEncadrantAffecteAuxStagesActifs(saved, encadrant, isModification);
+        notifierStagiaire(saved, encadrant, isModification);
 
         return AffectationEncadrantAcademiqueResponse.builder()
                 .message("Encadrant academique affecte avec succes")
@@ -167,7 +183,50 @@ public class StagiaireServiceImpl implements StagiaireService {
         Stagiaire stagiaire = stagiaireRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Stagiaire introuvable avec id : " + id));
 
+        // Supprimer tous les stages liés avant de supprimer le stagiaire.
+        // La cascade JPA sur Stage (conventions, notifications, absences, rapports, etc.)
+        // est déclenchée automatiquement par stageRepository.delete().
+        List<Stage> stages = stageRepository.findByStagiaireId(id);
+        for (Stage stage : stages) {
+            supprimerStageComplet(stage);
+        }
+
         stagiaireRepository.delete(stagiaire);
+    }
+
+    /**
+     * Au démarrage, nettoie les stages orphelins dont le stagiaire a déjà été supprimé
+     * (stagiaire_id IS NULL — résidu de l'ancienne implémentation de delete).
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    @Transactional
+    public void nettoyerStagesOrphelins() {
+        List<Stage> orphelins = stageRepository.findByStagiaireIsNull();
+        if (orphelins.isEmpty()) {
+            return;
+        }
+        log.info("Nettoyage de {} stage(s) orphelin(s) sans stagiaire...", orphelins.size());
+        for (Stage stage : orphelins) {
+            supprimerStageComplet(stage);
+        }
+        log.info("Nettoyage des stages orphelins termine.");
+    }
+
+    /**
+     * Supprime un stage en gérant correctement :
+     * - la table de jointure reunion_participants (@ManyToMany)
+     * - toutes les entités liées via cascade JPA (convention, notifications, absences, rapports, etc.)
+     */
+    private void supprimerStageComplet(Stage stage) {
+        // Vider la table de jointure reunion_participants avant la suppression des réunions
+        if (stage.getReunions() != null) {
+            stage.getReunions().forEach(reunion -> {
+                if (reunion.getParticipants() != null) {
+                    reunion.getParticipants().clear();
+                }
+            });
+        }
+        stageRepository.delete(stage);
     }
 
     private StagiaireResponseDTO toResponseDTO(Stagiaire stagiaire) {
@@ -236,14 +295,26 @@ public class StagiaireServiceImpl implements StagiaireService {
 
         return switch (stage.getStatut()) {
             case EN_COURS -> 0;
-            case PAS_COMMENCE -> 1;
+            case A_VENIR, PAS_COMMENCE -> 1;
             case TERMINE -> 4;
             case ANNULE -> 5;
             case REFUSE -> 5;
         };
     }
 
-    private void notifierEncadrantAffecteAuxStagesActifs(Stagiaire stagiaire, EncadrantAcademique encadrant) {
+    private void notifierStagiaire(Stagiaire stagiaire, EncadrantAcademique encadrant, boolean isModification) {
+        if (stagiaire == null || stagiaire.getId() == null) {
+            return;
+        }
+        String titre = isModification ? "Encadrant academique modifie" : "Encadrant academique affecte";
+        String message = isModification
+                ? "Votre encadrant academique a ete mis a jour."
+                : "Un encadrant academique a ete affecte a votre dossier.";
+        String type = isModification ? "MODIFICATION_ENCADRANT_ACADEMIQUE" : "AFFECTATION_ENCADRANT_ACADEMIQUE";
+        notificationService.creerNotification(stagiaire.getId(), titre, message, type, null, null);
+    }
+
+    private void notifierEncadrantAffecteAuxStagesActifs(Stagiaire stagiaire, EncadrantAcademique encadrant, boolean isModification) {
         if (stagiaire == null || stagiaire.getId() == null || encadrant == null || encadrant.getId() == null) {
             return;
         }
@@ -255,9 +326,11 @@ public class StagiaireServiceImpl implements StagiaireService {
                 .filter(stage -> encadrant.getId().equals(stage.getEncadrantAcademique().getId()))
                 .forEach(stage -> notificationService.creerNotification(
                         encadrant.getId(),
-                        "Affectation encadrant",
-                        "Vous avez ete affecte comme encadrant academique pour un stage.",
-                        "AFFECTATION_ENCADRANT_STAGE",
+                        isModification ? "Changement d'affectation encadrant" : "Nouvelle affectation encadrant",
+                        isModification
+                                ? "Votre affectation comme encadrant academique a ete mise a jour pour un stage."
+                                : "Vous avez ete affecte comme encadrant academique pour un stage.",
+                        isModification ? "MODIFICATION_ENCADRANT_ACADEMIQUE" : "AFFECTATION_ENCADRANT_ACADEMIQUE",
                         stage.getId(),
                         "STAGE"
                 ));
@@ -268,8 +341,7 @@ public class StagiaireServiceImpl implements StagiaireService {
                 .orElseThrow(() -> new AccessDeniedException("Action non autorisee"));
 
         Set<Role> allowedRoles = Set.of(
-                Role.RESPONSABLE_SERVICE_STAGES,
-                Role.RESPONSABLE_UNIVERSITAIRE_STAGES,
+                Role.RESPONSABLE_STAGE,
                 Role.ADMINISTRATEUR
         );
 

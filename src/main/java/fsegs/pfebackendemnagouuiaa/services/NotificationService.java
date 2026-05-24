@@ -33,6 +33,8 @@ public interface NotificationService {
 
     NotificationDestinataireResponse markAsRead(Long notificationDestinataireId);
 
+    int markAllAsRead(Long utilisateurId);
+
     NotificationDestinataireResponse markActionDone(Long notificationDestinataireId, String reponse);
 
     NotificationDestinataireResponse cancelNotificationForUser(Long notificationDestinataireId);

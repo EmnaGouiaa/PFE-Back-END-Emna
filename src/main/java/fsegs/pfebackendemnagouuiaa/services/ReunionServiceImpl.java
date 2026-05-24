@@ -41,13 +41,13 @@ import java.util.stream.Collectors;
 public class ReunionServiceImpl implements ReunionService {
 
     private static final Duration MIN_UPDATE_DELAY = Duration.ofHours(24);
-    private static final String ERROR_REQUIRED = "Tous les champs obligatoires doivent être renseignés.";
+    private static final String ERROR_REQUIRED = "Tous les champs obligatoires doivent étre renseignés.";
     private static final String ERROR_INVALID = "Les données saisies sont invalides ou hors période du stage.";
     private static final String ERROR_NOT_FOUND = "Réunion introuvable.";
-    private static final String ERROR_FORBIDDEN_STAGE = "Accès non autorisé à ce stage.";
+    private static final String ERROR_FORBIDDEN_STAGE = "Accés non autorisé à ce stage.";
     private static final String ERROR_DELETE_FORBIDDEN = "La suppression des réunions est interdite.";
-    private static final String ERROR_TECHNICAL = "Une erreur technique est survenue lors de l’enregistrement ou de l’envoi des notifications.";
-    private static final String ERROR_DELAY = "Une réunion doit être planifiée ou modifiée au moins 24 heures avant son début.";
+    private static final String ERROR_TECHNICAL = "Une erreur technique est survenue lors de l'enregistrement ou de l'envoi des notifications.";
+    private static final String ERROR_DELAY = "Une réunion doit étre planifiée ou modifiée au moins 24 heures avant son début.";
 
     private final ReunionRepository reunionRepository;
     private final StageRepository stageRepository;

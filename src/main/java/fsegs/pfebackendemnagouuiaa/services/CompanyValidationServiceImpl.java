@@ -1,8 +1,10 @@
 package fsegs.pfebackendemnagouuiaa.services;
 
 import fsegs.pfebackendemnagouuiaa.dto.CompanyValidationItemDto;
+import fsegs.pfebackendemnagouuiaa.dto.SignerCahierRequest;
 import fsegs.pfebackendemnagouuiaa.entities.CahierStage;
 import fsegs.pfebackendemnagouuiaa.entities.ConventionStage;
+import fsegs.pfebackendemnagouuiaa.entities.RoleSignature;
 import fsegs.pfebackendemnagouuiaa.entities.Entreprise;
 import fsegs.pfebackendemnagouuiaa.entities.ResponsableEntreprise;
 import fsegs.pfebackendemnagouuiaa.entities.Role;
@@ -55,12 +57,11 @@ public class CompanyValidationServiceImpl implements CompanyValidationService {
             }
 
             conventionStageRepository.findByStageId(stage.getId())
-                    .filter(convention -> !Boolean.TRUE.equals(convention.getSigneeEntreprise()))
+                    .filter(convention -> !convention.estSignePar(RoleSignature.RESPONSABLE_ENTREPRISE))
                     .map(convention -> buildConventionValidationItem(stage, convention))
                     .ifPresent(items::add);
 
             cahierStageRepository.findByStageId(stage.getId())
-                    .filter(cahier -> !Boolean.TRUE.equals(cahier.getSigneeRespEntreprise()))
                     .map(cahier -> buildCahierValidationItem(stage, cahier))
                     .ifPresent(items::add);
         }
@@ -107,7 +108,7 @@ public class CompanyValidationServiceImpl implements CompanyValidationService {
 
         notifyStudent(saved, "Sujet de stage validé",
                 "Le sujet du stage " + safeStageTitle(saved) + " a été validé par votre entreprise.");
-        notifyAcademicSupervisor(saved, "Sujet de stage validé côté entreprise",
+        notifyAcademicSupervisor(saved, "Sujet de stage validé cété entreprise",
                 "Le sujet du stage " + safeStageTitle(saved) + " a été validé par le représentant entreprise.");
 
         return buildSubjectValidationItem(saved);
@@ -129,7 +130,19 @@ public class CompanyValidationServiceImpl implements CompanyValidationService {
                 .orElseThrow(() -> new IllegalArgumentException("Cahier de stage introuvable."));
         Stage stage = getManagedStage(cahier.getStage() != null ? cahier.getStage().getId() : null);
 
-        cahierStageService.signerParResponsableEntreprise(cahierId);
+        // L'action "Approuver le cahier" cote responsable entreprise vaut signature.
+        // Image de signature : fallback sur celle stockee sur le profil du responsable
+        // authentifie (pas de capture dedicaree dans ce flux d'approbation pour l'instant).
+        Utilisateur signer = jwtService.getAuthenticatedUtilisateur()
+                .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifie introuvable."));
+        String fallbackImage = signer.getUrlSignature();
+        if (fallbackImage == null || fallbackImage.isBlank()) {
+            throw new IllegalStateException(
+                    "Aucune image de signature disponible. Veuillez en ajouter une depuis votre profil avant d'approuver le cahier.");
+        }
+        SignerCahierRequest signRequest = new SignerCahierRequest();
+        signRequest.setSignatureImage(fallbackImage);
+        cahierStageService.signerParResponsableEntreprise(cahierId, signRequest);
         notifyStudent(stage, "Document validé",
                 "Le cahier de stage " + safeStageTitle(stage) + " a été validé par votre entreprise.");
         return buildCahierValidationItem(stage, cahierStageRepository.findById(cahierId).orElse(cahier));
@@ -142,7 +155,7 @@ public class CompanyValidationServiceImpl implements CompanyValidationService {
 
         notifyStudent(saved, "Stage refusé",
                 "Le stage " + safeStageTitle(saved) + " a été refusé par votre entreprise. Motif : " + commentaire);
-        notifyAcademicSupervisor(saved, "Stage refusé côté entreprise",
+        notifyAcademicSupervisor(saved, "Stage refusé cété entreprise",
                 "Le stage " + safeStageTitle(saved) + " a été refusé par le représentant entreprise. Motif : " + commentaire);
 
         return buildStageValidationItem(saved);
@@ -156,7 +169,7 @@ public class CompanyValidationServiceImpl implements CompanyValidationService {
 
         notifyStudent(saved, "Sujet de stage refusé",
                 "Le sujet du stage " + safeStageTitle(saved) + " a été refusé par votre entreprise. Motif : " + commentaire);
-        notifyAcademicSupervisor(saved, "Sujet de stage refusé côté entreprise",
+        notifyAcademicSupervisor(saved, "Sujet de stage refusé cété entreprise",
                 "Le sujet du stage " + safeStageTitle(saved) + " a été refusé par le représentant entreprise. Motif : " + commentaire);
 
         return buildSubjectValidationItem(saved);
@@ -178,7 +191,7 @@ public class CompanyValidationServiceImpl implements CompanyValidationService {
         };
 
         if (stage.getStatut() == StatutStage.EN_COURS || stage.getStatut() == StatutStage.TERMINE) {
-            throw new IllegalStateException("Impossible de refuser ce document pour un stage déjà démarré ou terminé.");
+            throw new IllegalStateException("Impossible de refuser ce document pour un stage déjé démarré ou terminé.");
         }
 
         stage.setStatut(StatutStage.REFUSE);
@@ -187,7 +200,7 @@ public class CompanyValidationServiceImpl implements CompanyValidationService {
         String documentLabel = "CONVENTION".equals(documentType) ? "la convention" : "le cahier de stage";
         notifyStudent(saved, "Document refusé",
                 "Votre entreprise a refusé " + documentLabel + " du stage " + safeStageTitle(saved) + ". Motif : " + commentaire);
-        notifyAcademicSupervisor(saved, "Document refusé côté entreprise",
+        notifyAcademicSupervisor(saved, "Document refusé cété entreprise",
                 "Le représentant entreprise a refusé " + documentLabel + " du stage " + safeStageTitle(saved) + ". Motif : " + commentaire);
 
         return "CONVENTION".equals(documentType)
@@ -213,7 +226,7 @@ public class CompanyValidationServiceImpl implements CompanyValidationService {
                 .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifié introuvable."));
 
         if (authenticatedUser.getRole() != Role.RESPONSABLE_ENTREPRISE) {
-            throw new AccessDeniedException("Accès refusé : rôle RESPONSABLE_ENTREPRISE requis.");
+            throw new AccessDeniedException("Accés refusé : réle RESPONSABLE_ENTREPRISE requis.");
         }
 
         if (authenticatedUser instanceof ResponsableEntreprise responsableEntreprise) {
@@ -229,14 +242,14 @@ public class CompanyValidationServiceImpl implements CompanyValidationService {
         Long stageEntrepriseId = stage.getEntreprise() != null ? stage.getEntreprise().getId() : null;
 
         if (stageEntrepriseId == null || !stageEntrepriseId.equals(expectedEntrepriseId)) {
-            throw new AccessDeniedException("Accès refusé à un élément qui n'appartient pas à votre entreprise.");
+            throw new AccessDeniedException("Accés refusé é un élément qui n'appartient pas é votre entreprise.");
         }
     }
 
     private Long getEntrepriseId(ResponsableEntreprise responsable) {
         Entreprise entreprise = responsable.getEntreprise();
         if (entreprise == null || entreprise.getId() == null) {
-            throw new AccessDeniedException("Aucune entreprise n'est rattachée à ce compte.");
+            throw new AccessDeniedException("Aucune entreprise n'est rattachée é ce compte.");
         }
         return entreprise.getId();
     }
@@ -291,7 +304,7 @@ public class CompanyValidationServiceImpl implements CompanyValidationService {
     }
 
     private CompanyValidationItemDto buildConventionValidationItem(Stage stage, ConventionStage convention) {
-        String status = Boolean.TRUE.equals(convention.getSigneeEntreprise())
+        String status = convention.estSignePar(RoleSignature.RESPONSABLE_ENTREPRISE)
                 ? "VALIDEE"
                 : (stage.getStatut() == StatutStage.REFUSE || stage.getStatut() == StatutStage.ANNULE) ? "REFUSEE" : "EN_ATTENTE";
 
@@ -307,7 +320,7 @@ public class CompanyValidationServiceImpl implements CompanyValidationService {
     }
 
     private CompanyValidationItemDto buildCahierValidationItem(Stage stage, CahierStage cahier) {
-        String status = Boolean.TRUE.equals(cahier.getSigneeRespEntreprise())
+        String status = cahier.estSignePar(RoleSignature.RESPONSABLE_ENTREPRISE)
                 ? "VALIDEE"
                 : (stage.getStatut() == StatutStage.REFUSE || stage.getStatut() == StatutStage.ANNULE) ? "REFUSEE" : "EN_ATTENTE";
 

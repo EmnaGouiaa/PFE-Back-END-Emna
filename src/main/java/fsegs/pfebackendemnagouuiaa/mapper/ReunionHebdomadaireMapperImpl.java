@@ -3,7 +3,6 @@ package fsegs.pfebackendemnagouuiaa.mapper;
 import fsegs.pfebackendemnagouuiaa.dto.ReunionHebdomadaireDto;
 import fsegs.pfebackendemnagouuiaa.entities.ReunionHebdomadaire;
 import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
-import fsegs.pfebackendemnagouuiaa.mapper.ReunionHebdomadaireMapper;
 import org.springframework.stereotype.Component;
 
 import java.util.Set;
@@ -25,8 +24,6 @@ public class ReunionHebdomadaireMapperImpl implements ReunionHebdomadaireMapper 
         dto.setHeure(entity.getHeure());
         dto.setObservation(entity.getObservation());
         dto.setCompteRendu(entity.getCompteRendu());
-        dto.setNumSemaine(entity.getNumSemaine());
-        dto.setObjectifsSemaineProchaine(entity.getObjectifsSemaineProchaine());
 
         if (entity.getStage() != null) {
             dto.setStageId(entity.getStage().getId());
@@ -61,8 +58,6 @@ public class ReunionHebdomadaireMapperImpl implements ReunionHebdomadaireMapper 
         entity.setHeure(dto.getHeure());
         entity.setObservation(dto.getObservation());
         entity.setCompteRendu(dto.getCompteRendu());
-        entity.setNumSemaine(dto.getNumSemaine());
-        entity.setObjectifsSemaineProchaine(dto.getObjectifsSemaineProchaine());
 
         return entity;
     }

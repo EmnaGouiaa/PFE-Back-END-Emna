@@ -4,8 +4,8 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -17,24 +17,42 @@ public class FicheEvaluationDto {
 
     private Long id;
 
-    // Partie Encadrant Professionnel
+    // ── Partie Encadrant Professionnel ─────────────────────────────────────────
+
     private String pointFortEncadrantPro;
     private String axeAmeliorationEncadrantPro;
-    private String signatureEncadrantProfessionnel;
+
+    // Champs enrichis EP (backward-compatible avec le frontend)
+    private String signatureEncadrantProfessionnel;   // urlSignature du signataire
     private LocalDateTime dateSignatureEncadrantProfessionnel;
     private Long signataireEncadrantProfessionnelId;
     private String roleSignatureEncadrantProfessionnel;
     private String nomSignataireEncadrantProfessionnel;
 
-    private Boolean donneesCompletes;
-    // Partie Responsable Entreprise
+    // ── Partie Responsable Entreprise ──────────────────────────────────────────
+
     private String pointFortResponsableEntreprise;
     private String axeAmeliorationResponsableEntreprise;
-    private String signatureRepresentantEntreprise;
+
+    // Champs enrichis RE (backward-compatible avec le frontend)
+    private String signatureRepresentantEntreprise;   // urlSignature du signataire
     private LocalDateTime dateSignatureRepresentantEntreprise;
     private Long signataireRepresentantEntrepriseId;
     private String roleSignatureRepresentantEntreprise;
     private String nomSignataireRepresentantEntreprise;
+
+    // ── Statuts calculés ───────────────────────────────────────────────────────
+
+    private Boolean donneesCompletes;
+    private Boolean signaturesCompletes;
+    private Boolean complete;
+    private Boolean verrouillee;
+
+    // ── Liste complète des signatures ──────────────────────────────────────────
+
+    private List<SignatureDto> signatures = new ArrayList<>();
+
+    // ── Données du stage ───────────────────────────────────────────────────────
 
     private Long stageId;
     private String stageTitre;
@@ -46,14 +64,13 @@ public class FicheEvaluationDto {
     private String entrepriseNom;
     private String entrepriseLieuStage;
 
+    // ── Réunion finale ─────────────────────────────────────────────────────────
+
     private Long reunionFinaleId;
     private String reunionFinaleNumero;
     private LocalDate reunionFinaleDate;
     private LocalTime reunionFinaleHeure;
 
     private Double noteFinale;
-    private Boolean signaturesCompletes;
-    private Boolean complete;
-    private Boolean verrouillee;
     private List<NoteAttribueeDto> notesAttribuees = new ArrayList<>();
 }

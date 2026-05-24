@@ -1,6 +1,7 @@
 package fsegs.pfebackendemnagouuiaa.entities;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -59,6 +60,11 @@ public class OffreStage {
     @JoinColumn(name = "stagiaire_affecte_id")
     @JsonIgnore
     private Stagiaire stagiaireAffecte;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "encadrant_pro_id")
+    @JsonIgnoreProperties({"stages", "hibernateLazyInitializer", "handler"})
+    private EncadrantProfessionnel encadrantPro;
 
     @OneToMany(mappedBy = "offreSource")
     @JsonIgnore

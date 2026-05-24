@@ -46,7 +46,7 @@ public class ConventionStageController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('RESPONSABLE_UNIVERSITAIRE_STAGES','RESPONSABLE_SERVICE_STAGES','ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE','ADMINISTRATEUR')")
     public ResponseEntity<List<ConventionStageDto>> getAll() {
         return ResponseEntity.ok(conventionStageService.getAll());
     }
@@ -72,13 +72,13 @@ public class ConventionStageController {
     }
 
     @PutMapping("/{id}/signer-responsable")
-    @PreAuthorize("hasRole('RESPONSABLE_UNIVERSITAIRE_STAGES')")
+    @PreAuthorize("hasRole('RESPONSABLE_STAGE')")
     public ResponseEntity<ConventionStageDto> signerParResponsable(@PathVariable Long id) {
         return ResponseEntity.ok(conventionStageService.signerParResponsable(id));
     }
 
     @PatchMapping("/{id}/signer-responsable-universitaire")
-    @PreAuthorize("hasRole('RESPONSABLE_UNIVERSITAIRE_STAGES')")
+    @PreAuthorize("hasRole('RESPONSABLE_STAGE')")
     public ResponseEntity<ConventionStageDto> signerParResponsableUniversitaire(@PathVariable Long id) {
         return ResponseEntity.ok(conventionStageService.signerParResponsable(id));
     }
