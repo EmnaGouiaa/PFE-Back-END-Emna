@@ -4,6 +4,7 @@ import fsegs.pfebackendemnagouuiaa.dto.CahierStageDto;
 import fsegs.pfebackendemnagouuiaa.dto.SignerCahierRequest;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface CahierStageService {
 
@@ -12,6 +13,8 @@ public interface CahierStageService {
     CahierStageDto createByStage(Long stageId, CahierStageDto dto);
 
     CahierStageDto getById(Long id);
+
+    Optional<CahierStageDto> findByStageIdIfPresent(Long stageId);
 
     CahierStageDto getByStageId(Long stageId);
 

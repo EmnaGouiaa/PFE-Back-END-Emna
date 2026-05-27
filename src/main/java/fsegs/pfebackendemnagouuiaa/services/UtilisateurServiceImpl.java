@@ -1,6 +1,7 @@
 package fsegs.pfebackendemnagouuiaa.services;
 
 import fsegs.pfebackendemnagouuiaa.dto.ChangeRoleRequest;
+import fsegs.pfebackendemnagouuiaa.dto.CollaborateurSignatureDto;
 import fsegs.pfebackendemnagouuiaa.dto.CreateUserRequest;
 import fsegs.pfebackendemnagouuiaa.dto.UpdateEmailRequest;
 import fsegs.pfebackendemnagouuiaa.dto.UpdateEmailResponse;
@@ -206,19 +207,28 @@ public class UtilisateurServiceImpl implements UtilisateurService {
         utilisateur.setTelephone(telephone);
 
         // Champs propres au stagiaire modifiables par l'administrateur : filiere + niveau.
-        // Ignores silencieusement pour les autres roles (le mapper ne les pose pas non plus).
+        // Regle metier : ces donnees academiques sont VERROUILLEES des qu'un stage existe
+        // pour preserver la coherence (offres, affectations, conventions, evaluations...).
         if (utilisateur instanceof Stagiaire stagiaire) {
             if (request.getNiveau() != null) {
                 if (request.getNiveau() < 1) {
                     throw new IllegalArgumentException("Le niveau doit etre un entier positif.");
                 }
-                stagiaire.setNiveau(request.getNiveau());
+                Integer current = stagiaire.getNiveau();
+                if (!request.getNiveau().equals(current)) {
+                    ensureStagiaireAcademicDataMutable(stagiaire);
+                    stagiaire.setNiveau(request.getNiveau());
+                }
             }
             if (request.getFiliereId() != null) {
-                Filiere filiere = filiereRepository.findById(request.getFiliereId())
-                        .orElseThrow(() -> new EntityNotFoundException(
-                                "Filiere introuvable avec l'identifiant : " + request.getFiliereId()));
-                stagiaire.setFiliere(filiere);
+                Long currentFiliereId = stagiaire.getFiliere() != null ? stagiaire.getFiliere().getId() : null;
+                if (!request.getFiliereId().equals(currentFiliereId)) {
+                    ensureStagiaireAcademicDataMutable(stagiaire);
+                    Filiere filiere = filiereRepository.findById(request.getFiliereId())
+                            .orElseThrow(() -> new EntityNotFoundException(
+                                    "Filiere introuvable avec l'identifiant : " + request.getFiliereId()));
+                    stagiaire.setFiliere(filiere);
+                }
             }
         }
 
@@ -236,6 +246,42 @@ public class UtilisateurServiceImpl implements UtilisateurService {
     @Override
     public UserResponse getProfile(Long id) {
         return UtilisateurMapper.toProfileResponse(findOwnedUser(id));
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public CollaborateurSignatureDto getCollaborateurSignature(Long userId) {
+        if (userId == null) {
+            throw new IllegalArgumentException("Identifiant utilisateur obligatoire.");
+        }
+        Utilisateur viewer = jwtService.getAuthenticatedUtilisateur()
+                .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifie introuvable."));
+        Utilisateur target = utilisateurRepository.findById(userId)
+                .filter(u -> !Boolean.TRUE.equals(u.getSupprime()))
+                .orElseThrow(() -> new EntityNotFoundException("Utilisateur introuvable avec l'id : " + userId));
+
+        if (!canViewCollaboratorSignature(viewer, target)) {
+            throw new AccessDeniedException("Acces refuse a la signature de cet utilisateur.");
+        }
+        String url = target.getUrlSignature();
+        return new CollaborateurSignatureDto(url != null && !url.isBlank() ? url : "");
+    }
+
+    private boolean canViewCollaboratorSignature(Utilisateur viewer, Utilisateur target) {
+        if (viewer.getId().equals(target.getId())) {
+            return true;
+        }
+        Role role = viewer.getRole();
+        if (role == Role.ADMINISTRATEUR || role == Role.RESPONSABLE_STAGE) {
+            return true;
+        }
+        if (stageRepository.areCoParticipantsOnSameStage(viewer.getId(), target.getId())) {
+            return true;
+        }
+        if (viewer instanceof ResponsableEntreprise re && re.getEntreprise() != null) {
+            return stageRepository.existsParticipantOnCompanyStage(re.getEntreprise().getId(), target.getId());
+        }
+        return false;
     }
 
     @Override
@@ -296,6 +342,10 @@ public class UtilisateurServiceImpl implements UtilisateurService {
             if (matricule == null) {
                 throw new IllegalArgumentException("Le matricule ne peut pas etre vide");
             }
+            // Regle metier : verrouillage des donnees academiques des qu'un stage existe.
+            if (!matricule.equals(stagiaire.getMatricule())) {
+                ensureStagiaireAcademicDataMutable(stagiaire);
+            }
             contactUniquenessService.validateUserIdentityForUpdate(
                     utilisateur.getId(),
                     utilisateur.getEmail(),
@@ -326,9 +376,27 @@ public class UtilisateurServiceImpl implements UtilisateurService {
         }
 
         if (request.getUrlSignature() != null) {
-            // An empty string means the user explicitly removed their signature.
             String sig = request.getUrlSignature().trim();
-            utilisateur.setUrlSignature(sig.isEmpty() ? null : sig);
+            String existing = utilisateur.getUrlSignature();
+
+            // ── REGLE METIER : signature definitive et non modifiable ──────────────
+            // La signature est utilisee dans des documents officiels (convention,
+            // cahier de stage, fiche d'evaluation, etc.). Une fois enregistree, elle
+            // ne peut etre ni modifiee ni supprimee — sinon les documents signes
+            // perdraient leur valeur juridique.
+            if (existing != null && !existing.isBlank()) {
+                if (!sig.equals(existing)) {
+                    throw new IllegalArgumentException(
+                            "Votre signature est déjà enregistrée et ne peut plus être modifiée ni supprimée. "
+                                    + "Elle est définitive car utilisée dans des documents officiels.");
+                }
+                // Meme valeur transmise : on accepte silencieusement (idempotent).
+            } else if (!sig.isEmpty()) {
+                // Premier enregistrement : on accepte. L'utilisateur a confirme le message
+                // d'avertissement cote frontend.
+                utilisateur.setUrlSignature(sig);
+            }
+            // sig vide ET aucune existante → noop (rien a faire).
         }
 
         Utilisateur updated = utilisateurRepository.save(utilisateur);
@@ -673,6 +741,28 @@ public class UtilisateurServiceImpl implements UtilisateurService {
             case RESPONSABLE_ENTREPRISE -> stageRepository.findByTuteurEntrepriseId(utilisateur.getId());
             default -> List.of();
         };
+    }
+
+    /**
+     * Refuse toute modification des donnees academiques (filiere, matricule, niveau) d'un
+     * stagiaire des qu'au moins un stage lui est deja attache.
+     *
+     * <p>Justification : ces donnees sont copiees / referencees dans les offres, conventions,
+     * cahiers de stage, fiches d'evaluation et notifications. Les modifier apres demarrage
+     * d'un processus entraine des incoherences difficiles a tracer.</p>
+     *
+     * @throws IllegalArgumentException si un stage existe deja pour ce stagiaire
+     */
+    private void ensureStagiaireAcademicDataMutable(Stagiaire stagiaire) {
+        if (stagiaire == null || stagiaire.getId() == null) {
+            return;
+        }
+        if (!stageRepository.findByStagiaireId(stagiaire.getId()).isEmpty()) {
+            throw new IllegalArgumentException(
+                    "Les informations académiques (filière, matricule, niveau) ne peuvent plus "
+                            + "être modifiées après le démarrage des processus de stage afin de "
+                            + "garantir la cohérence des données.");
+        }
     }
 
     private void synchroniserDonneesStagiaireLiees(Utilisateur utilisateur) {

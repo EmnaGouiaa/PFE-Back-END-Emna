@@ -42,7 +42,9 @@ public class CahierStageController {
 
     @GetMapping("/stage/{stageId}")
     public ResponseEntity<CahierStageDto> getByStageId(@PathVariable Long stageId) {
-        return ResponseEntity.ok(cahierStageService.getByStageId(stageId));
+        return cahierStageService.findByStageIdIfPresent(stageId)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.noContent().build());
     }
 
     @GetMapping

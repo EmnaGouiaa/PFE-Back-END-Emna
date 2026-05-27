@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 @Slf4j
@@ -76,10 +77,14 @@ public class CahierStageServiceImpl implements CahierStageService {
     }
 
     @Override
+    public Optional<CahierStageDto> findByStageIdIfPresent(Long stageId) {
+        return cahierStageRepository.findByStageId(stageId).map(cahierStageMapper::toDto);
+    }
+
+    @Override
     public CahierStageDto getByStageId(Long stageId) {
-        CahierStage entity = cahierStageRepository.findByStageId(stageId)
-                .orElseThrow(() -> new RuntimeException("Cahier introuvable pour le stage id : " + stageId));
-        return cahierStageMapper.toDto(entity);
+        return findByStageIdIfPresent(stageId)
+                .orElseThrow(() -> new EntityNotFoundException("Cahier introuvable pour le stage id : " + stageId));
     }
 
     @Override
@@ -140,11 +145,10 @@ public class CahierStageServiceImpl implements CahierStageService {
 
         RoleSignature role = roleSignature(typeSignature);
 
-        // ── 2. Une signature ne peut pas etre modifiee/dupliquee apres enregistrement (E5) ─
+        // Idempotence : déjà signé → retour sans erreur
         if (cahier.estSignePar(role)) {
-            log.warn("AUDIT signature - tentative de re-signature refusee. cahierId={}, role={}, utilisateurId={}",
-                    cahier.getId(), role, utilisateur.getId());
-            throw new IllegalArgumentException("Vous avez déjà signé ce document.");
+            log.info("AUDIT signature - requete idempotente (deja signe). cahierId={}, role={}", cahier.getId(), role);
+            return cahierStageMapper.toDto(cahier);
         }
 
         // ── 3. Resolution de l'image de signature ─────────────────────────────────────────

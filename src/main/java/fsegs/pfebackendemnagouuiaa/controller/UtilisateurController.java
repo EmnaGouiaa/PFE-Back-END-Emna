@@ -1,6 +1,7 @@
 package fsegs.pfebackendemnagouuiaa.controller;
 
 import fsegs.pfebackendemnagouuiaa.dto.ChangeRoleRequest;
+import fsegs.pfebackendemnagouuiaa.dto.CollaborateurSignatureDto;
 import fsegs.pfebackendemnagouuiaa.dto.CreateUserRequest;
 import fsegs.pfebackendemnagouuiaa.dto.UpdateEmailRequest;
 import fsegs.pfebackendemnagouuiaa.dto.UpdateEmailResponse;
@@ -36,6 +37,12 @@ public class UtilisateurController {
     public ResponseEntity<UserResponse> updateUser(@PathVariable Long id,
                                                    @Valid @RequestBody UpdateUserRequest request) {
         return ResponseEntity.ok(utilisateurService.updateUser(id, request));
+    }
+
+    @PreAuthorize("isAuthenticated()")
+    @GetMapping("/{id}/signature-collaborateur")
+    public ResponseEntity<CollaborateurSignatureDto> getCollaborateurSignature(@PathVariable Long id) {
+        return ResponseEntity.ok(utilisateurService.getCollaborateurSignature(id));
     }
 
     @PreAuthorize("isAuthenticated()")

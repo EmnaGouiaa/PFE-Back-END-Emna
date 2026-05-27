@@ -165,52 +165,64 @@ public class DemoDataInitializer implements CommandLineRunner {
                 pwd, rt,  3, LocalDate.of(2002, 11, 5));
 
         // === Etape 8 : Stages (exactement 5) ============================
-        // Stage 1 — EN_COURS chez Telnet
+        // ┌────────────────────────────────────────────────────────────────┐
+        // │ ETAT INITIAL FRAIS — REGLES METIER STRICTES :                  │
+        // │  - tous les stages sont en PAS_COMMENCE (dates futures)        │
+        // │  - sujet en EN_ATTENTE (NON valide par l'encadrant academique) │
+        // │  - aucune signature, aucune evaluation, aucune convention      │
+        // │    pre-generee : ces documents seront crees naturellement par  │
+        // │    le workflow reel (affectation, validation, signature...).   │
+        // │ Cela permet de tester chaque etape de bout en bout depuis un   │
+        // │ etat realiste.                                                  │
+        // └────────────────────────────────────────────────────────────────┘
+        LocalDate baseStart = LocalDate.now().plusDays(30);    // demarre dans 30 jours
+
+        // Stage 1 — A demarrer chez Telnet (3 mois)
         creerStageIfAbsent(
                 "Developpement d'une application web de gestion RH",
                 ahmed, sonia, walid, telnet,
-                LocalDate.of(2024, 2, 1),  LocalDate.of(2024, 4, 30),  12,
+                baseStart,            baseStart.plusMonths(3),  12,
                 "Conception et developpement d'un module de gestion des conges et absences "
                         + "integre dans le SI existant de l'entreprise.",
-                StatutStage.EN_COURS, StatutValidation.VALIDEE);
+                StatutStage.PAS_COMMENCE, StatutValidation.EN_ATTENTE);
 
-        // Stage 2 — EN_COURS chez Sofrecom
+        // Stage 2 — A demarrer chez Sofrecom (3 mois)
         creerStageIfAbsent(
                 "Mise en place d'une infrastructure reseau SDN",
                 mariam, hedi, ines, sofrecom,
-                LocalDate.of(2024, 3, 1),  LocalDate.of(2024, 5, 31),  13,
+                baseStart.plusDays(15), baseStart.plusDays(15).plusMonths(3), 13,
                 "Conception et deploiement d'un reseau defini par logiciel "
                         + "pour le datacenter principal de l'entreprise.",
-                StatutStage.EN_COURS, StatutValidation.VALIDEE);
+                StatutStage.PAS_COMMENCE, StatutValidation.EN_ATTENTE);
 
-        // Stage 3 — TERMINE chez Telnet
+        // Stage 3 — A demarrer chez Telnet (2 mois)
         creerStageIfAbsent(
                 "Developpement d'une application mobile bancaire Flutter",
                 youssef, sonia, walid, telnet,
-                LocalDate.of(2024, 1, 15), LocalDate.of(2024, 3, 15),   8,
+                baseStart.plusDays(7),  baseStart.plusDays(7).plusMonths(2),  8,
                 "Application mobile cross-platform (iOS/Android) pour la consultation "
                         + "de comptes et les virements bancaires en temps reel.",
-                StatutStage.TERMINE, StatutValidation.VALIDEE);
+                StatutStage.PAS_COMMENCE, StatutValidation.EN_ATTENTE);
 
-        // Stage 4 — PAS_COMMENCE chez BIAT (sujet en attente)
+        // Stage 4 — A demarrer chez BIAT (3 mois)
         creerStageIfAbsent(
                 "Systeme de gestion des stocks et approvisionnements",
                 sara, hedi, null, biat,
-                LocalDate.of(2024, 4, 1),  LocalDate.of(2024, 6, 30),  13,
+                baseStart.plusDays(20), baseStart.plusDays(20).plusMonths(3), 13,
                 "Developpement d'un ERP leger pour la gestion des inventaires "
                         + "et l'optimisation de la chaine d'approvisionnement.",
                 StatutStage.PAS_COMMENCE, StatutValidation.EN_ATTENTE);
 
-        // Stage 5 — EN_COURS chez BIAT
+        // Stage 5 — A demarrer chez BIAT (2 mois)
         creerStageIfAbsent(
                 "Integration et securisation d'une API bancaire REST",
                 mohamed, sonia, null, biat,
-                LocalDate.of(2024, 2, 15), LocalDate.of(2024, 4, 15),   9,
+                baseStart.plusDays(10), baseStart.plusDays(10).plusMonths(2), 9,
                 "Mise en place d'une API REST securisee avec authentification "
                         + "OAuth2 et journalisation des acces sensibles.",
-                StatutStage.EN_COURS, StatutValidation.VALIDEE);
+                StatutStage.PAS_COMMENCE, StatutValidation.EN_ATTENTE);
 
-        log.info("[DEMO-INIT] ========== Initialisation terminee ==========");
+        log.info("[DEMO-INIT] ========== Initialisation terminee — etat initial frais ==========");
     }
 
     // =========================================================================

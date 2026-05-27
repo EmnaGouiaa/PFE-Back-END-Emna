@@ -16,12 +16,19 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 
 /**
- * Règle d'ouverture de l'enquête de satisfaction :
+ * Règle d'ouverture / fermeture de l'enquête de satisfaction :
  *
- *   sectionOuverte = (aujourd'hui >= dateFin_stage
- *                  OU aujourd'hui >= date_réunionFinale)
- *                  ET enquête.active = true
- *                  ET urlFormulaire configurée
+ *   Fenêtre d'ouverture :  dateFin_stage  ≤  today  ≤  dateFin_stage + 6 jours
+ *                          ET  enquête.active = true
+ *                          ET  urlFormulaire configurée
+ *
+ *   → Avant dateFin  : statut "En attente"  — enquête non encore accessible.
+ *   → Dans la fenêtre : statut "Ouverte"    — URL exposée au client.
+ *   → Après + 6 jours : statut "Fermée"     — enquête définitivement close,
+ *                                             URL masquée, jamais réouverte.
+ *
+ * Chaque stage est traité indépendamment : la fin d'un autre stage ne rouvre
+ * jamais une enquête déjà fermée.
  *
  * L'URL du formulaire n'est transmise au client que si la section est ouverte.
  */
@@ -32,6 +39,13 @@ public class EnqueteSatisfactionServiceImpl implements EnqueteSatisfactionServic
     private static final String DEFAULT_TITLE       = "Enquête de satisfaction";
     private static final String DEFAULT_DESCRIPTION = "Merci de répondre à cette enquête de satisfaction.";
     private static final DateTimeFormatter DATE_FR  = DateTimeFormatter.ofPattern("dd/MM/yyyy");
+
+    /**
+     * Durée de la fenêtre d'enquête en jours APRÈS la date de fin de stage.
+     * Valeur 6 → fenêtre = dateFin + 6 jours inclus = 7 jours au total
+     * (le jour de fin de stage compte comme jour 1).
+     */
+    private static final long FENETRE_ENQUETE_JOURS = 6L;
 
     private final ConfigurationGlobaleEnqueteRepository configurationGlobaleEnqueteRepository;
     private final ReunionFinaleRepository               reunionFinaleRepository;
@@ -90,8 +104,16 @@ public class EnqueteSatisfactionServiceImpl implements EnqueteSatisfactionServic
     /**
      * Calcule la visibilité de l'enquête pour un stage donné.
      *
-     * Règle :  ouvert si (today >= dateFin_stage OU today >= date_réunionFinale)
-     *                     ET active ET URL configurée.
+     * <p>Fenêtre d'ouverture (par stage, indépendante) :
+     * <pre>
+     *   dateFin  ≤  today  ≤  dateFin + 6 jours
+     * </pre>
+     * Avant dateFin       → "En attente"  (enquête pas encore accessible)
+     * Dans la fenêtre     → "Ouverte"     (URL exposée si active ET configurée)
+     * Après dateFin + 6   → "Fermée"      (URL masquée, jamais réouverte)
+     *
+     * <p>Chaque stage est traité indépendamment.  La fin d'un autre stage ne
+     * rouvre jamais une enquête déjà fermée par expiration de sa fenêtre.
      */
     @Override
     @Transactional(readOnly = true)
@@ -100,25 +122,34 @@ public class EnqueteSatisfactionServiceImpl implements EnqueteSatisfactionServic
         ConfigurationGlobaleEnquete config = getOrCreateGlobalConfig();
         boolean hasUrl = config.getUrlFormulaire() != null && !config.getUrlFormulaire().isBlank();
 
-        // Récupération des données du stage et de sa réunion finale
-        // (la réunion finale n'est plus une condition suffisante d'ouverture — la règle
-        // métier exige que la date de fin du stage soit atteinte).
         Stage         stage         = stageRepository.findById(stageId).orElse(null);
         ReunionFinale reunionFinale = reunionFinaleRepository.findFirstByStageIdOrderByIdAsc(stageId).orElse(null);
 
         LocalDate today = LocalDate.now();
 
-        // ── Conditions d'ouverture ──────────────────────────────────────────
-        // REGLE METIER : l'enquête ne peut être complétée qu'APRES la fin du stage.
-        // Le statut du stage (EN_COURS / TERMINE) et celui de l'enquête restent
-        // INDEPENDANTS : compléter l'enquête ne déclenche aucune transition de stage,
-        // et inversement la fin du stage n'auto-complète pas l'enquête.
-        boolean dateFinAtteinte =
-                stage != null
-                && stage.getDateFin() != null
-                && !today.isBefore(stage.getDateFin());           // today >= dateFin
+        // ── Calcul de la fenêtre d'ouverture propre à ce stage ──────────────
+        // REGLE METIER :
+        //   • L'enquête s'ouvre le jour de la fin du stage (today >= dateFin).
+        //   • Elle reste accessible pendant 7 jours au total (dateFin inclus).
+        //   • Après dateFin + 6 jours, elle est définitivement fermée.
+        //   • Le statut du stage et celui de l'enquête sont INDEPENDANTS.
 
-        boolean sectionOuverte = dateFinAtteinte && config.isActive() && hasUrl;
+        LocalDate dateFin = stage != null ? stage.getDateFin() : null;
+
+        // today >= dateFin  →  la fenêtre a démarré
+        boolean dateFinAtteinte =
+                dateFin != null && !today.isBefore(dateFin);
+
+        // today <= dateFin + 6  →  on est encore dans la fenêtre des 7 jours
+        boolean dansLaFenetre =
+                dateFinAtteinte && !today.isAfter(dateFin.plusDays(FENETRE_ENQUETE_JOURS));
+
+        // today > dateFin + 6  →  fenêtre expirée, enquête définitivement fermée
+        boolean fenetreExpiree =
+                dateFinAtteinte && today.isAfter(dateFin.plusDays(FENETRE_ENQUETE_JOURS));
+
+        // L'enquête est accessible uniquement dans la fenêtre ET si configurée/active
+        boolean sectionOuverte = dansLaFenetre && config.isActive() && hasUrl;
 
         // ── Statut et message affichés à l'utilisateur ──────────────────────
         String statut;
@@ -136,24 +167,34 @@ public class EnqueteSatisfactionServiceImpl implements EnqueteSatisfactionServic
             statut  = "En attente";
             message = "Stage introuvable.";
 
+        } else if (fenetreExpiree) {
+            // Fenêtre de 7 jours expirée → clôture définitive, indépendante des autres stages
+            statut  = "Fermée";
+            message = "La période de l'enquête de satisfaction est clôturée."
+                    + " L'enquête était disponible du " + dateFin.format(DATE_FR)
+                    + " au " + dateFin.plusDays(FENETRE_ENQUETE_JOURS).format(DATE_FR) + ".";
+
         } else if (!dateFinAtteinte) {
-            // Stage pas encore termine → enquête bloquée avec message exact du spec.
-            statut  = "En attente";
-            LocalDate dateFin = stage.getDateFin();
+            // Stage pas encore terminé → enquête bloquée
             String suffixe = dateFin != null
                     ? " (date de fin prévue : " + dateFin.format(DATE_FR) + ")."
                     : ".";
+            statut  = "En attente";
             message = "L'enquête ne peut être complétée qu'après la fin du stage" + suffixe;
 
         } else {
+            // Dans la fenêtre → enquête ouverte
+            LocalDate dateFermeture = dateFin.plusDays(FENETRE_ENQUETE_JOURS);
             statut  = "Ouverte";
-            message = "L'enquête est disponible suite à la fin de votre stage. Merci de compléter le formulaire.";
+            message = "L'enquête est disponible suite à la fin de votre stage."
+                    + " Elle sera accessible jusqu'au " + dateFermeture.format(DATE_FR)
+                    + ". Merci de compléter le formulaire.";
         }
 
-        // L'URL n'est exposée QUE si la section est ouverte
-        String urlVisible   = sectionOuverte ? config.getUrlFormulaire() : "";
-        String stageTitre   = stage != null && stage.getTitre() != null ? stage.getTitre() : "";
-        Long   rfId         = reunionFinale != null ? reunionFinale.getId() : null;
+        // L'URL n'est exposée QUE si la section est ouverte (dans la fenêtre)
+        String urlVisible = sectionOuverte ? config.getUrlFormulaire() : "";
+        String stageTitre = stage != null && stage.getTitre() != null ? stage.getTitre() : "";
+        Long   rfId       = reunionFinale != null ? reunionFinale.getId() : null;
 
         return new EnqueteSatisfactionDto(
                 rfId,
@@ -165,7 +206,7 @@ public class EnqueteSatisfactionServiceImpl implements EnqueteSatisfactionServic
                 urlVisible,
                 statut,
                 sectionOuverte,          // disponible
-                dateFinAtteinte,         // dateAtteinte (basé uniquement sur la fin de stage)
+                dateFinAtteinte,         // dateAtteinte (vrai dès que dateFin est atteinte)
                 message,
                 sectionOuverte,          // sectionEnqueteOuverte
                 config.isActive(),
@@ -174,21 +215,6 @@ public class EnqueteSatisfactionServiceImpl implements EnqueteSatisfactionServic
     }
 
     // ─── Helpers privés ─────────────────────────────────────────────────────
-
-    /** Retourne la date la plus proche parmi dateFin et dateReunion (null ignorées). */
-    private LocalDate dateLaPlusProche(LocalDate dateFin, LocalDate dateReunion) {
-        if (dateFin == null)      return dateReunion;
-        if (dateReunion == null)  return dateFin;
-        return dateFin.isBefore(dateReunion) ? dateFin : dateReunion;
-    }
-
-    /** Libellé correspondant à la date d'ouverture la plus proche. */
-    private String labelDateOuverture(LocalDate dateFin, LocalDate dateReunion) {
-        if (dateFin == null && dateReunion == null) return "";
-        if (dateFin == null)   return "réunion finale";
-        if (dateReunion == null) return "fin de stage";
-        return dateFin.isBefore(dateReunion) ? "fin de stage" : "réunion finale";
-    }
 
     private ConfigurationGlobaleEnquete getOrCreateGlobalConfig() {
         return configurationGlobaleEnqueteRepository.findById(1L).orElseGet(() -> {

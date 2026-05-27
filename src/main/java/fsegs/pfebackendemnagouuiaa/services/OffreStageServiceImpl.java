@@ -1032,19 +1032,58 @@ public class OffreStageServiceImpl implements OffreStageService {
         return !stageCree && offre.getStatut() == StatutOffre.VALIDEE;
     }
 
+    /**
+     * Vérifie qu'aucun stage existant du stagiaire ne bloque la nouvelle affectation.
+     *
+     * <p><b>Règle 1 — stage actif ou en cours (contrôle prioritaire) :</b><br>
+     * Si le stagiaire possède au moins un stage dont le statut est actif
+     * ({@code PAS_COMMENCE}, {@code A_VENIR} ou {@code EN_COURS}), l'affectation est
+     * bloquée indépendamment des dates.  Un stage qui n'est ni terminé, ni refusé,
+     * ni annulé est considéré comme « engageant » le stagiaire sur une période active.
+     *
+     * <p><b>Règle 2 — chevauchement de dates (garde secondaire) :</b><br>
+     * Si, malgré un statut {@code TERMINE}, les dates d'un stage passé chevauchent
+     * la période demandée (incohérence de données), l'affectation est également bloquée.
+     * Cette règle ne s'applique que lorsque l'offre dispose d'une {@code dateDebutPrevue}.
+     */
     private void existsStageActifByStagiaire(Stagiaire stagiaire, OffreStage offre) {
-        LocalDate requestedStart = offre.getDateDebutPrevue();
-        LocalDate requestedEnd = calculateOfferEndDate(offre);
 
-        if (requestedStart == null) {
-            return;
-        }
-
-        boolean conflict = stageRepository.findByStagiaireId(stagiaire.getId())
+        // Un seul appel en base — la liste est réutilisée pour les deux règles.
+        List<Stage> stagesNonRefusesNonAnnules = stageRepository.findByStagiaireId(stagiaire.getId())
                 .stream()
                 .filter(stage -> stage.getStatut() != null)
                 .filter(stage -> stage.getStatut() != StatutStage.REFUSE)
                 .filter(stage -> stage.getStatut() != StatutStage.ANNULE)
+                .toList();
+
+        // ── Règle 1 : stage actif ou en cours ───────────────────────────────
+        // Statuts bloquants : PAS_COMMENCE, A_VENIR, EN_COURS
+        // (tout statut qui n'est pas TERMINE parmi les non-refusés/non-annulés)
+        stagesNonRefusesNonAnnules.stream()
+                .filter(stage -> stage.getStatut() != StatutStage.TERMINE)
+                .findFirst()
+                .ifPresent(stageActif -> {
+                    log.warn(
+                            "Affectation refusee - le stagiaire {} possede deja un stage actif " +
+                            "(stageId={}, statut={})",
+                            stagiaire.getId(), stageActif.getId(), stageActif.getStatut()
+                    );
+                    throw new IllegalStateException(
+                            "Ce stagiaire ne peut pas être affecté à une nouvelle offre car " +
+                            "il possède déjà un stage sur une période active."
+                    );
+                });
+
+        // ── Règle 2 : chevauchement de dates (garde secondaire) ─────────────
+        // Couvre les cas de données incohérentes : statut TERMINE mais dateFin dans le futur.
+        LocalDate requestedStart = offre.getDateDebutPrevue();
+        LocalDate requestedEnd   = calculateOfferEndDate(offre);
+
+        if (requestedStart == null) {
+            return; // Pas de date de début sur l'offre → garde secondaire non applicable.
+        }
+
+        boolean conflict = stagesNonRefusesNonAnnules.stream()
                 .anyMatch(stage -> periodsOverlap(
                         requestedStart,
                         requestedEnd,
@@ -1053,7 +1092,10 @@ public class OffreStageServiceImpl implements OffreStageService {
                 ));
 
         if (conflict) {
-            log.warn("Affectation etudiant refusee - conflit de periode detecte pour stagiaire {}", stagiaire.getId());
+            log.warn(
+                    "Affectation etudiant refusee - chevauchement de dates detecte pour stagiaire {}",
+                    stagiaire.getId()
+            );
             throw new IllegalStateException("Cet etudiant est deja affecte a un stage sur cette periode.");
         }
     }

@@ -66,7 +66,7 @@ public class OffreStageController {
     }
 
     @DeleteMapping("/{id:\\d+}")
-    @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE', 'ADMINISTRATEUR')")
+    @PreAuthorize("hasAnyRole('ADMINISTRATEUR')")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         offreStageService.deleteOffre(id);
         return ResponseEntity.noContent().build();

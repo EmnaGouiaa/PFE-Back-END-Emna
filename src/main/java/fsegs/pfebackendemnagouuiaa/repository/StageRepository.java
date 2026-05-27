@@ -52,4 +52,41 @@ public interface StageRepository extends JpaRepository<Stage, Long> {
 
     /** Vérifie si un encadrant académique a déjà validé le sujet d'au moins un stage. */
     boolean existsBySujetValideParId(Long encadrantId);
+
+    /**
+     * Les deux utilisateurs interviennent sur le même stage (stagiaire, encadrants, tuteur entreprise).
+     */
+    @org.springframework.data.jpa.repository.Query("""
+            SELECT CASE WHEN COUNT(s) > 0 THEN true ELSE false END
+            FROM Stage s
+            WHERE (
+                (s.stagiaire IS NOT NULL AND s.stagiaire.id = :viewerId)
+                OR (s.encadrantAcademique IS NOT NULL AND s.encadrantAcademique.id = :viewerId)
+                OR (s.encadrantProfessionnel IS NOT NULL AND s.encadrantProfessionnel.id = :viewerId)
+                OR (s.tuteurEntreprise IS NOT NULL AND s.tuteurEntreprise.id = :viewerId)
+            )
+            AND (
+                (s.stagiaire IS NOT NULL AND s.stagiaire.id = :targetId)
+                OR (s.encadrantAcademique IS NOT NULL AND s.encadrantAcademique.id = :targetId)
+                OR (s.encadrantProfessionnel IS NOT NULL AND s.encadrantProfessionnel.id = :targetId)
+                OR (s.tuteurEntreprise IS NOT NULL AND s.tuteurEntreprise.id = :targetId)
+            )
+            """)
+    boolean areCoParticipantsOnSameStage(Long viewerId, Long targetId);
+
+    /**
+     * Utilisateur présent comme acteur du stage dans une entreprise donnée (ex. stagiaire, EP sous ce contrat).
+     */
+    @org.springframework.data.jpa.repository.Query("""
+            SELECT CASE WHEN COUNT(s) > 0 THEN true ELSE false END
+            FROM Stage s
+            WHERE s.entreprise.id = :entrepriseId
+            AND (
+                (s.stagiaire IS NOT NULL AND s.stagiaire.id = :userId)
+                OR (s.encadrantAcademique IS NOT NULL AND s.encadrantAcademique.id = :userId)
+                OR (s.encadrantProfessionnel IS NOT NULL AND s.encadrantProfessionnel.id = :userId)
+                OR (s.tuteurEntreprise IS NOT NULL AND s.tuteurEntreprise.id = :userId)
+            )
+            """)
+    boolean existsParticipantOnCompanyStage(Long entrepriseId, Long userId);
 }

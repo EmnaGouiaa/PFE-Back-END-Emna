@@ -37,7 +37,7 @@ public class DemandeCreationCompteEntrepriseServiceImpl implements DemandeCreati
     private final PasswordEncoder passwordEncoder;
     private final ContactUniquenessService contactUniquenessService;
     private final NotificationService notificationService;
-    private final AccountEmailService accountEmailService;
+    private final DemandeEntrepriseCommunicationAsyncService communicationAsyncService;
     private final JwtService jwtService;
 
     @Override
@@ -303,16 +303,13 @@ public class DemandeCreationCompteEntrepriseServiceImpl implements DemandeCreati
                 .build();
 
         responsableEntrepriseRepository.save(responsable);
-        try {
-            notificationService.notifierCreationCompteEntreprise(responsable.getEmail(), motDePasseTemporaire, entreprise.getNom());
-        } catch (Exception ex) {
-            // La notification ne doit jamais faire échouer la création du compte.
-            log.warn("Notification de creation de compte non envoyee pour {} : {}", responsable.getEmail(), ex.getMessage());
-        }
-        accountEmailService.sendAccountCreatedEmailAsync(
+        // Les communications (notification + email) sont non bloquantes :
+        // elles ne doivent pas retarder la reponse de l'API d'approbation.
+        communicationAsyncService.envoyerCreationCompteResponsableAsync(
                 responsable.getPrenom(),
                 responsable.getEmail(),
-                motDePasseTemporaire
+                motDePasseTemporaire,
+                entreprise.getNom()
         );
     }
 

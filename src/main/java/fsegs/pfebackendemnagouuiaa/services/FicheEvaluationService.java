@@ -4,6 +4,7 @@ import fsegs.pfebackendemnagouuiaa.dto.FicheEvaluationDto;
 import fsegs.pfebackendemnagouuiaa.dto.NoteAttribueeDto;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface FicheEvaluationService {
 
@@ -12,6 +13,8 @@ public interface FicheEvaluationService {
     FicheEvaluationDto getById(Long id);
 
     List<FicheEvaluationDto> getAll();
+
+    Optional<FicheEvaluationDto> findByStageIdIfPresent(Long stageId);
 
     FicheEvaluationDto getByStageId(Long stageId);
 

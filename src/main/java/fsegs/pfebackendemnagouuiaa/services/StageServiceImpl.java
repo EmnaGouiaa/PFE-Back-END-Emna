@@ -16,6 +16,7 @@ import fsegs.pfebackendemnagouuiaa.repository.StageRepository;
 import fsegs.pfebackendemnagouuiaa.repository.StagiaireRepository;
 import fsegs.pfebackendemnagouuiaa.repository.UtilisateurRepository;
 import fsegs.pfebackendemnagouuiaa.security.JwtService;
+import fsegs.pfebackendemnagouuiaa.exception.BusinessException;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -780,23 +781,51 @@ public class StageServiceImpl implements StageService {
 
     @Override
     public Stage validerSujetParEncadrantAcademique(Long stageId, Long encadrantId) {
+        // E2 — stage introuvable (404)
         Stage stage = stageRepository.findById(stageId)
-                .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
+                .orElseThrow(() -> new EntityNotFoundException("Aucun stage n'est associé à ce stagiaire."));
         StatutStage previousStatus = stage.getStatut();
 
+        // E1 — encadrant introuvable (404)
         EncadrantAcademique encadrant = encadrantAcademiqueRepository.findById(encadrantId)
-                .orElseThrow(() -> new EntityNotFoundException("EncadrantAcademique introuvable"));
+                .orElseThrow(() -> new EntityNotFoundException("Stagiaire introuvable."));
 
+        // E4 — l'encadrant connecte n'est pas affecte a ce stage (403)
         if (stage.getEncadrantAcademique() == null || !stage.getEncadrantAcademique().getId().equals(encadrantId)) {
-            throw new RuntimeException("Cet encadrant acadï¿½mique n'est pas affectï¿½ ï¿½ ce stage");
+            throw new AccessDeniedException("Accès non autorisé à ce stage.");
+        }
+
+        // E3 — aucun sujet renseigne (400)
+        String sujet = stage.getSujet();
+        if (sujet == null || sujet.trim().isEmpty()) {
+            throw new IllegalArgumentException("Aucun sujet de stage n'est renseigné.");
+        }
+
+        // E5 — sujet deja valide (400)
+        if (stage.getStatutSujet() == StatutValidation.VALIDEE) {
+            throw new IllegalArgumentException("Le sujet de stage est déjà validé.");
         }
 
         stage.setSujetValidePar(encadrant);
         stage.setStatutSujet(StatutValidation.VALIDEE);
         appliquerStatutMetier(stage);
 
-        Stage saved = enregistrerStageAvecDeclenchement(stage, previousStatus);
-        notifierValidationSujet(saved, true);
+        Stage saved;
+        try {
+            saved = enregistrerStageAvecDeclenchement(stage, previousStatus);
+        } catch (RuntimeException ex) {
+            // E6 — erreur technique
+            log.error("Echec technique lors de la validation du sujet. stageId={}", stageId, ex);
+            throw new RuntimeException("Une erreur technique est survenue lors de la mise à jour.", ex);
+        }
+
+        try {
+            notifierValidationSujet(saved, true);
+        } catch (RuntimeException ex) {
+            // E7 — l'echec de notification ne doit pas annuler la validation deja persistee.
+            log.warn("Validation effectuee mais echec d'envoi de notification. stageId={} : {}",
+                    stageId, ex.getMessage());
+        }
         return enrichStageSurveyStatus(saved);
     }
 
@@ -852,20 +881,22 @@ public class StageServiceImpl implements StageService {
                 .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
 
         authorizeLinkedStageAccess(stage);
+        rejectIfStageDateFinPassedForTrello(stage);
+
+        if (hasText(stage.getTrelloBoardId())) {
+            if (!hasText(stage.getTrelloBoardUrl())) {
+                stage.setTrelloBoardUrl(buildTrelloBoardUrlFromId(stage.getTrelloBoardId()));
+                stage = stageRepository.save(stage);
+            }
+            return buildTrelloBoardResponse(stage, false);
+        }
+
         ensureStageEnCoursForTrello(stage);
 
         if (!trelloService.isEnabled()) {
             throw new IllegalStateException(
                     "L'integration Trello est desactivee (trello.enabled=false dans application.properties). "
                     + "Liberez de l'espace dans votre workspace Trello puis remettez trello.enabled=true.");
-        }
-
-        if (hasText(stage.getTrelloBoardId())) {
-            if (!hasText(stage.getTrelloBoardUrl())) {
-                stage.setTrelloBoardUrl("https://trello.com/b/" + stage.getTrelloBoardId());
-                stage = stageRepository.save(stage);
-            }
-            return buildTrelloBoardResponse(stage, false);
         }
 
         try {
@@ -905,6 +936,8 @@ public class StageServiceImpl implements StageService {
     public Map<String, Object> getResumeTrelloStage(Long stageId) {
         Stage stage = stageRepository.findById(stageId)
                 .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
+
+        rejectIfStageDateFinPassedForTrello(stage);
 
         Map<String, Object> resume = new LinkedHashMap<>();
         resume.put("stageId", stage.getId());
@@ -1383,6 +1416,23 @@ public class StageServiceImpl implements StageService {
         if (stage == null || stage.getStatut() != StatutStage.EN_COURS) {
             throw new IllegalStateException("Trello n'est disponible que pour un stage EN_COURS.");
         }
+    }
+
+    /**
+     * Aligné avec la règle « stage terminé » : {@code dateFin} strictement avant aujourd'hui.
+     * Bloque tout accès aux fonctionnalités Trello (résumé, création de board, lien existant).
+     */
+    private void rejectIfStageDateFinPassedForTrello(Stage stage) {
+        if (stage != null && stage.getDateFin() != null && stage.getDateFin().isBefore(LocalDate.now())) {
+            throw new BusinessException("Le stage est terminé. Action impossible.");
+        }
+    }
+
+    private String buildTrelloBoardUrlFromId(String boardId) {
+        if (!hasText(boardId)) {
+            return "";
+        }
+        return "https://trello.com/b/" + boardId.trim();
     }
 
     private boolean hasText(String value) {

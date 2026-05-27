@@ -44,7 +44,9 @@ public class FicheEvaluationController {
     @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','STAGIAIRE','RESPONSABLE_STAGE','ADMINISTRATEUR')")
     @GetMapping("/stage/{stageId}")
     public ResponseEntity<FicheEvaluationDto> getByStageId(@PathVariable Long stageId) {
-        return ResponseEntity.ok(ficheEvaluationService.getByStageId(stageId));
+        return ficheEvaluationService.findByStageIdIfPresent(stageId)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.noContent().build());
     }
 
     @PreAuthorize("hasAnyRole('ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','ENCADRANT_ACADEMIQUE','STAGIAIRE','RESPONSABLE_STAGE','ADMINISTRATEUR')")
@@ -106,12 +108,17 @@ public class FicheEvaluationController {
     public ResponseEntity<byte[]> telechargerPdfParId(@PathVariable Long id) {
         try {
             FicheEvaluationDto fiche = ficheEvaluationService.getById(id);
+            if (!Boolean.TRUE.equals(fiche.getSignaturesCompletes())) {
+                throw new IllegalStateException("Le document n'est pas encore disponible. Il sera généré et consultable après la signature de tous les signataires requis.");
+            }
             byte[] pdf = ficheEvaluationPdfService.generer(fiche);
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION,
                             "attachment; filename=\"fiche-evaluation-" + id + ".pdf\"")
                     .contentType(MediaType.APPLICATION_PDF)
                     .body(pdf);
+        } catch (IllegalStateException e) {
+            throw e;
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
@@ -122,12 +129,17 @@ public class FicheEvaluationController {
     public ResponseEntity<byte[]> telechargerPdfParStage(@PathVariable Long stageId) {
         try {
             FicheEvaluationDto fiche = ficheEvaluationService.getByStageId(stageId);
+            if (!Boolean.TRUE.equals(fiche.getSignaturesCompletes())) {
+                throw new IllegalStateException("Le document n'est pas encore disponible. Il sera généré et consultable après la signature de tous les signataires requis.");
+            }
             byte[] pdf = ficheEvaluationPdfService.generer(fiche);
             return ResponseEntity.ok()
                     .header(HttpHeaders.CONTENT_DISPOSITION,
                             "attachment; filename=\"fiche-evaluation-stage-" + stageId + ".pdf\"")
                     .contentType(MediaType.APPLICATION_PDF)
                     .body(pdf);
+        } catch (IllegalStateException e) {
+            throw e;
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }

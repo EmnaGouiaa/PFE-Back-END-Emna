@@ -113,6 +113,10 @@ public class SupplementaryDemoDataInitializer implements CommandLineRunner {
         ResponsableEntreprise reBiat = responsableEntrepriseRepository
                 .findByEntrepriseId(biat.getId()).stream().findFirst().orElse(null);
 
+        // Dates futures relatives a aujourd'hui — garantit que les offres demarrent
+        // toujours dans le futur, quel que soit le moment d'execution du seed.
+        LocalDate base = LocalDate.now().plusMonths(2);
+
         // ── Telnet Tunisie ────────────────────────────────────────────────────
         if (offreStageRepository.findByEntrepriseId(telnet.getId()).isEmpty()) {
             sauvegarderOffre(
@@ -122,7 +126,7 @@ public class SupplementaryDemoDataInitializer implements CommandLineRunner {
                     + "environnements de recette et de production.",
                     3,
                     "Etudiant Bac+3 Informatique ou Génie Logiciel, maîtrise de Java et Angular requise.",
-                    LocalDate.of(2025, 9, 1), StatutOffre.PUBLIEE, telnet, reTelnet);
+                    base, StatutOffre.EN_ATTENTE, telnet, reTelnet);
 
             sauvegarderOffre(
                     "Ingénieur DevOps / CI-CD",
@@ -130,9 +134,9 @@ public class SupplementaryDemoDataInitializer implements CommandLineRunner {
                     + "environnement cloud hybride. Automatisation des déploiements et monitoring des services.",
                     4,
                     "Profil DevOps, maîtrise de Linux, Docker et Git. Connaissance d'au moins un outil CI/CD.",
-                    LocalDate.of(2025, 10, 1), StatutOffre.PUBLIEE, telnet, reTelnet);
+                    base.plusDays(15), StatutOffre.EN_ATTENTE, telnet, reTelnet);
 
-            log.info("[SUPP-INIT] 2 offres de stage créées pour Telnet Tunisie.");
+            log.info("[SUPP-INIT] 2 offres de stage créées pour Telnet Tunisie (EN_ATTENTE).");
         }
 
         // ── Sofrecom Tunisie ──────────────────────────────────────────────────
@@ -143,7 +147,7 @@ public class SupplementaryDemoDataInitializer implements CommandLineRunner {
                     + "de correctifs. Rédaction de rapports de sécurité à destination des équipes techniques.",
                     3,
                     "Etudiant Réseaux et Télécommunications, connaissance des protocoles TCP/IP et outils de sécurité.",
-                    LocalDate.of(2025, 9, 15), StatutOffre.PUBLIEE, sofrecom, reSofrecom);
+                    base.plusDays(5), StatutOffre.EN_ATTENTE, sofrecom, reSofrecom);
 
             sauvegarderOffre(
                     "Développeur Infrastructure Cloud",
@@ -151,9 +155,9 @@ public class SupplementaryDemoDataInitializer implements CommandLineRunner {
                     + "Automatisation des environnements via Terraform et Ansible.",
                     4,
                     "Etudiant Informatique, expérience Linux et au moins une plateforme cloud (AWS, Azure, GCP).",
-                    LocalDate.of(2025, 11, 1), StatutOffre.PUBLIEE, sofrecom, reSofrecom);
+                    base.plusDays(30), StatutOffre.EN_ATTENTE, sofrecom, reSofrecom);
 
-            log.info("[SUPP-INIT] 2 offres de stage créées pour Sofrecom Tunisie.");
+            log.info("[SUPP-INIT] 2 offres de stage créées pour Sofrecom Tunisie (EN_ATTENTE).");
         }
 
         // ── BIAT Digital ──────────────────────────────────────────────────────
@@ -164,7 +168,7 @@ public class SupplementaryDemoDataInitializer implements CommandLineRunner {
                     + "Intégration OAuth2, journalisation des accès sensibles et tests de charge.",
                     4,
                     "Etudiant Génie Logiciel ou Informatique, maîtrise de Spring Boot et notions de sécurité applicative.",
-                    LocalDate.of(2025, 11, 1), StatutOffre.PUBLIEE, biat, reBiat);
+                    base.plusDays(20), StatutOffre.EN_ATTENTE, biat, reBiat);
 
             sauvegarderOffre(
                     "Data Analyst / Business Intelligence",
@@ -172,13 +176,20 @@ public class SupplementaryDemoDataInitializer implements CommandLineRunner {
                     + "Collecte et transformation de données depuis des sources hétérogènes (SQL, API, Excel).",
                     3,
                     "Etudiant Informatique ou Statistiques, connaissance de Power BI ou Tableau et maîtrise de SQL.",
-                    LocalDate.of(2025, 10, 15), StatutOffre.PUBLIEE, biat, reBiat);
+                    base.plusDays(40), StatutOffre.EN_ATTENTE, biat, reBiat);
 
-            log.info("[SUPP-INIT] 2 offres de stage créées pour BIAT Digital.");
+            log.info("[SUPP-INIT] 2 offres de stage créées pour BIAT Digital (EN_ATTENTE).");
         }
     }
 
-    /** Construit et persiste une {@link OffreStage}. */
+    /**
+     * Construit et persiste une {@link OffreStage} dans son ETAT INITIAL — EN_ATTENTE.
+     *
+     * <p>Aucune date de publication ni de validation : l'offre est soumise par
+     * le responsable entreprise et doit etre approuvee par le responsable des stages
+     * universitaires. Le workflow d'approbation se deroulera ensuite normalement via
+     * l'IHM (validerOffre / refuserOffre).</p>
+     */
     private void sauvegarderOffre(String titre, String description, int dureeMois, String profil,
                                    LocalDate dateDebut, StatutOffre statut,
                                    Entreprise entreprise, ResponsableEntreprise publiePar) {
@@ -188,10 +199,10 @@ public class SupplementaryDemoDataInitializer implements CommandLineRunner {
         offre.setDuree(dureeMois);
         offre.setProfilRecherche(profil);
         offre.setDateDebutPrevue(dateDebut);
-        offre.setDatePublication(LocalDate.now());
+        offre.setDatePublication(null);     // pas encore publiee (statut EN_ATTENTE)
         offre.setStatut(statut);
-        offre.setEntreprise(entreprise);    // NOT NULL — toujours renseigné
-        offre.setPublieePar(publiePar);     // nullable — peut être null (BIAT)
+        offre.setEntreprise(entreprise);    // NOT NULL — toujours renseigne
+        offre.setPublieePar(publiePar);     // nullable
         offreStageRepository.save(offre);
     }
 
@@ -270,50 +281,29 @@ public class SupplementaryDemoDataInitializer implements CommandLineRunner {
     //   Ordre intra-stage : CahierStage → ReunionFinale → FicheEvaluation → ConventionStage
     // ═════════════════════════════════════════════════════════════════════════
 
+    /**
+     * Pre-creation des documents de stage DESACTIVEE.
+     *
+     * <p>Conformement aux regles metier, l'etat initial du systeme ne doit contenir
+     * NI CahierStage, NI ReunionFinale, NI FicheEvaluation, NI ConventionStage
+     * pre-genere :</p>
+     *
+     * <ul>
+     *   <li>La <b>ConventionStage</b> est generee automatiquement par le service Stage
+     *       lors de la validation du sujet par l'encadrant academique
+     *       ({@code StageServiceImpl.genererConventionSiAbsente}).</li>
+     *   <li>Le <b>CahierStage</b> et la <b>ReunionFinale</b> sont crees au declenchement
+     *       du stage (transition EN_COURS).</li>
+     *   <li>La <b>FicheEvaluation</b> apparait uniquement en fin de stage, jamais en seed.</li>
+     * </ul>
+     *
+     * <p>Garder ces objets en seed donnerait l'impression d'un stage deja en cours et
+     * empecherait de tester le workflow de bout en bout. Methode conservee comme
+     * placeholder documente — peut etre supprimee ulterieurement.</p>
+     */
     private void initialiserDocumentsStages() {
-        List<Stage> stages = stageRepository.findAll();
-        int nbCahiers = 0, nbReunions = 0, nbFiches = 0, nbConventions = 0;
-
-        for (Stage stage : stages) {
-            StatutStage statut = stage.getStatut();
-
-            // Les stages annulés et refusés ne nécessitent pas de documents
-            if (statut == null || statut == StatutStage.ANNULE || statut == StatutStage.REFUSE) {
-                continue;
-            }
-
-            try {
-                // 3. CahierStage — pour tout stage actif
-                if (creerCahierStageIfAbsent(stage)) nbCahiers++;
-
-                // 4. ReunionFinale — pour tout stage actif (requiert dateFin)
-                ReunionFinale rf = creerReunionFinaleIfAbsent(stage);
-                if (rf != null) nbReunions++;
-
-                // 5. FicheEvaluation — uniquement pour les stages TERMINÉS
-                if (statut == StatutStage.TERMINE) {
-                    // Récupérer la réunion finale (celle qu'on vient de créer ou une existante)
-                    ReunionFinale rfPourFiche = (rf != null)
-                            ? rf
-                            : reunionFinaleRepository.findFirstByStageIdOrderByIdAsc(stage.getId()).orElse(null);
-                    if (rfPourFiche != null && creerFicheEvaluationIfAbsent(stage, rfPourFiche)) {
-                        nbFiches++;
-                    }
-                }
-
-                // 6. ConventionStage — pour les stages EN_COURS et TERMINÉS
-                if (statut == StatutStage.EN_COURS || statut == StatutStage.TERMINE) {
-                    if (creerConventionStageIfAbsent(stage)) nbConventions++;
-                }
-
-            } catch (Exception ex) {
-                log.error("[SUPP-INIT] Erreur pour le stage id={} : {}",
-                        stage.getId(), ex.getMessage(), ex);
-            }
-        }
-
-        log.info("[SUPP-INIT] Documents créés — CahierStage={}, ReunionFinale={}, FicheEvaluation={}, ConventionStage={}.",
-                nbCahiers, nbReunions, nbFiches, nbConventions);
+        log.info("[SUPP-INIT] Pre-creation des documents stages volontairement DESACTIVEE "
+                + "(etat initial frais — chaque document est cree par le workflow reel).");
     }
 
     /**

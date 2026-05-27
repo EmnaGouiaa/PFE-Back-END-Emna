@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import java.util.Random;
 
 @Service
@@ -35,7 +36,7 @@ public class ConventionStageServiceImpl implements ConventionStageService {
 
         if (dto.getStageId() != null) {
             Stage stage = stageRepository.findById(dto.getStageId())
-                    .orElseThrow(() -> new RuntimeException("Stage introuvable avec l'id : " + dto.getStageId()));
+                    .orElseThrow(() -> new EntityNotFoundException("Stage introuvable avec l'id : " + dto.getStageId()));
             entity.setStage(stage);
         }
 
@@ -53,7 +54,7 @@ public class ConventionStageServiceImpl implements ConventionStageService {
         }
 
         Stage stage = stageRepository.findById(stageId)
-                .orElseThrow(() -> new RuntimeException("Stage introuvable avec l'id : " + stageId));
+                .orElseThrow(() -> new EntityNotFoundException("Stage introuvable avec l'id : " + stageId));
 
         ConventionStage entity = conventionStageMapper.toEntity(dto);
         entity.setStage(stage);
@@ -72,9 +73,14 @@ public class ConventionStageServiceImpl implements ConventionStageService {
     }
 
     @Override
+    public Optional<ConventionStageDto> findConventionByStageIfPresent(Long stageId) {
+        return conventionStageRepository.findByStageId(stageId).map(conventionStageMapper::toDto);
+    }
+
+    @Override
     public ConventionStageDto getByStageId(Long stageId) {
-        return conventionStageMapper.toDto(conventionStageRepository.findByStageId(stageId)
-                .orElseThrow(() -> new RuntimeException("Convention introuvable pour le stage id : " + stageId)));
+        return findConventionByStageIfPresent(stageId).orElseThrow(() ->
+                new EntityNotFoundException("Convention introuvable pour le stage id : " + stageId));
     }
 
     @Override
@@ -135,9 +141,9 @@ public class ConventionStageServiceImpl implements ConventionStageService {
 
         RoleSignature role = roleSignature(typeSignature);
 
-        // E5 — Document déjà signé par cet utilisateur (400)
+        // Idempotence : double clic / rappel API sans erreur
         if (convention.estSignePar(role)) {
-            throw new IllegalArgumentException("Vous avez déjà signé ce document.");
+            return conventionStageMapper.toDto(convention);
         }
 
         // E4 — Pas de signature dans le profil (400)

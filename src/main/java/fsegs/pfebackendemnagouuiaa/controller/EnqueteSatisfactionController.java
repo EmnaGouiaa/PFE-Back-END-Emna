@@ -80,13 +80,19 @@ public class EnqueteSatisfactionController {
      * Endpoint dédié acteurs : évite le 403 / 401 que provoquait l'appel à GET /api/enquete
      * (réservé RESPONSABLE_STAGE) depuis les tableaux de bord EP, EA, STAGIAIRE, RE.
      *
-     * L'URL du formulaire est incluse dans la réponse ; c'est le client (Angular)
-     * qui décide de l'afficher uniquement si {@code active = true}.
+     * <p><strong>Sécurité :</strong> l'URL du formulaire est <em>masquée</em> dans cette réponse.
+     * Les acteurs doivent utiliser {@code GET /api/enquete/stage/{stageId}} pour obtenir l'URL
+     * après vérification de la fenêtre d'accès (dateFin … dateFin + 6 jours).
+     * Cela empêche tout contournement de la règle des 7 jours via cet endpoint.
      */
     @PreAuthorize("isAuthenticated()")
     @GetMapping("/acteur")
     public ResponseEntity<EnqueteSatisfactionDto> getConfigurationActeur() {
-        return ResponseEntity.ok(enqueteSatisfactionService.getConfiguration());
+        EnqueteSatisfactionDto dto = enqueteSatisfactionService.getConfiguration();
+        // Masquer l'URL : les acteurs doivent utiliser /stage/{id} qui applique
+        // la règle de fenêtre (7 jours après dateFin).  Prévient tout contournement.
+        dto.setUrlFormulaire("");
+        return ResponseEntity.ok(dto);
     }
 
     // ─── Acteurs (stagiaire, encadrants, représentant entreprise) ────────────

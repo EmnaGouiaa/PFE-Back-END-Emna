@@ -1,6 +1,7 @@
 package fsegs.pfebackendemnagouuiaa.services;
 
 import fsegs.pfebackendemnagouuiaa.dto.AbsenceDto;
+import fsegs.pfebackendemnagouuiaa.exception.BusinessException;
 import fsegs.pfebackendemnagouuiaa.entities.Absence;
 import fsegs.pfebackendemnagouuiaa.entities.ResponsableEntreprise;
 import fsegs.pfebackendemnagouuiaa.entities.Role;
@@ -21,7 +22,6 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 public class AbsenceServiceImpl implements AbsenceService {
-    private static final int DUREE_PERIODE_REVISION_JOURS = 7;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd/MM/yyyy");
 
     private final AbsenceRepository absenceRepository;
@@ -138,19 +138,14 @@ public class AbsenceServiceImpl implements AbsenceService {
         LocalDate dateDebut = stage.getDateDebut();
         LocalDate dateFin = stage.getDateFin();
 
+        /** Règle métier : une fois la date de fin dépassée (jour calendaire strict), aucune gestion d'absence. */
+        if (dateFin != null && dateFin.isBefore(today)) {
+            throw new BusinessException("Impossible de déclarer une absence : le stage est terminé.");
+        }
+
         if (dateDebut != null && today.isBefore(dateDebut)) {
             throw new RuntimeException("Les absences ne peuvent pas etre enregistrees avant le debut du stage prevu le "
                     + formatDate(dateDebut) + ".");
-        }
-
-        if (dateFin != null) {
-            LocalDate finPeriodeRevision = dateFin.plusDays(DUREE_PERIODE_REVISION_JOURS);
-            if (today.isAfter(dateFin) && today.isAfter(finPeriodeRevision)) {
-                throw new RuntimeException("La periode d'enregistrement des absences est expiree depuis le "
-                        + formatDate(finPeriodeRevision)
-                        + ". Les absences ne sont autorisees que pendant le stage ou durant la periode de revision de "
-                        + DUREE_PERIODE_REVISION_JOURS + " jours apres la fin du stage.");
-            }
         }
     }
 

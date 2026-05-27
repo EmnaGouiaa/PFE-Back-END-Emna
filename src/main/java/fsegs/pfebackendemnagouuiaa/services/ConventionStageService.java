@@ -3,6 +3,7 @@ package fsegs.pfebackendemnagouuiaa.services;
 import fsegs.pfebackendemnagouuiaa.dto.ConventionStageDto;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface ConventionStageService {
 
@@ -11,6 +12,8 @@ public interface ConventionStageService {
     ConventionStageDto createByStage(Long stageId, ConventionStageDto dto);
 
     ConventionStageDto getById(Long id);
+
+    Optional<ConventionStageDto> findConventionByStageIfPresent(Long stageId);
 
     ConventionStageDto getByStageId(Long stageId);
 

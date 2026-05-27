@@ -30,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -103,11 +104,19 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
 
     @Override
     @Transactional(readOnly = true)
+    public Optional<FicheEvaluationDto> findByStageIdIfPresent(Long stageId) {
+        return ficheEvaluationRepository.findFirstByStageId(stageId)
+                .map(fiche -> {
+                    ensureCanViewFiche(fiche, getAuthenticatedUtilisateur());
+                    return ficheEvaluationMapper.toDto(fiche);
+                });
+    }
+
+    @Override
+    @Transactional(readOnly = true)
     public FicheEvaluationDto getByStageId(Long stageId) {
-        FicheEvaluation fiche = ficheEvaluationRepository.findFirstByStageId(stageId)
-                .orElseThrow(() -> new EntityNotFoundException(FICHE_INTROUVABLE));
-        ensureCanViewFiche(fiche, getAuthenticatedUtilisateur());
-        return ficheEvaluationMapper.toDto(fiche);
+        return findByStageIdIfPresent(stageId).orElseThrow(() ->
+                new EntityNotFoundException(FICHE_INTROUVABLE));
     }
 
     @Override
@@ -154,9 +163,9 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
             if (!fiche.toutesLesNotesSontRenseignees()) {
                 throw new IllegalStateException("Toutes les notes d'evaluation doivent etre renseignees avant la signature.");
             }
-            // E5 — déjà signé par cet utilisateur
+            // Idempotence : déjà signé → retour sans erreur
             if (fiche.estSignePar(RoleSignature.ENCADRANT_PROFESSIONNEL)) {
-                throw new IllegalArgumentException("Vous avez déjà signé ce document.");
+                return ficheEvaluationMapper.toDto(fiche);
             }
             // E4 — signature absente du profil
             requireSavedSignature(utilisateur);
@@ -172,11 +181,9 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
             if (!fiche.partieResponsableEntrepriseComplete()) {
                 throw new IllegalStateException("La partie du representant de l'entreprise est incomplete.");
             }
-            // E5 — déjà signé par cet utilisateur
             if (fiche.estSignePar(RoleSignature.RESPONSABLE_ENTREPRISE)) {
-                throw new IllegalArgumentException("Vous avez déjà signé ce document.");
+                return ficheEvaluationMapper.toDto(fiche);
             }
-            // E4 — signature absente du profil
             requireSavedSignature(utilisateur);
 
             Signature sig = new Signature();

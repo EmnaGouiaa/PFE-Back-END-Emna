@@ -42,7 +42,9 @@ public class ConventionStageController {
 
     @GetMapping("/stage/{stageId}")
     public ResponseEntity<ConventionStageDto> getByStageId(@PathVariable Long stageId) {
-        return ResponseEntity.ok(conventionStageService.getByStageId(stageId));
+        return conventionStageService.findConventionByStageIfPresent(stageId)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.noContent().build());
     }
 
     @GetMapping

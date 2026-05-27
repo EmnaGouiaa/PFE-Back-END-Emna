@@ -1,5 +1,6 @@
 package fsegs.pfebackendemnagouuiaa.services;
 
+import fsegs.pfebackendemnagouuiaa.dto.CollaborateurSignatureDto;
 import fsegs.pfebackendemnagouuiaa.dto.ChangeRoleRequest;
 import fsegs.pfebackendemnagouuiaa.dto.CreateUserRequest;
 import fsegs.pfebackendemnagouuiaa.dto.UpdateEmailRequest;
@@ -16,6 +17,9 @@ public interface UtilisateurService {
     UserResponse updateUser(Long id, UpdateUserRequest request);
     UserResponse getCurrentProfile();
     UserResponse getProfile(Long id);
+
+    /** URL de signature pour un collaborateur de stage (visibilité restreinte au même stage / entreprise / admin). */
+    CollaborateurSignatureDto getCollaborateurSignature(Long userId);
     UserResponse updateCurrentProfile(UpdateProfileRequest request);
     UserResponse updateProfile(Long id, UpdateProfileRequest request);
     UpdateEmailResponse updateCurrentEmail(UpdateEmailRequest request);

@@ -181,7 +181,7 @@ public class StageController {
         return ResponseEntity.ok(stageService.refuserSujetParEncadrantAcademiqueAuthentifie(stageId));
     }
     @GetMapping("/{stageId:\\d+}/resume-trello")
-    @PreAuthorize("hasAnyRole('STAGIAIRE','ENCADRANT_ACADEMIQUE','ENCADRANT_PROFESSIONNEL')")
+    @PreAuthorize("hasAnyRole('STAGIAIRE','ENCADRANT_ACADEMIQUE','ENCADRANT_PROFESSIONNEL','RESPONSABLE_ENTREPRISE','RESPONSABLE_STAGE','ADMINISTRATEUR')")
     public ResponseEntity<Map<String, Object>> getResumeTrelloStage(@PathVariable Long stageId) {
         return ResponseEntity.ok(stageService.getResumeTrelloStage(stageId));
     }
