@@ -6,6 +6,20 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 
+/**
+ * Demande de stage proposée par un stagiaire pour une entreprise non encore référencée
+ * (création de compte entreprise + convention associée après validation).
+ *
+ * <h3>Mapping JPA</h3>
+ * Table {@code demandes_stage}. Données entreprise et responsable dénormalisées sur la demande.
+ * Double circuit de validation : {@link #statut} ({@link StatutDemande}) et
+ * {@link #statutResponsableStages} ({@link StatutValidation}).
+ * Lien 1-1 optionnel vers le {@link Stage} créé après acceptation.
+ *
+ * <h3>Consommation applicative</h3>
+ * {@code DemandeCreationCompteEntrepriseServiceImpl} ;
+ * contrôleur {@code DemandeCreationCompteEntrepriseController}.
+ */
 @Entity
 @Table(name = "demandes_stage")
 @Data
@@ -61,6 +75,7 @@ public class DemandeCreationCompteEntreprise {
     @JsonIgnore
     private Stage stage;
 
+    /** Horodatage de création, date du jour et statuts initiaux {@code EN_ATTENTE}. */
     @PrePersist
     public void prePersist() {
         this.creeLe = LocalDateTime.now();
@@ -75,6 +90,7 @@ public class DemandeCreationCompteEntreprise {
         }
     }
 
+    /** Met à jour {@link #misAJourLe} à chaque modification. */
     @PreUpdate
     public void preUpdate() {
         this.misAJourLe = LocalDateTime.now();

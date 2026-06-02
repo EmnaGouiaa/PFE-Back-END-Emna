@@ -11,6 +11,31 @@ import java.time.LocalDate;
 import java.util.HashSet;
 import java.util.Set;
 
+/**
+ * Offre de stage publiée par une entreprise, soumise à validation universitaire avant affectation.
+ *
+ * <h3>Mapping JPA</h3>
+ * Table {@code offre_stage}. Associations {@code @ManyToOne} vers {@link Entreprise},
+ * {@link ResponsableEntreprise} (publication), {@link ResponsableServiceStages} (validation)
+ * et {@link Stagiaire} (affectation). Relation inverse {@code @OneToMany} vers les {@link Stage}
+ * créés à partir de cette offre.
+ *
+ * <h3>Champs clés</h3>
+ * <ul>
+ *   <li>{@link #statut} — workflow {@link StatutOffre} (attente, publiée, validée, affectée, etc.).</li>
+ *   <li>{@link #motifRefus} — justification en cas de refus par le service des stages.</li>
+ *   <li>{@link #encadrantPro} — encadrant professionnel désigné sur l'offre.</li>
+ * </ul>
+ *
+ * <h3>Consommation applicative</h3>
+ * <ul>
+ *   <li>Service : {@code OffreStageServiceImpl}.</li>
+ *   <li>Contrôleur : {@code OffreStageController}.</li>
+ * </ul>
+ *
+ * @see StatutOffre
+ * @see Stage
+ */
 @Entity
 @Data
 @NoArgsConstructor

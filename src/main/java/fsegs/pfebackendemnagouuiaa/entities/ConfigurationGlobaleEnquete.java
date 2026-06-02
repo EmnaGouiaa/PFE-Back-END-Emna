@@ -15,7 +15,10 @@ import java.time.LocalDateTime;
 /**
  * Configuration globale de l'enquête de satisfaction.
  * Il existe une seule ligne dans cette table (id = 1).
- * Le RESPONSABLE_STAGE gère cette configuration.
+ * Le {@link Role#RESPONSABLE_STAGE} gère cette configuration.
+ *
+ * <h3>Consommation applicative</h3>
+ * {@code EnqueteSatisfactionServiceImpl} ; contrôleur {@code EnqueteSatisfactionController}.
  */
 @Entity
 @Table(name = "configuration_globale_enquete")
@@ -44,6 +47,10 @@ public class ConfigurationGlobaleEnquete {
     @Column(nullable = false)
     private LocalDateTime dateModification;
 
+    /**
+     * Rafraîchit {@link #dateModification}, applique les libellés par défaut et nettoie
+     * {@link #urlFormulaire} (valeurs vides ou placeholder {@code "string"} rejetées).
+     */
     @PrePersist
     @PreUpdate
     public void prePersist() {

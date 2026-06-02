@@ -1,6 +1,7 @@
 package fsegs.pfebackendemnagouuiaa.services;
 
 import fsegs.pfebackendemnagouuiaa.dto.ReunionDto;
+import fsegs.pfebackendemnagouuiaa.dto.ReunionEligibleParticipantDto;
 
 import java.util.List;
 
@@ -13,6 +14,8 @@ public interface ReunionService {
     List<ReunionDto> getAll();
 
     List<ReunionDto> getByStageId(Long stageId);
+
+    List<ReunionEligibleParticipantDto> getEligibleParticipantsForStage(Long stageId);
 
     List<ReunionDto> getPourStagiaireAuthentifie();
 

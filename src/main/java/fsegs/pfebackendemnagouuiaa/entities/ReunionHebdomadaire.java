@@ -6,6 +6,12 @@ import lombok.Data;
 import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 
+/**
+ * Réunion de suivi périodique ({@code type_reunion = HEBDOMADAIRE}), rattachée au {@link CahierStage}.
+ *
+ * @see ReunionServiceImpl
+ * @see ReunionHebdomadaireController
+ */
 @Entity
 @DiscriminatorValue("HEBDOMADAIRE")
 @Data

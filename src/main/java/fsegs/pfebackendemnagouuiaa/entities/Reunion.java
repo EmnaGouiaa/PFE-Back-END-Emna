@@ -12,6 +12,21 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * Réunion liée à un stage (suivi hebdomadaire ou soutenance finale).
+ *
+ * <h3>Mapping JPA</h3>
+ * Héritage {@link InheritanceType#SINGLE_TABLE} avec discriminant {@code type_reunion}.
+ * Sous-types : {@link ReunionHebdomadaire} ({@code HEBDOMADAIRE}), {@link ReunionFinale} ({@code FINALE}).
+ * Participants en {@code @ManyToMany} via {@code reunion_participants}.
+ *
+ * <h3>Consommation applicative</h3>
+ * <ul>
+ *   <li>Services : {@code ReunionServiceImpl}, {@code ReunionFinaleServiceImpl}.</li>
+ *   <li>Contrôleurs : {@code ReunionController}, {@code ReunionHebdomadaireController},
+ *       {@code ReunionFinaleController}.</li>
+ * </ul>
+ */
 @Entity
 @Inheritance(strategy = InheritanceType.SINGLE_TABLE)
 @DiscriminatorColumn(name = "type_reunion")
@@ -34,6 +49,14 @@ public class Reunion {
     private LocalTime heure;
 
     private String observation;
+
+    /** Observation de l'encadrant académique créateur (réunions hebdomadaires qu'il a planifiées). */
+    @Column(length = 5000)
+    private String observationEncadrantAcademique;
+
+    /** Observation de l'encadrant professionnel créateur (réunions hebdomadaires qu'il a planifiées). */
+    @Column(length = 5000)
+    private String observationEncadrantProfessionnel;
 
     @Column(length = 5000)
     private String compteRendu;

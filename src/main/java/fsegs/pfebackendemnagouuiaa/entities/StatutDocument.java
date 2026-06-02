@@ -12,6 +12,8 @@ package fsegs.pfebackendemnagouuiaa.entities;
  *
  * La transition de {@code SIGNATURES_COMPLETES} à {@code DISPONIBLE_IMPRESSION} est automatique :
  * aucune validation manuelle par le responsable des stages n'est requise.
+ *
+ * <p>Calculé par {@code StageDocumentServiceImpl} pour convention, cahier et fiche.</p>
  */
 public enum StatutDocument {
 

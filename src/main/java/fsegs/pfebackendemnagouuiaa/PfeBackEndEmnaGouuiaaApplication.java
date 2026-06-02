@@ -20,12 +20,37 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Supplier;
 
+/**
+ * Point d'entrée Spring Boot de l'API de gestion des stages universitaires (PFE).
+ * <p>
+ * <strong>Rôle :</strong> démarre le contexte applicatif, active la planification
+ * ({@code @EnableScheduling}) et l'exécution asynchrone ({@code @EnableAsync})
+ * pour les tâches différées (emails, notifications).
+ * </p>
+ * <p>
+ * <strong>Responsabilités additionnelles :</strong> en environnement de développement,
+ * le bean {@code CommandLineRunner init} injecte des données de démonstration
+ * (entreprise, filière, utilisateurs par rôle, stage complet avec convention,
+ * cahier, réunion finale et fiche d'évaluation signée) si elles n'existent pas déjà.
+ * </p>
+ * <p>
+ * <strong>Relations :</strong> s'appuie sur les repositories JPA du package
+ * {@code repository} et sur {@link org.springframework.security.crypto.password.PasswordEncoder}
+ * pour les mots de passe de seed ; les données créées alimentent les écrans front
+ * sans configuration manuelle.
+ * </p>
+ */
 @SpringBootApplication
 @EnableScheduling
 @EnableAsync
 @RequiredArgsConstructor
 public class PfeBackEndEmnaGouuiaaApplication {
 
+	/**
+	 * Lance l'application Spring Boot.
+	 *
+	 * @param args arguments de ligne de commande (profils, port, etc.)
+	 */
 	public static void main(String[] args) {
 		SpringApplication.run(PfeBackEndEmnaGouuiaaApplication.class, args);
 	}
@@ -39,7 +64,6 @@ public class PfeBackEndEmnaGouuiaaApplication {
 			StageRepository stageRepository,
 			ConventionStageRepository conventionStageRepository,
 			CahierStageRepository cahierStageRepository,
-			ReunionFinaleRepository reunionFinaleRepository,
 			FicheEvaluationRepository ficheEvaluationRepository,
 			CritereEvaluationRepository critereEvaluationRepository,
 			NoteAttribueeRepository noteAttribueeRepository
@@ -47,8 +71,27 @@ public class PfeBackEndEmnaGouuiaaApplication {
 		return args -> {
 
 			// =================================================================
+			// REGLES METIER STRICTES — NE JAMAIS VIOLER
+			// 1. Toute entreprise DOIT avoir au moins un ResponsableEntreprise
+			// 2. Tout EncadrantProfessionnel et ResponsableEntreprise DOIT etre lie a une Entreprise
+			// 3. Tout stage DOIT avoir : stagiaire + encadrantAcademique + encadrantProfessionnel + tuteurEntreprise
+			// 4. FicheEvaluation INTERDITE pour un stage EN_COURS
+			// 5. ReunionFinale INTERDITE pour un stage EN_COURS
+			// =================================================================
+			// EXEMPLE REEL DE VIOLATION : BIAT Digital (id=3) a ete creee en base
+			// sans ResponsableEntreprise ni EncadrantProfessionnel, ce qui a genere
+			// des stages sans encadrant professionnel. Cette entreprise a ete
+			// supprimee manuellement. Ne jamais reproduire ce cas.
+			// =================================================================
+
+			// =================================================================
 			// ENTREPRISE
 			// =================================================================
+			// ATTENTION : toute entreprise creee ici DOIT etre suivie immediatement
+			// de la creation de son ResponsableEntreprise et de son EncadrantProfessionnel.
+			// REGLE METIER : toute entreprise DOIT avoir au moins un
+			// ResponsableEntreprise lie. Ne jamais creer une entreprise
+			// sans creer immediatement son representant.
 			Entreprise entreprise;
 			Optional<Entreprise> entrepriseOpt = entrepriseRepository.findByEmailIgnoreCase("contact@vermeg.com");
 			if (entrepriseOpt.isPresent()) {
@@ -201,6 +244,10 @@ public class PfeBackEndEmnaGouuiaaApplication {
 						.entreprise(entrepriseFinale)
 						.build()
 			);
+			if (encadrantProfessionnel == null) {
+				System.out.println("[Seed] ERREUR : EncadrantProfessionnel null - impossible de creer un stage sans lui. Arret.");
+				return;
+			}
 
 			// =================================================================
 			// RESPONSABLE ENTREPRISE
@@ -226,17 +273,29 @@ public class PfeBackEndEmnaGouuiaaApplication {
 						.entreprise(entrepriseFinale)
 						.build()
 			);
+			if (responsableEntreprise == null) {
+				System.out.println("[Seed] ERREUR : entreprise creee sans ResponsableEntreprise - seed invalide. Arret.");
+				return;
+			}
 
 			// =================================================================
 			// STAGE DE TEST — EN_COURS, sujet valide, tous encadrants affectes
 			// =================================================================
+			// REGLE METIER : un stage NE PEUT PAS etre cree sans encadrantProfessionnel, encadrantAcademique, stagiaire et tuteurEntreprise.
 			if (stagiaire == null || encadrantAcademique == null || encadrantProfessionnel == null
 					|| responsableEntreprise == null || responsableServiceStages == null) {
-				System.out.println("[Seed] Stage ignore : un ou plusieurs utilisateurs de test sont indisponibles.");
+				System.out.println("[Seed] Stage ignore : un ou plusieurs utilisateurs obligatoires sont null (enc pro, enc acad, stagiaire, resp entreprise, rss).");
 				System.out.println("Donnees initialisees avec succes");
 				return;
 			}
 
+			// PATTERN OBLIGATOIRE : l'encadrant professionnel est cree et lie a l'entreprise
+			// AVANT la creation du stage. Le stage recoit ensuite cet encadrant via
+			// setEncadrantProfessionnel(). Ne jamais creer un stage sans avoir
+			// prealablement cree et recupere l'encadrant professionnel de la meme entreprise.
+			// EXEMPLE DE VIOLATION : BIAT Digital (id=3) avait un stage avec
+			// encadrant_professionnel_id = NULL car l'enc pro n'avait pas ete cree
+			// pour cette entreprise. Corrige par suppression manuelle en base.
 			// Rechercher ou creer le stage
 			Stage stage = stageRepository.findAll().stream()
 					.filter(s -> "Stage PFE Test".equalsIgnoreCase(s.getTitre()))
@@ -260,7 +319,14 @@ public class PfeBackEndEmnaGouuiaaApplication {
 				newStage.setEncadrantProfessionnel(encadrantProfessionnel);
 				newStage.setTuteurEntreprise(responsableEntreprise);
 				newStage.setSujetValidePar(encadrantAcademique);
-				newStage.setSectionEvaluationOuverte(true);
+				newStage.setSectionEvaluationOuverte(false);
+				if (newStage.getEncadrantProfessionnel() == null
+						|| newStage.getEncadrantAcademique() == null
+						|| newStage.getStagiaire() == null
+						|| newStage.getTuteurEntreprise() == null) {
+					System.out.println("[Seed] ERREUR : stage refuse - tous les acteurs obligatoires doivent etre renseignes (stagiaire, encadrantAcademique, encadrantProfessionnel, tuteurEntreprise). Arret.");
+					return;
+				}
 				stage = stageRepository.save(newStage);
 				System.out.println("[Seed] Stage cree : id=" + stage.getId());
 			} else {
@@ -316,122 +382,8 @@ public class PfeBackEndEmnaGouuiaaApplication {
 				System.out.println("[Seed] Cahier de stage deja present.");
 			}
 
-			// =================================================================
-			// REUNION FINALE
-			// =================================================================
-			ReunionFinale reunionFinale;
-			if (!reunionFinaleRepository.existsByStageId(stageId)) {
-				ReunionFinale rf = new ReunionFinale();
-				rf.setNumReunion("RF-001");
-				rf.setDate(LocalDate.of(2026, 5, 28));
-				rf.setHeure(LocalTime.of(10, 0));
-				rf.setStage(stage);
-				rf.setCompteRendu(
-						"Soutenance de fin de stage realisee avec succes. " +
-						"Le stagiaire a presente son travail de maniere claire et structuree. " +
-						"Bonne maitrise du sujet et des technologies utilisees."
-				);
-				rf.setNomEncadrantCreateur("Nadia Prof");
-				rf.setTypeEncadrantCreateur("ENCADRANT_ACADEMIQUE");
-				rf.setEncadrantCreateurId(encAcadId);
-				reunionFinale = reunionFinaleRepository.save(rf);
-				System.out.println("[Seed] Reunion finale creee : id=" + reunionFinale.getId());
-			} else {
-				reunionFinale = reunionFinaleRepository
-						.findFirstByStageIdOrderByIdAsc(stageId)
-						.orElse(null);
-				System.out.println("[Seed] Reunion finale deja presente.");
-			}
-
-			// =================================================================
-			// FICHE D'EVALUATION — criteres + notes + 2 signatures (verrouillee)
-			// =================================================================
-			if (!ficheEvaluationRepository.existsByStageId(stageId) && reunionFinale != null) {
-
-				// ── Fiche (sans notes ni criteres pour l'instant) ─────────────
-				FicheEvaluation fiche = new FicheEvaluation();
-				fiche.setStage(stage);
-				fiche.setReunionFinale(reunionFinale);
-				fiche.setPointFortEncadrantPro(
-						"Excellente maitrise des technologies Java / Spring Boot. " +
-						"Grande autonomie et forte motivation tout au long du stage."
-				);
-				fiche.setAxeAmeliorationEncadrantPro(
-						"Travailler la communication ecrite et la redaction de documentation technique."
-				);
-				fiche.setPointFortResponsableEntreprise(
-						"Integration remarquable dans l'equipe. Respect rigoureux des delais."
-				);
-				fiche.setAxeAmeliorationResponsableEntreprise(
-						"Approfondir les competences en gestion de projet agile."
-				);
-
-				// 2 signatures obligatoires (EP + RE) → fiche verrouillee
-				fiche.setSignatures(new ArrayList<>(List.of(
-						sig(RoleSignature.ENCADRANT_PROFESSIONNEL, encProId,  "2026-05-28T14:00"),
-						sig(RoleSignature.RESPONSABLE_ENTREPRISE,  respEntId, "2026-05-28T15:30")
-				)));
-
-				fiche = ficheEvaluationRepository.save(fiche);
-
-				// ── Criteres d'evaluation ────────────────────────────────────
-				// Regle metier : somme des poids = 20 (note finale sur 20)
-				// 3 criteres EP (poids 4 chacun = 12) + 2 criteres RE (poids 4 chacun = 8) = 20 ✓
-				// Bareme : 5 points par critere
-
-				CritereEvaluation c1 = saveCritere(critereEvaluationRepository, fiche,
-						"Competences techniques",
-						"Maitrise des outils, langages et frameworks utilises durant le stage.",
-						PartieEvaluation.ENCADRANT_PROFESSIONNEL, 5);
-
-				CritereEvaluation c2 = saveCritere(critereEvaluationRepository, fiche,
-						"Autonomie et initiative",
-						"Capacite a identifier les problemes et proposer des solutions sans sollicitation permanente.",
-						PartieEvaluation.ENCADRANT_PROFESSIONNEL, 5);
-
-				CritereEvaluation c3 = saveCritere(critereEvaluationRepository, fiche,
-						"Communication et comportement professionnel",
-						"Qualite des interactions avec l'equipe, respect des regles et ponctualite.",
-						PartieEvaluation.ENCADRANT_PROFESSIONNEL, 5);
-
-				CritereEvaluation c4 = saveCritere(critereEvaluationRepository, fiche,
-						"Integration dans l'equipe",
-						"Adaptation a la culture d'entreprise et collaboration avec les collegues.",
-						PartieEvaluation.RESPONSABLE_ENTREPRISE, 5);
-
-				CritereEvaluation c5 = saveCritere(critereEvaluationRepository, fiche,
-						"Respect des delais et des consignes",
-						"Livraison dans les temps et conformite aux specifications demandees.",
-						PartieEvaluation.RESPONSABLE_ENTREPRISE, 5);
-
-				// ── Notes attribuees ─────────────────────────────────────────
-				// noteFinale = Σ (note/bareme)*poids
-				//   c1 : (4/5)*4 = 3.20
-				//   c2 : (4/5)*4 = 3.20
-				//   c3 : (5/5)*4 = 4.00
-				//   c4 : (4/5)*4 = 3.20
-				//   c5 : (5/5)*4 = 4.00
-				//   Total = 17.60 / 20
-
-				saveNote(noteAttribueeRepository, fiche, c1, 4, 5, 4,
-						"Tres bonne maitrise de Spring Boot et d'Angular.");
-				saveNote(noteAttribueeRepository, fiche, c2, 4, 5, 4,
-						"Travaille frequemment sans supervision directe.");
-				saveNote(noteAttribueeRepository, fiche, c3, 4, 5, 5,
-						"Communication exemplaire, relation excellente avec l'equipe.");
-				saveNote(noteAttribueeRepository, fiche, c4, 4, 5, 4,
-						"S'est integre tres rapidement dans l'equipe RH.");
-				saveNote(noteAttribueeRepository, fiche, c5, 4, 5, 5,
-						"Toutes les livraisons ont ete effectuees dans les delais prevus.");
-
-				// Persistance de la note finale calculee
-				fiche.setNoteFinale(17.60);
-				ficheEvaluationRepository.save(fiche);
-
-				System.out.println("[Seed] Fiche d'evaluation creee (5 criteres, note finale=17.60/20, 2 signatures).");
-			} else {
-				System.out.println("[Seed] Fiche d'evaluation deja presente ou reunion finale absente.");
-			}
+			// Fiche d'evaluation : non creee en seed pour un stage EN_COURS (regle metier).
+			System.out.println("[Seed] Fiche d'evaluation non creee — stage encore EN_COURS.");
 
 			System.out.println("Donnees initialisees avec succes");
 		};

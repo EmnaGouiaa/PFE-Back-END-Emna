@@ -30,6 +30,7 @@ public class ReunionFinaleDto {
     private String stageTitre;
     private String stagiaireNom;
     private String entrepriseNom;
+    private String nomTuteurEntreprise;
     private String typeEncadrantCreateur;
     private String nomEncadrantCreateur;
     private Long encadrantCreateurId;

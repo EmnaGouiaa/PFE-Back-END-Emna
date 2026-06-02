@@ -13,15 +13,22 @@ import fsegs.pfebackendemnagouuiaa.repository.ReunionHebdomadaireRepository;
 import fsegs.pfebackendemnagouuiaa.repository.StageRepository;
 import fsegs.pfebackendemnagouuiaa.repository.UtilisateurRepository;
 import fsegs.pfebackendemnagouuiaa.security.JwtService;
+import fsegs.pfebackendemnagouuiaa.service.MeetingInvitationRules;
+import fsegs.pfebackendemnagouuiaa.service.WeeklyMeetingParticipantPolicy;
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.Collection;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -49,10 +56,13 @@ public class ReunionHebdomadaireServiceImpl implements ReunionHebdomadaireServic
         validateNoDuplicateMeeting(stage.getId(), dto.getDate(), dto.getHeure(), null);
         entity.setCahierStage(resolveOrCreateCahierStage(stage));
 
-        if (dto.getParticipantIds() != null && !dto.getParticipantIds().isEmpty()) {
-            Set<Utilisateur> participants = new HashSet<>(utilisateurRepository.findAllById(dto.getParticipantIds()));
-            entity.setParticipants(participants);
-        }
+        Utilisateur creator = jwtService.getAuthenticatedUtilisateur()
+                .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifie introuvable."));
+        WeeklyMeetingParticipantPolicy.assertEncadrantSupervisorCreates(creator);
+        entity.setEncadrantCreateurId(creator.getId());
+        entity.setTypeEncadrantCreateur(creator.getRole() == Role.ENCADRANT_ACADEMIQUE ? "ACADEMIQUE" : "PROFESSIONNEL");
+        entity.setNomEncadrantCreateur(formatCreatorName(creator));
+        entity.setParticipants(WeeklyMeetingParticipantPolicy.resolveParticipants(stage, creator));
 
         ReunionHebdomadaire saved = reunionHebdomadaireRepository.save(entity);
         return reunionHebdomadaireMapper.toDto(saved);
@@ -104,7 +114,6 @@ public class ReunionHebdomadaireServiceImpl implements ReunionHebdomadaireServic
         entity.setNumReunion(dto.getNumReunion());
         entity.setDate(dto.getDate());
         entity.setHeure(dto.getHeure());
-        entity.setObservation(dto.getObservation());
         entity.setCompteRendu(dto.getCompteRendu());
 
         if (dto.getStageId() != null) {
@@ -122,11 +131,6 @@ public class ReunionHebdomadaireServiceImpl implements ReunionHebdomadaireServic
         validateNoDuplicateMeeting(stage.getId(), entity.getDate(), entity.getHeure(), entity.getId());
 
         entity.setCahierStage(resolveOrCreateCahierStage(stage));
-
-        if (dto.getParticipantIds() != null) {
-            Set<Utilisateur> participants = new HashSet<>(utilisateurRepository.findAllById(dto.getParticipantIds()));
-            entity.setParticipants(participants);
-        }
 
         ReunionHebdomadaire updated = reunionHebdomadaireRepository.save(entity);
         return reunionHebdomadaireMapper.toDto(updated);
@@ -213,5 +217,32 @@ public class ReunionHebdomadaireServiceImpl implements ReunionHebdomadaireServic
         }
 
         return stage.getStatut() == StatutStage.EN_COURS;
+    }
+
+    private String formatCreatorName(Utilisateur utilisateur) {
+        if (utilisateur == null) {
+            return "Encadrant";
+        }
+        String fullName = ((utilisateur.getPrenom() != null ? utilisateur.getPrenom() : "") + " "
+                + (utilisateur.getNom() != null ? utilisateur.getNom() : "")).trim();
+        return fullName.isBlank() ? "Encadrant" : fullName;
+    }
+
+    private Set<Utilisateur> resolveParticipants(Collection<Long> participantIds) {
+        if (participantIds == null || participantIds.isEmpty()) {
+            return new HashSet<>();
+        }
+
+        Set<Long> uniqueParticipantIds = participantIds.stream()
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        List<Utilisateur> participants = utilisateurRepository.findAllById(uniqueParticipantIds);
+        if (participants.size() != uniqueParticipantIds.size()) {
+            throw new EntityNotFoundException("Un ou plusieurs participants sont introuvables.");
+        }
+
+        MeetingInvitationRules.assertNoCompanyManagerInvitation(participants);
+        return new HashSet<>(MeetingInvitationRules.retainEligibleParticipants(participants));
     }
 }

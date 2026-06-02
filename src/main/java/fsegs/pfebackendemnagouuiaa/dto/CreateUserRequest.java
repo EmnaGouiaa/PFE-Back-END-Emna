@@ -1,6 +1,7 @@
 package fsegs.pfebackendemnagouuiaa.dto;
 
 import fsegs.pfebackendemnagouuiaa.entities.Role;
+import fsegs.pfebackendemnagouuiaa.validation.PersonName;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -13,9 +14,11 @@ import lombok.Setter;
 public class CreateUserRequest {
 
     @NotBlank(message = "Le nom est obligatoire")
+    @PersonName
     private String nom;
 
     @NotBlank(message = "Le prenom est obligatoire")
+    @PersonName
     private String prenom;
 
     @NotBlank(message = "L'email est obligatoire")

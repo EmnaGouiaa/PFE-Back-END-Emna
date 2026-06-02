@@ -48,6 +48,14 @@ import java.util.List;
  *   <li><b>C3 — {@code @Column(nullable = false)}</b> sur {@code libelle} et
  *       {@code partie} qui sont obligatoires selon les règles métier.</li>
  * </ul>
+ *
+ * <h3>Mapping JPA</h3>
+ * Table {@code critere_evaluation}. {@code @ManyToOne} vers {@link FicheEvaluation} ;
+ * {@code @OneToMany} vers {@link NoteAttribuee} (cascade + orphanRemoval).
+ *
+ * <h3>Consommation applicative</h3>
+ * {@code CritereEvaluationServiceImpl}, {@code FicheEvaluationServiceImpl} ;
+ * contrôleur {@code CritereEvaluationController}.
  */
 @Entity
 @Table(name = "critere_evaluation")

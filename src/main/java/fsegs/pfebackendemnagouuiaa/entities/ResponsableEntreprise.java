@@ -7,11 +7,23 @@ import lombok.experimental.SuperBuilder;
 
 import java.time.LocalDateTime;
 
+/**
+ * Représentant légal ou administratif de l'entreprise : publie les offres, signe les documents.
+ *
+ * <h3>Mapping JPA</h3>
+ * Sous-type JOINED de {@link Utilisateur}, lié à {@link Entreprise} ({@code @ManyToOne}).
+ * Peut être désigné comme {@link Stage#tuteurEntreprise}.
+ *
+ * <h3>Consommation applicative</h3>
+ * Services métier entreprise (offres, conventions, fiches) ;
+ * contrôleurs {@code ResponsableEntrepriseController}, {@code AdminRepresentantEntrepriseController}.
+ */
 @Entity
-@Data
+@Getter
+@Setter
 @NoArgsConstructor
 @AllArgsConstructor
-@EqualsAndHashCode(callSuper = true)
+@EqualsAndHashCode(callSuper = true, exclude = {"entreprise"})
 @SuperBuilder
 @DiscriminatorValue("ResponsableEntreprise")
 public class ResponsableEntreprise extends Utilisateur {

@@ -40,14 +40,16 @@ import java.util.List;
  *
  * <p>Tables initialisées par ce runner :
  * <ol>
- *   <li>{@code offre_stage}          — offres publiées pour chaque entreprise demo</li>
- *   <li>{@code critere_evaluation}   — gabarits globaux de critères d'évaluation</li>
- *   <li>{@code cahier_stage}         — cahier de bord pour chaque stage actif</li>
- *   <li>{@code reunion} (FINALE)     — réunion finale automatique par stage</li>
- *   <li>{@code fiche_evaluation}     — fiche vide pour les stages TERMINÉS</li>
- *   <li>{@code conventions_stage}    — convention pour les stages EN_COURS / TERMINÉS</li>
- *   <li>{@code demandes_stage}       — demandes de création de compte entreprise</li>
+ *   <li>{@code offre_stage}        — offres EN_ATTENTE pour chaque entreprise demo</li>
+ *   <li>{@code critere_evaluation} — gabarits globaux de critères d'évaluation</li>
+ *   <li>{@code demandes_stage}     — demandes de création de compte entreprise</li>
  * </ol>
+ * <p>Les documents de stage (CahierStage, ReunionFinale, FicheEvaluation,
+ * ConventionStage) sont volontairement NON pre-generes : ils sont crees
+ * par le workflow reel (transitions de statut, signatures, validations).
+ * Les methodes creerCahierStageIfAbsent, creerReunionFinaleIfAbsent,
+ * creerFicheEvaluationIfAbsent et creerConventionStageIfAbsent sont
+ * conservees comme utilitaires protecteurs avec gardes metier integrees.</p>
  *
  * <p>Ordre d'exécution :
  * <pre>
@@ -79,6 +81,12 @@ public class SupplementaryDemoDataInitializer implements CommandLineRunner {
     private final FicheEvaluationRepository                 ficheEvaluationRepository;
 
     // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Point d'entrée : enchaîne offres, critères d'évaluation et demandes entreprise demo.
+     *
+     * @param args arguments Spring Boot (ignorés)
+     */
     @Override
     public void run(String... args) {
         log.info("[SUPP-INIT] ===== Début de l'initialisation complémentaire =====");
@@ -95,12 +103,14 @@ public class SupplementaryDemoDataInitializer implements CommandLineRunner {
     // ÉTAPE 1 — OFFRES DE STAGE
     // ═════════════════════════════════════════════════════════════════════════
 
+    /**
+     * Crée des offres {@link StatutOffre#EN_ATTENTE} pour chaque entreprise demo si aucune n'existe.
+     */
     private void initialiserOffresStage() {
         Entreprise telnet   = entrepriseRepository.findByNomIgnoreCase("Telnet Tunisie").orElse(null);
         Entreprise sofrecom = entrepriseRepository.findByNomIgnoreCase("Sofrecom Tunisie").orElse(null);
-        Entreprise biat     = entrepriseRepository.findByNomIgnoreCase("BIAT Digital").orElse(null);
 
-        if (telnet == null || sofrecom == null || biat == null) {
+        if (telnet == null || sofrecom == null) {
             log.warn("[SUPP-INIT] Entreprises demo introuvables — offres de stage ignorées.");
             return;
         }
@@ -110,8 +120,6 @@ public class SupplementaryDemoDataInitializer implements CommandLineRunner {
                 .findByEntrepriseId(telnet.getId()).stream().findFirst().orElse(null);
         ResponsableEntreprise reSofrecom = responsableEntrepriseRepository
                 .findByEntrepriseId(sofrecom.getId()).stream().findFirst().orElse(null);
-        ResponsableEntreprise reBiat = responsableEntrepriseRepository
-                .findByEntrepriseId(biat.getId()).stream().findFirst().orElse(null);
 
         // Dates futures relatives a aujourd'hui — garantit que les offres demarrent
         // toujours dans le futur, quel que soit le moment d'execution du seed.
@@ -159,27 +167,6 @@ public class SupplementaryDemoDataInitializer implements CommandLineRunner {
 
             log.info("[SUPP-INIT] 2 offres de stage créées pour Sofrecom Tunisie (EN_ATTENTE).");
         }
-
-        // ── BIAT Digital ──────────────────────────────────────────────────────
-        if (offreStageRepository.findByEntrepriseId(biat.getId()).isEmpty()) {
-            sauvegarderOffre(
-                    "Développeur API Bancaire REST",
-                    "Développement et sécurisation d'une API REST pour les services bancaires mobiles. "
-                    + "Intégration OAuth2, journalisation des accès sensibles et tests de charge.",
-                    4,
-                    "Etudiant Génie Logiciel ou Informatique, maîtrise de Spring Boot et notions de sécurité applicative.",
-                    base.plusDays(20), StatutOffre.EN_ATTENTE, biat, reBiat);
-
-            sauvegarderOffre(
-                    "Data Analyst / Business Intelligence",
-                    "Conception de tableaux de bord BI pour le suivi des indicateurs financiers. "
-                    + "Collecte et transformation de données depuis des sources hétérogènes (SQL, API, Excel).",
-                    3,
-                    "Etudiant Informatique ou Statistiques, connaissance de Power BI ou Tableau et maîtrise de SQL.",
-                    base.plusDays(40), StatutOffre.EN_ATTENTE, biat, reBiat);
-
-            log.info("[SUPP-INIT] 2 offres de stage créées pour BIAT Digital (EN_ATTENTE).");
-        }
     }
 
     /**
@@ -210,6 +197,9 @@ public class SupplementaryDemoDataInitializer implements CommandLineRunner {
     // ÉTAPE 2 — CRITÈRES D'ÉVALUATION (gabarits globaux, fiche = null)
     // ═════════════════════════════════════════════════════════════════════════
 
+    /**
+     * Insère les gabarits globaux de {@link CritereEvaluation} (barèmes 100 pts par partie).
+     */
     private void initialiserCriteresEvaluation() {
         if (critereEvaluationRepository.count() > 0) {
             log.info("[SUPP-INIT] Critères d'évaluation déjà présents — étape ignorée.");
@@ -330,6 +320,12 @@ public class SupplementaryDemoDataInitializer implements CommandLineRunner {
      * @return la réunion finale créée ou déjà existante, {@code null} si {@code dateFin} absente.
      */
     private ReunionFinale creerReunionFinaleIfAbsent(Stage stage) {
+        if (stage.getStatut() != StatutStage.TERMINE) {
+            log.warn("[SUPP-INIT] ReunionFinale ignoree pour stage id={} — "
+                    + "statut={} : ReunionFinale INTERDITE pour un stage non TERMINE.",
+                    stage.getId(), stage.getStatut());
+            return null;
+        }
         if (reunionFinaleRepository.existsByStageId(stage.getId())) {
             return reunionFinaleRepository.findFirstByStageIdOrderByIdAsc(stage.getId()).orElse(null);
         }
@@ -362,6 +358,12 @@ public class SupplementaryDemoDataInitializer implements CommandLineRunner {
      * @return {@code true} si une nouvelle fiche a été persistée.
      */
     private boolean creerFicheEvaluationIfAbsent(Stage stage, ReunionFinale reunionFinale) {
+        if (stage.getStatut() != StatutStage.TERMINE) {
+            log.warn("[SUPP-INIT] FicheEvaluation ignoree pour stage id={} — "
+                    + "statut={} : FicheEvaluation INTERDITE pour un stage non TERMINE.",
+                    stage.getId(), stage.getStatut());
+            return false;
+        }
         if (ficheEvaluationRepository.existsByStageId(stage.getId())) {
             return false;
         }
@@ -401,6 +403,9 @@ public class SupplementaryDemoDataInitializer implements CommandLineRunner {
     // ÉTAPE 7 — DEMANDES DE CRÉATION DE COMPTE ENTREPRISE
     // ═════════════════════════════════════════════════════════════════════════
 
+    /**
+     * Crée trois demandes de création de compte entreprise liées aux stagiaires demo STG-003 à 005.
+     */
     private void initialiserDemandesEntreprise() {
 
         // ── Demande 1 : Sara Abidi (STG-004) → Satoriplex Systems ───────────

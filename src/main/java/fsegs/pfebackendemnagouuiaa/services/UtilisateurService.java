@@ -29,6 +29,7 @@ public interface UtilisateurService {
     List<UserResponse> getAllUsers();
     UserResponse deactivateUser(Long id);
     UserResponse activateUser(Long id);
+    UserResponse deleteUserSignature(Long id);
     void deleteUser(Long id);
     UserResponse changeUserRole(Long id, ChangeRoleRequest request);
 }

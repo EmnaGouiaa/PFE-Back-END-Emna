@@ -5,9 +5,20 @@ import fsegs.pfebackendemnagouuiaa.entities.CritereEvaluation;
 import fsegs.pfebackendemnagouuiaa.entities.FicheEvaluation;
 import org.springframework.stereotype.Component;
 
+/**
+ * Implémentation Spring de {@link CritereEvaluationMapper}.
+ * <p>
+ * Conversion {@link CritereEvaluation} ↔ {@link CritereEvaluationDto}, utilisée par
+ * {@link fsegs.pfebackendemnagouuiaa.services.CritereEvaluationServiceImpl}.
+ */
 @Component
 public class CritereEvaluationMapperImpl implements CritereEvaluationMapper {
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Le champ DTO {@code commentaireGeneral} correspond à la consigne métier {@code consigne} en base.
+     */
     @Override
     public CritereEvaluationDto toDto(CritereEvaluation entity) {
         if (entity == null) {
@@ -20,6 +31,7 @@ public class CritereEvaluationMapperImpl implements CritereEvaluationMapper {
         dto.setDescription(entity.getDescription());
         dto.setCategorie(entity.getCategorie());
         dto.setBareme(entity.getBareme());
+        // Alias API : commentaireGeneral ↔ consigne (entité)
         dto.setCommentaireGeneral(entity.getConsigne());
         dto.setPartie(entity.getPartie());
 
@@ -30,6 +42,11 @@ public class CritereEvaluationMapperImpl implements CritereEvaluationMapper {
         return dto;
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * La fiche parente est matérialisée par une référence légère (identifiant seul) pour la persistance JPA.
+     */
     @Override
     public CritereEvaluation toEntity(CritereEvaluationDto dto) {
         if (dto == null) {

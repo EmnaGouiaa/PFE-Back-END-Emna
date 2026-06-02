@@ -21,6 +21,9 @@ import java.time.LocalDate;
  *
  * La règle métier : l'affectation d'un stagiaire est bloquée si aucune période
  * active ne couvre la date du jour.
+ *
+ * <h3>Consommation applicative</h3>
+ * {@code PeriodeStageServiceImpl} ; dépôt {@code PeriodeStageRepository}.
  */
 @Entity
 @Table(name = "periode_stage")

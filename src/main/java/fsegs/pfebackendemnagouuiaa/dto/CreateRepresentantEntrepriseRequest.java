@@ -1,5 +1,6 @@
 package fsegs.pfebackendemnagouuiaa.dto;
 
+import fsegs.pfebackendemnagouuiaa.validation.PersonName;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -9,9 +10,11 @@ import lombok.Data;
 public class CreateRepresentantEntrepriseRequest {
 
     @NotBlank(message = "Le nom est obligatoire.")
+    @PersonName
     private String nom;
 
     @NotBlank(message = "Le prénom est obligatoire.")
+    @PersonName
     private String prenom;
 
     @NotBlank(message = "L'email est obligatoire.")

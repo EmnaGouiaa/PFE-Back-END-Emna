@@ -8,13 +8,17 @@ import fsegs.pfebackendemnagouuiaa.entities.RoleSignature;
 import fsegs.pfebackendemnagouuiaa.entities.Signature;
 import fsegs.pfebackendemnagouuiaa.entities.Stage;
 import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
+import fsegs.pfebackendemnagouuiaa.exception.BusinessException;
 import fsegs.pfebackendemnagouuiaa.mapper.ConventionStageMapper;
 import fsegs.pfebackendemnagouuiaa.repository.ConventionStageRepository;
 import fsegs.pfebackendemnagouuiaa.repository.StageRepository;
+import fsegs.pfebackendemnagouuiaa.repository.UtilisateurRepository;
 import fsegs.pfebackendemnagouuiaa.security.JwtService;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -22,13 +26,29 @@ import java.util.Optional;
 import java.util.Random;
 
 @Service
-@RequiredArgsConstructor
 public class ConventionStageServiceImpl implements ConventionStageService {
 
     private final ConventionStageRepository conventionStageRepository;
     private final StageRepository stageRepository;
+    private final UtilisateurRepository utilisateurRepository;
     private final ConventionStageMapper conventionStageMapper;
     private final JwtService jwtService;
+    private final StageService stageService;
+
+    public ConventionStageServiceImpl(
+            ConventionStageRepository conventionStageRepository,
+            StageRepository stageRepository,
+            UtilisateurRepository utilisateurRepository,
+            ConventionStageMapper conventionStageMapper,
+            JwtService jwtService,
+            @Lazy StageService stageService) {
+        this.conventionStageRepository = conventionStageRepository;
+        this.stageRepository = stageRepository;
+        this.utilisateurRepository = utilisateurRepository;
+        this.conventionStageMapper = conventionStageMapper;
+        this.jwtService = jwtService;
+        this.stageService = stageService;
+    }
 
     @Override
     public ConventionStageDto create(ConventionStageDto dto) {
@@ -98,26 +118,31 @@ public class ConventionStageServiceImpl implements ConventionStageService {
     }
 
     @Override
+    @Transactional
     public ConventionStageDto signerParStagiaire(Long id) {
         return signer(id, TypeSignature.STAGIAIRE);
     }
 
     @Override
+    @Transactional
     public ConventionStageDto signerParEncadrantAcademique(Long id) {
         return signer(id, TypeSignature.ENCADRANT_ACADEMIQUE);
     }
 
     @Override
+    @Transactional
     public ConventionStageDto signerParEncadrantProfessionnel(Long id) {
         return signer(id, TypeSignature.ENCADRANT_PROFESSIONNEL);
     }
 
     @Override
+    @Transactional
     public ConventionStageDto signerParEntreprise(Long id) {
         return signer(id, TypeSignature.ENTREPRISE);
     }
 
     @Override
+    @Transactional
     public ConventionStageDto signerParResponsable(Long id) {
         return signer(id, TypeSignature.RESPONSABLE);
     }
@@ -132,31 +157,34 @@ public class ConventionStageServiceImpl implements ConventionStageService {
     // ── Logique de signature ───────────────────────────────────────────────────
 
     private ConventionStageDto signer(Long id, TypeSignature typeSignature) {
-        // E2 — Document introuvable (404 via GlobalExceptionHandler)
         ConventionStage convention = conventionStageRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Document introuvable."));
 
+        Stage stage = convention.getStage();
+        if (stage == null || stage.getId() == null) {
+            throw new BusinessException("Aucun stage n'est associe a cette convention.");
+        }
+        stageService.synchronizeStageStatut(stage.getId());
+        Stage managedStage = stageRepository.findById(stage.getId())
+                .orElseThrow(() -> new EntityNotFoundException("Stage introuvable."));
+        StageDocumentSignatureRules.ensureConventionSigningAllowed(managedStage, convention);
+
         Utilisateur utilisateur = getAuthenticatedSigner(typeSignature);
-        ensureSignerBelongsToStage(convention.getStage(), utilisateur, typeSignature);
+        ensureSignerBelongsToStage(managedStage, utilisateur, typeSignature);
 
         RoleSignature role = roleSignature(typeSignature);
 
-        // Idempotence : double clic / rappel API sans erreur
         if (convention.estSignePar(role)) {
             return conventionStageMapper.toDto(convention);
         }
 
-        // E4 — Pas de signature dans le profil (400)
-        String urlSignature = utilisateur.getUrlSignature();
-        if (urlSignature == null || urlSignature.isBlank()) {
-            throw new IllegalArgumentException("Veuillez enregistrer votre signature dans votre profil avant de continuer.");
-        }
+        String urlSignature = DemoSigningSupport.resolveSignatureUrl(utilisateur, utilisateurRepository);
 
         Signature sig = new Signature();
         sig.setRoleSignature(role);
         sig.setSignataireId(utilisateur.getId());
         sig.setDateSignature(LocalDateTime.now());
-        sig.setUrlSignature(urlSignature);                  // ← persistance de la signature
+        sig.setUrlSignature(urlSignature);
         convention.getSignatures().add(sig);
 
         return conventionStageMapper.toDto(conventionStageRepository.save(convention));
@@ -167,7 +195,7 @@ public class ConventionStageServiceImpl implements ConventionStageService {
                 .orElseThrow(() -> new RuntimeException("Utilisateur authentifie introuvable."));
 
         if (utilisateur.getRole() != expectedRole(typeSignature)) {
-            throw new RuntimeException("Action non autorisee : votre role ne correspond pas a cette signature.");
+            throw new BusinessException("Action non autorisee : votre role ne correspond pas a cette signature.");
         }
 
         return utilisateur;
@@ -189,7 +217,9 @@ public class ConventionStageServiceImpl implements ConventionStageService {
             case RESPONSABLE -> true;
         };
 
-        if (!authorized) throw new RuntimeException("Action non autorisee : vous n'etes pas associe a ce document.");
+        if (!authorized) {
+            throw new BusinessException("Action non autorisee : vous n'etes pas le signataire attendu pour ce stage.");
+        }
     }
 
     private Role expectedRole(TypeSignature t) {
@@ -210,12 +240,6 @@ public class ConventionStageServiceImpl implements ConventionStageService {
             case ENTREPRISE -> RoleSignature.RESPONSABLE_ENTREPRISE;
             case RESPONSABLE -> RoleSignature.RESPONSABLE_UNIVERSITAIRE;
         };
-    }
-
-    private void requireSavedSignature(Utilisateur utilisateur) {
-        if (utilisateur.getUrlSignature() == null || utilisateur.getUrlSignature().isBlank()) {
-            throw new RuntimeException("Veuillez ajouter votre signature à votre profil avant de signer ce document.");
-        }
     }
 
     private Integer generateNumConv() {

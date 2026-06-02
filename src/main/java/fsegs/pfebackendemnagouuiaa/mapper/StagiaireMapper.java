@@ -6,8 +6,22 @@ import fsegs.pfebackendemnagouuiaa.entities.Role;
 import fsegs.pfebackendemnagouuiaa.entities.Stagiaire;
 import org.springframework.stereotype.Component;
 
+/**
+ * Mapper Spring entre {@link Stagiaire} et les DTO {@link StagiaireRequestDTO} /
+ * {@link StagiaireResponseDTO}.
+ * <p>
+ * Utilisé par {@link fsegs.pfebackendemnagouuiaa.services.StagiaireServiceImpl} ; le service complète
+ * ensuite filière et encadrant académique non portés par le mapper à l'écriture.
+ */
 @Component
 public class StagiaireMapper {
+
+    /**
+     * Construit une entité stagiaire à partir d'une requête (rôle {@link Role#STAGIAIRE} imposé).
+     *
+     * @param dto requête source ; {@code null} renvoie {@code null}
+     * @return entité non persistée
+     */
     public Stagiaire toEntity(StagiaireRequestDTO dto) {
         if (dto == null) {
             return null;
@@ -32,6 +46,12 @@ public class StagiaireMapper {
         return stagiaire;
     }
 
+    /**
+     * Transforme un stagiaire persisté en DTO de réponse (filière et encadrant académique dénormalisés).
+     *
+     * @param stagiaire entité source ; {@code null} renvoie {@code null}
+     * @return DTO pour l'API
+     */
     public StagiaireResponseDTO toResponseDTO(Stagiaire stagiaire) {
         if (stagiaire == null) {
             return null;
@@ -60,6 +80,12 @@ public class StagiaireMapper {
                 .build();
     }
 
+    /**
+     * Met à jour les champs modifiables d'un stagiaire existant (sans toucher filière / encadrant).
+     *
+     * @param dto requête de mise à jour
+     * @param stagiaire entité cible ; sortie immédiate si l'un des paramètres est {@code null}
+     */
     public void updateEntityFromDto(StagiaireRequestDTO dto, Stagiaire stagiaire) {
         if (dto == null || stagiaire == null) {
             return;

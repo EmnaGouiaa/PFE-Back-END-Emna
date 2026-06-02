@@ -14,7 +14,19 @@ public interface StageService {
     Stage updateStage(Long id, CreateStageRequest request);
     Stage getStageById(Long id);
     List<Stage> getAllStages();
+
+    /**
+     * Liste les stages, optionnellement filtrés par statut métier de suivi
+     * ({@code EN_COURS}, {@code TERMINE}, {@code REFUSE}).
+     */
+    List<Stage> getAllStages(String statutSuivi);
     void deleteStage(Long id);
+
+    /**
+     * Supprime immédiatement un stage refusé (documents, signatures, évaluations en cascade)
+     * et libère l'offre source si elle était affectée au stagiaire.
+     */
+    void supprimerStageAutomatiquementApresRefus(Long stageId);
 
     Stage affecterEncadrantAcademique(Long stageId, Long encadrantAcademiqueId);
     Stage affecterEncadrantProfessionnel(Long stageId, Long encadrantProfessionnelId);
@@ -35,8 +47,8 @@ public interface StageService {
     Stage creerStageDepuisOffrePourEntreprise(OffreStage offre, Stagiaire stagiaire, ResponsableEntreprise responsableEntreprise);
     Stage validerSujetParEncadrantAcademique(Long stageId, Long encadrantId);
     Stage validerSujetParEncadrantAcademiqueAuthentifie(Long stageId);
-    Stage refuserSujetParEncadrantAcademique(Long stageId, Long encadrantId);
-    Stage refuserSujetParEncadrantAcademiqueAuthentifie(Long stageId);
+    void refuserSujetParEncadrantAcademique(Long stageId, Long encadrantId);
+    void refuserSujetParEncadrantAcademiqueAuthentifie(Long stageId);
     Map<String, Object> genererRapportStage(Long stageId);
     Map<String, Object> getResumeTrelloStage(Long stageId);
     Map<String, Object> createTrelloBoardIfNotExists(Long stageId);
@@ -47,5 +59,10 @@ public interface StageService {
      * de stages effectivement déclenchés.
      */
     int declencherStagesEligibles();
+
+    /**
+     * Recalcule le statut metier du stage a partir des dates et le persiste.
+     */
+    Stage synchronizeStageStatut(Long stageId);
 
 }

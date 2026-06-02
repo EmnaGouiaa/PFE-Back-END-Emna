@@ -19,6 +19,8 @@ public interface StageDocumentService {
 
     byte[] getConventionPdf(Long stageId);
 
+    byte[] getConventionPdfByConventionId(Long conventionId);
+
     byte[] getEvaluationPdf(Long stageId);
 
     byte[] getLogbookPdf(Long stageId);

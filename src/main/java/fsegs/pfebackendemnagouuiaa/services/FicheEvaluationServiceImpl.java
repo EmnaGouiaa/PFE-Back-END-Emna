@@ -5,6 +5,7 @@ import fsegs.pfebackendemnagouuiaa.dto.NoteAttribueeDto;
 import fsegs.pfebackendemnagouuiaa.entities.CleNoteAttribuee;
 import fsegs.pfebackendemnagouuiaa.entities.CritereEvaluation;
 import fsegs.pfebackendemnagouuiaa.entities.FicheEvaluation;
+import fsegs.pfebackendemnagouuiaa.entities.NoteAttribuee;
 import fsegs.pfebackendemnagouuiaa.entities.PartieEvaluation;
 import fsegs.pfebackendemnagouuiaa.entities.ResponsableEntreprise;
 import fsegs.pfebackendemnagouuiaa.entities.ReunionFinale;
@@ -21,6 +22,7 @@ import fsegs.pfebackendemnagouuiaa.repository.NoteAttribueeRepository;
 import fsegs.pfebackendemnagouuiaa.repository.ReunionFinaleRepository;
 import fsegs.pfebackendemnagouuiaa.repository.StageRepository;
 import fsegs.pfebackendemnagouuiaa.repository.UtilisateurRepository;
+import fsegs.pfebackendemnagouuiaa.exception.BusinessException;
 import fsegs.pfebackendemnagouuiaa.security.JwtService;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -40,7 +42,13 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
     private static final String STAGE_INTROUVABLE = "Stage introuvable.";
     private static final String SIGNATURE_MANQUANTE = "Veuillez enregistrer votre signature dans votre profil avant de continuer.";
     private static final String FICHE_VERROUILLEE = "La fiche d'evaluation est deja verrouillee et ne peut plus etre modifiee.";
+    private static final String PARTIE_PROFESSIONNELLE_DEJA_SOUMISE =
+            "Votre evaluation a deja ete soumise et signee. Cette partie est maintenant en lecture seule.";
+    private static final String PARTIE_ENTREPRISE_DEJA_SOUMISE =
+            "Votre evaluation a deja ete soumise et signee. Cette partie est maintenant en lecture seule.";
     private static final String UTILISATEUR_NON_AUTHENTIFIE = "Utilisateur authentifie introuvable.";
+    private static final String EVALUATION_INDISPONIBLE_MESSAGE =
+            EvaluationStageAccessRules.UNAVAILABLE_MESSAGE;
 
     private final FicheEvaluationRepository ficheEvaluationRepository;
     private final StageRepository stageRepository;
@@ -49,6 +57,7 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
     private final FicheEvaluationMapper ficheEvaluationMapper;
     private final CritereEvaluationRepository critereEvaluationRepository;
     private final NoteAttribueeRepository noteAttribueeRepository;
+    private final EvaluationSheetBootstrapService evaluationSheetBootstrapService;
     private final JwtService jwtService;
 
     @Override
@@ -57,31 +66,17 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
         if (dto.getStageId() == null) {
             throw new IllegalArgumentException("Le stage est obligatoire.");
         }
-        if (dto.getReunionFinaleId() == null) {
-            throw new IllegalArgumentException("La reunion finale est obligatoire.");
-        }
-
         Stage stage = stageRepository.findById(dto.getStageId())
                 .orElseThrow(() -> new EntityNotFoundException(STAGE_INTROUVABLE));
-        ensureCanManageEvaluation(stage, getAuthenticatedUtilisateur());
-
-        ReunionFinale reunionFinale = reunionFinaleRepository.findById(dto.getReunionFinaleId())
-                .orElseThrow(() -> new EntityNotFoundException("Reunion finale introuvable."));
-
-        if (reunionFinale.getStage() == null || !reunionFinale.getStage().getId().equals(stage.getId())) {
-            throw new IllegalArgumentException("La reunion finale selectionnee ne correspond pas a ce stage.");
-        }
-        ensureEvaluationSectionOpen(stage);
+        Utilisateur utilisateur = getAuthenticatedUtilisateur();
+        ensureCanManageEvaluation(stage, utilisateur);
+        ensureEvaluationAllowed(stage);
         if (ficheEvaluationRepository.existsByStageId(stage.getId())) {
             throw new IllegalArgumentException("Une fiche d'evaluation existe deja pour ce stage.");
         }
 
-        FicheEvaluation entity = ficheEvaluationMapper.toEntity(dto);
-        entity.setStage(stage);
-        entity.setReunionFinale(reunionFinale);
-        entity.setNoteFinale(0.0);
-
-        return ficheEvaluationMapper.toDto(ficheEvaluationRepository.save(entity));
+        FicheEvaluation entity = evaluationSheetBootstrapService.ensureSheetExists(stage.getId());
+        return toDtoForApi(entity);
     }
 
     @Override
@@ -89,7 +84,7 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
     public FicheEvaluationDto getById(Long id) {
         FicheEvaluation fiche = getFicheOrThrow(id);
         ensureCanViewFiche(fiche, getAuthenticatedUtilisateur());
-        return ficheEvaluationMapper.toDto(fiche);
+        return toDtoForApi(fiche);
     }
 
     @Override
@@ -98,23 +93,33 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
         Utilisateur utilisateur = getAuthenticatedUtilisateur();
         return ficheEvaluationRepository.findAll().stream()
                 .filter(fiche -> canViewFiche(fiche, utilisateur))
-                .map(ficheEvaluationMapper::toDto)
+                .map(this::toDtoForApi)
                 .toList();
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public Optional<FicheEvaluationDto> findByStageIdIfPresent(Long stageId) {
+        Stage stage = stageRepository.findById(stageId)
+                .orElseThrow(() -> new EntityNotFoundException(STAGE_INTROUVABLE));
+        Utilisateur utilisateur = getAuthenticatedUtilisateur();
+        bootstrapEvaluationSheetIfEvaluator(stage, utilisateur);
+
         return ficheEvaluationRepository.findFirstByStageId(stageId)
                 .map(fiche -> {
-                    ensureCanViewFiche(fiche, getAuthenticatedUtilisateur());
-                    return ficheEvaluationMapper.toDto(fiche);
+                    ensureCanViewFiche(fiche, utilisateur);
+                    return toDtoForApi(fiche);
                 });
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional
     public FicheEvaluationDto getByStageId(Long stageId) {
+        Stage stage = stageRepository.findById(stageId)
+                .orElseThrow(() -> new EntityNotFoundException(STAGE_INTROUVABLE));
+        if (!EvaluationStageAccessRules.isEvaluationPeriodOpen(stage)) {
+            throw new BusinessException(EVALUATION_INDISPONIBLE_MESSAGE);
+        }
         return findByStageIdIfPresent(stageId).orElseThrow(() ->
                 new EntityNotFoundException(FICHE_INTROUVABLE));
     }
@@ -125,7 +130,7 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
         Utilisateur utilisateur = getAuthenticatedUtilisateur();
         return ficheEvaluationRepository.findByReunionFinaleId(reunionFinaleId).stream()
                 .filter(fiche -> canViewFiche(fiche, utilisateur))
-                .map(ficheEvaluationMapper::toDto)
+                .map(this::toDtoForApi)
                 .toList();
     }
 
@@ -135,7 +140,7 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
         FicheEvaluation fiche = getFicheOrThrow(id);
         ensureEditable(fiche);
         Utilisateur utilisateur = getAuthenticatedUtilisateur();
-        ensureEvaluationSectionOpen(requireStage(fiche));
+        ensureEvaluationAllowed(requireStage(fiche));
 
         if (isProfessionalSupervisor(fiche.getStage(), utilisateur)) {
             return remplirPartieEncadrantProfessionnel(id, utilisateur.getId(), dto);
@@ -154,18 +159,14 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
         ensureEditable(fiche);
         Utilisateur utilisateur = getAuthorizedUser(userId);
         Stage stage = requireStage(fiche);
-        ensureEvaluationSectionOpen(stage);
+        ensureEvaluationAllowed(stage);
 
         if (isProfessionalSupervisor(stage, utilisateur)) {
-            if (!fiche.partieEncadrantProfessionnelComplete()) {
-                throw new IllegalStateException("La partie de l'encadrant professionnel est incomplete.");
-            }
-            if (!fiche.toutesLesNotesSontRenseignees()) {
-                throw new IllegalStateException("Toutes les notes d'evaluation doivent etre renseignees avant la signature.");
-            }
+            StageDocumentSignatureRules.ensureEvaluationSigningAllowed(
+                    fiche, fiche.pretPourSignatureEncadrantProfessionnel());
             // Idempotence : déjà signé → retour sans erreur
             if (fiche.estSignePar(RoleSignature.ENCADRANT_PROFESSIONNEL)) {
-                return ficheEvaluationMapper.toDto(fiche);
+                return toDtoForApi(fiche);
             }
             // E4 — signature absente du profil
             requireSavedSignature(utilisateur);
@@ -178,11 +179,10 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
             fiche.getSignatures().add(sig);
 
         } else if (isCompanyRepresentative(stage, utilisateur)) {
-            if (!fiche.partieResponsableEntrepriseComplete()) {
-                throw new IllegalStateException("La partie du representant de l'entreprise est incomplete.");
-            }
+            StageDocumentSignatureRules.ensureEvaluationSigningAllowed(
+                    fiche, fiche.pretPourSignatureResponsableEntreprise());
             if (fiche.estSignePar(RoleSignature.RESPONSABLE_ENTREPRISE)) {
-                return ficheEvaluationMapper.toDto(fiche);
+                return toDtoForApi(fiche);
             }
             requireSavedSignature(utilisateur);
 
@@ -197,12 +197,12 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
             throw new AccessDeniedException("Utilisateur non autorise a signer cette fiche d'evaluation.");
         }
 
-        fiche.setNoteFinale(fiche.calculerNoteFinale());
-        FicheEvaluation ficheSauvegardee = ficheEvaluationRepository.save(fiche);
+        recalculateAndPersistFinalScore(fiche);
+        FicheEvaluation ficheSauvegardee = ficheEvaluationRepository.findById(fiche.getId()).orElse(fiche);
         if (ficheSauvegardee.estVerrouillee()) {
             cloturerStageApresValidationComplete(ficheSauvegardee.getStage());
         }
-        return ficheEvaluationMapper.toDto(ficheSauvegardee);
+        return toDtoForApi(ficheSauvegardee);
     }
 
     private void cloturerStageApresValidationComplete(Stage stage) {
@@ -219,58 +219,63 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
     @Override
     @Transactional
     public FicheEvaluationDto remplirPartieEncadrantProfessionnel(Long ficheId, Long userId, FicheEvaluationDto dto) {
-        FicheEvaluation fiche = getFicheOrThrow(ficheId);
+        FicheEvaluation fiche = resolveFicheForEvaluatorEdit(ficheId, userId);
         ensureEditable(fiche);
         Utilisateur utilisateur = getAuthorizedUser(userId);
-        ensureEvaluationSectionOpen(requireStage(fiche));
+        ensureEvaluationAllowed(requireStage(fiche));
 
         if (!isProfessionalSupervisor(requireStage(fiche), utilisateur)) {
             throw new AccessDeniedException("Seul l'encadrant professionnel affecte au stage peut renseigner cette partie.");
         }
+        ensureSignerCanStillEdit(fiche, RoleSignature.ENCADRANT_PROFESSIONNEL, PARTIE_PROFESSIONNELLE_DEJA_SOUMISE);
 
         validateRequiredText(dto.getPointFortEncadrantPro(), "Les points forts de l'encadrant professionnel sont obligatoires.");
         validateRequiredText(dto.getAxeAmeliorationEncadrantPro(), "Les axes d'amelioration de l'encadrant professionnel sont obligatoires.");
 
         fiche.setPointFortEncadrantPro(dto.getPointFortEncadrantPro().trim());
         fiche.setAxeAmeliorationEncadrantPro(dto.getAxeAmeliorationEncadrantPro().trim());
-        fiche.setNoteFinale(fiche.calculerNoteFinale());
+        ficheEvaluationRepository.save(fiche);
+        recalculateAndPersistFinalScore(fiche);
 
-        return ficheEvaluationMapper.toDto(ficheEvaluationRepository.save(fiche));
+        return toDtoForApi(fiche);
     }
 
     @Override
     @Transactional
     public FicheEvaluationDto remplirPartieResponsableEntreprise(Long ficheId, Long userId, FicheEvaluationDto dto) {
-        FicheEvaluation fiche = getFicheOrThrow(ficheId);
+        FicheEvaluation fiche = resolveFicheForEvaluatorEdit(ficheId, userId);
         ensureEditable(fiche);
         Utilisateur utilisateur = getAuthorizedUser(userId);
-        ensureEvaluationSectionOpen(requireStage(fiche));
+        ensureEvaluationAllowed(requireStage(fiche));
 
         if (!isCompanyRepresentative(requireStage(fiche), utilisateur)) {
             throw new AccessDeniedException("Seul le representant de l'entreprise liee au stage peut renseigner cette partie.");
         }
+        ensureSignerCanStillEdit(fiche, RoleSignature.RESPONSABLE_ENTREPRISE, PARTIE_ENTREPRISE_DEJA_SOUMISE);
 
         validateRequiredText(dto.getPointFortResponsableEntreprise(), "Les points forts du representant de l'entreprise sont obligatoires.");
         validateRequiredText(dto.getAxeAmeliorationResponsableEntreprise(), "Les axes d'amelioration du representant de l'entreprise sont obligatoires.");
 
         fiche.setPointFortResponsableEntreprise(dto.getPointFortResponsableEntreprise().trim());
         fiche.setAxeAmeliorationResponsableEntreprise(dto.getAxeAmeliorationResponsableEntreprise().trim());
-        fiche.setNoteFinale(fiche.calculerNoteFinale());
+        ficheEvaluationRepository.save(fiche);
+        recalculateAndPersistFinalScore(fiche);
 
-        return ficheEvaluationMapper.toDto(ficheEvaluationRepository.save(fiche));
+        return toDtoForApi(fiche);
     }
 
     @Override
     @Transactional
     public FicheEvaluationDto enregistrerNotesEncadrantProfessionnel(Long ficheId, Long userId, List<NoteAttribueeDto> notes) {
-        FicheEvaluation fiche = getFicheOrThrow(ficheId);
+        FicheEvaluation fiche = resolveFicheForEvaluatorEdit(ficheId, userId);
         ensureEditable(fiche);
         Utilisateur utilisateur = getAuthorizedUser(userId);
-        ensureEvaluationSectionOpen(requireStage(fiche));
+        ensureEvaluationAllowed(requireStage(fiche));
 
         if (!isProfessionalSupervisor(requireStage(fiche), utilisateur)) {
             throw new AccessDeniedException("Seul l'encadrant professionnel affecte au stage peut saisir les notes.");
         }
+        ensureSignerCanStillEdit(fiche, RoleSignature.ENCADRANT_PROFESSIONNEL, PARTIE_PROFESSIONNELLE_DEJA_SOUMISE);
         if (notes == null || notes.isEmpty()) {
             throw new IllegalArgumentException("Au moins une note doit etre renseignee.");
         }
@@ -279,9 +284,8 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
             upsertProfessionalNote(fiche, noteDto);
         }
 
-        fiche.setNoteFinale(fiche.calculerNoteFinale());
-        ficheEvaluationRepository.save(fiche);
-        return ficheEvaluationMapper.toDto(fiche);
+        recalculateAndPersistFinalScore(fiche);
+        return toDtoForApi(fiche);
     }
 
     // ── Responsable Entreprise : enregistrement notes (Ponctualite, etc.) ─────
@@ -289,14 +293,15 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
     @Override
     @Transactional
     public FicheEvaluationDto enregistrerNotesResponsableEntreprise(Long ficheId, Long userId, List<NoteAttribueeDto> notes) {
-        FicheEvaluation fiche = getFicheOrThrow(ficheId);
+        FicheEvaluation fiche = resolveFicheForEvaluatorEdit(ficheId, userId);
         ensureEditable(fiche);
         Utilisateur utilisateur = getAuthorizedUser(userId);
-        ensureEvaluationSectionOpen(requireStage(fiche));
+        ensureEvaluationAllowed(requireStage(fiche));
 
         if (!isCompanyRepresentative(requireStage(fiche), utilisateur)) {
             throw new AccessDeniedException("Seul le representant de l'entreprise affecte au stage peut saisir ses notes.");
         }
+        ensureSignerCanStillEdit(fiche, RoleSignature.RESPONSABLE_ENTREPRISE, PARTIE_ENTREPRISE_DEJA_SOUMISE);
         if (notes == null || notes.isEmpty()) {
             throw new IllegalArgumentException("Au moins une note doit etre renseignee.");
         }
@@ -305,67 +310,27 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
             upsertCompanyRepresentativeNote(fiche, noteDto);
         }
 
-        fiche.setNoteFinale(fiche.calculerNoteFinale());
-        ficheEvaluationRepository.save(fiche);
-        return ficheEvaluationMapper.toDto(fiche);
+        recalculateAndPersistFinalScore(fiche);
+        return toDtoForApi(fiche);
     }
 
     private void upsertCompanyRepresentativeNote(FicheEvaluation fiche, NoteAttribueeDto dto) {
-        validateNote(dto);
-
-        CritereEvaluation critere = resolveCompanyRepresentativeCriterion(fiche, dto);
-        CleNoteAttribuee id = new CleNoteAttribuee(fiche.getId(), critere.getId());
-
-        fsegs.pfebackendemnagouuiaa.entities.NoteAttribuee note = noteAttribueeRepository.findById(id)
-                .orElseGet(() -> {
-                    fsegs.pfebackendemnagouuiaa.entities.NoteAttribuee entity = new fsegs.pfebackendemnagouuiaa.entities.NoteAttribuee();
-                    entity.setId(id);
-                    entity.setFicheEvaluation(fiche);
-                    entity.setCritereEvaluation(critere);
-                    return entity;
-                });
-
-        note.setPoids(dto.getPoids());
-        note.setBareme(dto.getBareme() != null && dto.getBareme() > 0 ? dto.getBareme() : 5);
-        note.setNote(dto.getNote());
-        note.setCommentaire(dto.getCommentaire() == null ? null : dto.getCommentaire().trim());
-        noteAttribueeRepository.save(note);
+        upsertRoleNote(fiche, dto, PartieEvaluation.RESPONSABLE_ENTREPRISE);
     }
-
-    private CritereEvaluation resolveCompanyRepresentativeCriterion(FicheEvaluation fiche, NoteAttribueeDto dto) {
-        if (dto.getCritereEvaluationId() != null) {
-            CritereEvaluation critere = critereEvaluationRepository.findById(dto.getCritereEvaluationId())
-                    .orElseThrow(() -> new EntityNotFoundException("Critere d'evaluation introuvable."));
-            if (critere.getFiche() != null && !critere.getFiche().getId().equals(fiche.getId())) {
-                throw new IllegalArgumentException("Le critere d'evaluation ne correspond pas a cette fiche.");
-            }
-            return critere;
-        }
-
-        validateRequiredText(dto.getCritereLibelle(), "Le libelle du critere d'evaluation est obligatoire.");
-
-        CritereEvaluation critere = new CritereEvaluation();
-        critere.setLibelle(dto.getCritereLibelle().trim());
-        critere.setDescription(dto.getCritereLibelle().trim());
-        critere.setCategorie("Evaluation du stage");
-        critere.setBareme(5);
-        critere.setConsigne(null);
-        critere.setPartie(PartieEvaluation.RESPONSABLE_ENTREPRISE);
-        critere.setFiche(fiche);
-        return critereEvaluationRepository.save(critere);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
 
     private void upsertProfessionalNote(FicheEvaluation fiche, NoteAttribueeDto dto) {
+        upsertRoleNote(fiche, dto, PartieEvaluation.ENCADRANT_PROFESSIONNEL);
+    }
+
+    private void upsertRoleNote(FicheEvaluation fiche, NoteAttribueeDto dto, PartieEvaluation partie) {
         validateNote(dto);
 
-        CritereEvaluation critere = resolveProfessionalCriterion(fiche, dto);
+        CritereEvaluation critere = resolveCriterionForFiche(fiche, dto, partie);
         CleNoteAttribuee id = new CleNoteAttribuee(fiche.getId(), critere.getId());
 
-        fsegs.pfebackendemnagouuiaa.entities.NoteAttribuee note = noteAttribueeRepository.findById(id)
+        NoteAttribuee note = noteAttribueeRepository.findById(id)
                 .orElseGet(() -> {
-                    fsegs.pfebackendemnagouuiaa.entities.NoteAttribuee entity = new fsegs.pfebackendemnagouuiaa.entities.NoteAttribuee();
+                    NoteAttribuee entity = new NoteAttribuee();
                     entity.setId(id);
                     entity.setFicheEvaluation(fiche);
                     entity.setCritereEvaluation(critere);
@@ -375,11 +340,14 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
         note.setPoids(dto.getPoids());
         note.setBareme(dto.getBareme() != null && dto.getBareme() > 0 ? dto.getBareme() : 5);
         note.setNote(dto.getNote());
-        note.setCommentaire(dto.getCommentaire() == null ? null : dto.getCommentaire().trim());
-        noteAttribueeRepository.save(note);
+        note.setCommentaire(normalizeNoteCommentaire(dto.getCommentaire()));
+        noteAttribueeRepository.saveAndFlush(note);
     }
 
-    private CritereEvaluation resolveProfessionalCriterion(FicheEvaluation fiche, NoteAttribueeDto dto) {
+    private CritereEvaluation resolveCriterionForFiche(
+            FicheEvaluation fiche,
+            NoteAttribueeDto dto,
+            PartieEvaluation partie) {
         if (dto.getCritereEvaluationId() != null) {
             CritereEvaluation critere = critereEvaluationRepository.findById(dto.getCritereEvaluationId())
                     .orElseThrow(() -> new EntityNotFoundException("Critere d'evaluation introuvable."));
@@ -390,16 +358,70 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
         }
 
         validateRequiredText(dto.getCritereLibelle(), "Le libelle du critere d'evaluation est obligatoire.");
+        String libelle = dto.getCritereLibelle().trim();
 
+        return critereEvaluationRepository.findByFicheId(fiche.getId()).stream()
+                .filter(c -> c.getPartie() == partie)
+                .filter(c -> EvaluationCriteriaCatalog.matchesCriterionLabel(c.getLibelle(), libelle))
+                .findFirst()
+                .orElseGet(() -> createCriterionForFiche(fiche, libelle, partie));
+    }
+
+    private CritereEvaluation createCriterionForFiche(
+            FicheEvaluation fiche,
+            String libelle,
+            PartieEvaluation partie) {
         CritereEvaluation critere = new CritereEvaluation();
-        critere.setLibelle(dto.getCritereLibelle().trim());
-        critere.setDescription(dto.getCritereLibelle().trim());
+        critere.setLibelle(libelle);
+        critere.setDescription(libelle);
         critere.setCategorie("Evaluation du stage");
         critere.setBareme(5);
         critere.setConsigne(null);
-        critere.setPartie(PartieEvaluation.ENCADRANT_PROFESSIONNEL);
+        critere.setPartie(partie);
         critere.setFiche(fiche);
         return critereEvaluationRepository.save(critere);
+    }
+
+    private String normalizeNoteCommentaire(String commentaire) {
+        if (commentaire == null) {
+            return null;
+        }
+        String trimmed = commentaire.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    /**
+     * Recalcule la note finale à partir du dépôt (sans manipuler {@code notesAttribuees})
+     * pour éviter la suppression accidentelle de notes avec {@code orphanRemoval = true}.
+     */
+    private void recalculateAndPersistFinalScore(FicheEvaluation fiche) {
+        if (fiche == null || fiche.getId() == null) {
+            return;
+        }
+        noteAttribueeRepository.flush();
+        List<NoteAttribuee> notes = noteAttribueeRepository.findByFicheEvaluationId(fiche.getId());
+        fiche.setNoteFinale(computeFinalScoreFromNotes(notes));
+        ficheEvaluationRepository.save(fiche);
+    }
+
+    private static double computeFinalScoreFromNotes(List<NoteAttribuee> notes) {
+        if (notes == null || notes.isEmpty()) {
+            return 0.0;
+        }
+        var evaluees = notes.stream()
+                .filter(NoteAttribuee::estEvalue)
+                .toList();
+        if (evaluees.isEmpty()) {
+            return 0.0;
+        }
+        double averageOnFive = evaluees.stream()
+                .mapToDouble(n -> {
+                    int bareme = (n.getBareme() != null && n.getBareme() > 0) ? n.getBareme() : 5;
+                    return (n.getNote() / (double) bareme) * 5.0;
+                })
+                .average()
+                .orElse(0.0);
+        return Math.round(averageOnFive * 10.0) / 10.0;
     }
 
     private void validateNote(NoteAttribueeDto dto) {
@@ -427,14 +449,75 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
         return fiche.getStage();
     }
 
-    private void ensureEvaluationSectionOpen(Stage stage) {
-        boolean ouverte = stage != null
-                && (Boolean.TRUE.equals(stage.getSectionEvaluationOuverte())
-                || (stage.getDateFin() != null && !stage.getDateFin().isAfter(java.time.LocalDate.now())));
+    private void ensureEvaluationAllowed(Stage stage) {
+        EvaluationStageAccessRules.ensureEvaluationPeriodOpen(stage);
+    }
 
-        if (!ouverte) {
-            throw new AccessDeniedException("L'espace d'evaluation sera accessible a partir du dernier jour du stage.");
+    private void bootstrapEvaluationSheetIfEvaluator(Stage stage, Utilisateur utilisateur) {
+        if (stage == null || stage.getId() == null || utilisateur == null) {
+            return;
         }
+        if (!EvaluationStageAccessRules.isEvaluationPeriodOpen(stage)) {
+            return;
+        }
+        if (!isProfessionalSupervisor(stage, utilisateur) && !isCompanyRepresentative(stage, utilisateur)) {
+            return;
+        }
+        evaluationSheetBootstrapService.ensureSheetExists(stage.getId());
+    }
+
+    private FicheEvaluation resolveFicheForEvaluatorEdit(Long ficheId, Long userId) {
+        FicheEvaluation fiche = getFicheOrThrow(ficheId);
+        Utilisateur utilisateur = getAuthorizedUser(userId);
+        Stage stage = requireStage(fiche);
+        ensureCanManageEvaluation(stage, utilisateur);
+        bootstrapEvaluationSheetIfEvaluator(stage, utilisateur);
+        return getFicheOrThrow(ficheId);
+    }
+
+    private FicheEvaluationDto toDtoForApi(FicheEvaluation fiche) {
+        Stage stage = requireStage(fiche);
+        if (!EvaluationStageAccessRules.isEvaluationPeriodOpen(stage)) {
+            return buildEmptyEvaluationView(stage, fiche);
+        }
+        FicheEvaluationDto dto = ficheEvaluationMapper.toDto(fiche);
+        dto.setEvaluationAccessible(Boolean.TRUE);
+        dto.setEvaluationIndisponibleMessage(null);
+        return dto;
+    }
+
+    private FicheEvaluationDto buildEmptyEvaluationView(Stage stage, FicheEvaluation fiche) {
+        FicheEvaluationDto dto = new FicheEvaluationDto();
+        dto.setId(fiche.getId());
+        dto.setStageId(stage.getId());
+        dto.setStageTitre(stage.getTitre());
+        dto.setStageSujet(stage.getSujet());
+        dto.setStageDateDebut(stage.getDateDebut());
+        dto.setStageDateFin(EvaluationStageAccessRules.resolveDateFin(stage));
+        if (stage.getStagiaire() != null) {
+            dto.setStagiaireNomComplet(
+                    (stage.getStagiaire().getPrenom() + " " + stage.getStagiaire().getNom()).trim()
+            );
+        }
+        if (stage.getEntreprise() != null) {
+            dto.setEntrepriseNom(stage.getEntreprise().getNom());
+        }
+        dto.setPointFortEncadrantPro("");
+        dto.setAxeAmeliorationEncadrantPro("");
+        dto.setPointFortResponsableEntreprise("");
+        dto.setAxeAmeliorationResponsableEntreprise("");
+        dto.setNoteFinale(null);
+        dto.setNotesAttribuees(new java.util.ArrayList<>());
+        dto.setSignatures(new java.util.ArrayList<>());
+        dto.setDonneesCompletes(Boolean.FALSE);
+        dto.setPretSignatureEncadrantProfessionnel(Boolean.FALSE);
+        dto.setPretSignatureResponsableEntreprise(Boolean.FALSE);
+        dto.setSignaturesCompletes(Boolean.FALSE);
+        dto.setComplete(Boolean.FALSE);
+        dto.setVerrouillee(Boolean.FALSE);
+        dto.setEvaluationAccessible(Boolean.FALSE);
+        dto.setEvaluationIndisponibleMessage(EVALUATION_INDISPONIBLE_MESSAGE);
+        return dto;
     }
 
     private Utilisateur getAuthenticatedUtilisateur() {
@@ -454,6 +537,12 @@ public class FicheEvaluationServiceImpl implements FicheEvaluationService {
     private void ensureEditable(FicheEvaluation fiche) {
         if (fiche.estVerrouillee()) {
             throw new IllegalStateException(FICHE_VERROUILLEE);
+        }
+    }
+
+    private void ensureSignerCanStillEdit(FicheEvaluation fiche, RoleSignature roleSignature, String message) {
+        if (fiche != null && roleSignature != null && fiche.estSignePar(roleSignature)) {
+            throw new IllegalStateException(message);
         }
     }
 

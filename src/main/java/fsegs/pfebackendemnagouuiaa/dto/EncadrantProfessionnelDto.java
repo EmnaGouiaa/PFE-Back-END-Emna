@@ -1,6 +1,7 @@
 package fsegs.pfebackendemnagouuiaa.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import fsegs.pfebackendemnagouuiaa.validation.PersonName;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -16,10 +17,12 @@ public class EncadrantProfessionnelDto {
     private Long id;
 
     @NotBlank(message = "Le nom est obligatoire.")
+    @PersonName
     @Size(min = 2, message = "Le nom doit contenir au moins 2 caracteres.")
     private String nom;
 
     @NotBlank(message = "Le prenom est obligatoire.")
+    @PersonName
     @Size(min = 2, message = "Le prenom doit contenir au moins 2 caracteres.")
     private String prenom;
 

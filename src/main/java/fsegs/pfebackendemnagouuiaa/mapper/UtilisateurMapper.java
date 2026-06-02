@@ -14,8 +14,16 @@ import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Mapper utilitaire statique pour la hiérarchie {@link Utilisateur} et les DTO
+ * {@link CreateUserRequest}, {@link UpdateUserRequest}, {@link UserResponse}.
+ * <p>
+ * Utilisé par {@link fsegs.pfebackendemnagouuiaa.services.UtilisateurServiceImpl} (CRUD admin, profil
+ * authentifié, masquage des champs sensibles selon le rôle).
+ */
 public class UtilisateurMapper {
 
+    /** Champs autorisés en lecture profil pour tous les rôles (base commune). */
     private static final List<String> COMMON_PROFILE_FIELDS = List.of(
             "email",
             "nom",
@@ -28,12 +36,17 @@ public class UtilisateurMapper {
     private UtilisateurMapper() {
     }
 
+    /**
+     * Instancie la sous-classe {@link Utilisateur} selon le rôle et renseigne les champs communs.
+     *
+     * @param request requête de création
+     * @return entité concrète (Stagiaire, EncadrantAcademique, etc.)
+     */
     public static Utilisateur toEntity(CreateUserRequest request) {
         Utilisateur utilisateur = instantiateByRole(request.getRole());
         populateCommonFields(utilisateur, request.getNom(), request.getPrenom(), request.getEmail(),
                 request.getTelephone(), request.getMatricule(), request.getActif(), request.getUrlSignature(), request.getRole());
 
-        // Le niveau est propre au stagiaire et n'est defini que par l'administrateur.
         if (utilisateur instanceof Stagiaire stagiaire) {
             stagiaire.setNiveau(request.getNiveau());
         }
@@ -41,6 +54,12 @@ public class UtilisateurMapper {
         return utilisateur;
     }
 
+    /**
+     * Met à jour les attributs modifiables d'un utilisateur existant (sans changer le type concret).
+     *
+     * @param utilisateur entité cible
+     * @param request requête de mise à jour
+     */
     public static void updateEntity(Utilisateur utilisateur, UpdateUserRequest request) {
         utilisateur.setNom(request.getNom());
         utilisateur.setPrenom(request.getPrenom());
@@ -48,9 +67,15 @@ public class UtilisateurMapper {
         utilisateur.setTelephone(request.getTelephone());
         utilisateur.setActif(request.getActif());
         utilisateur.setUrlSignature(request.getUrlSignature());
-        utilisateur.setRole(request.getRole());
+        // Le role n'est jamais modifie via update (regle metier : role fixe apres creation).
     }
 
+    /**
+     * Construit une réponse administrateur complète, avec champs spécifiques selon le type réel.
+     *
+     * @param utilisateur entité source
+     * @return DTO exposé à l'API admin
+     */
     public static UserResponse toResponse(Utilisateur utilisateur) {
         UserResponse response = new UserResponse();
         response.setId(utilisateur.getId());
@@ -99,6 +124,12 @@ public class UtilisateurMapper {
         return response;
     }
 
+    /**
+     * Réponse profil : masque identifiants internes et ne conserve que les champs autorisés par rôle.
+     *
+     * @param utilisateur utilisateur authentifié ou cible du profil
+     * @return DTO filtré avec {@code champsProfilAutorises} et {@code documentsStageAutorises}
+     */
     public static UserResponse toProfileResponse(Utilisateur utilisateur) {
         UserResponse response = toResponse(utilisateur);
         response.setId(null);
@@ -123,6 +154,7 @@ public class UtilisateurMapper {
         response.setChampsProfilAutorises(allowedFields);
         response.setDocumentsStageAutorises(getDocumentsStageAutorises(utilisateur));
 
+        // Annule les champs non listés dans champsProfilAutorises (évite la fuite d'infos admin)
         if (!allowedFields.contains("matricule")) {
             response.setMatricule(null);
         }
@@ -145,6 +177,9 @@ public class UtilisateurMapper {
         return response;
     }
 
+    /**
+     * Types de documents de stage accessibles selon le rôle (règle métier front / téléchargement).
+     */
     private static List<String> getDocumentsStageAutorises(Utilisateur utilisateur) {
         if (utilisateur.getRole() == null) {
             return List.of();
@@ -158,6 +193,9 @@ public class UtilisateurMapper {
         };
     }
 
+    /**
+     * Fabrique la sous-classe JPA adaptée au {@link Role} ; {@link Utilisateur} générique si rôle inconnu.
+     */
     private static Utilisateur instantiateByRole(Role role) {
         if (role == null) {
             return new Utilisateur();
@@ -173,6 +211,9 @@ public class UtilisateurMapper {
         };
     }
 
+    /**
+     * Renseigne les attributs communs à tous les types d'utilisateur.
+     */
     private static void populateCommonFields(
             Utilisateur utilisateur,
             String nom,

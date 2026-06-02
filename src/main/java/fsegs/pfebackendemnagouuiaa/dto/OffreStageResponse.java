@@ -27,6 +27,13 @@ public class OffreStageResponse {
     private Long encadrantProId;
     private String encadrantProNomComplet;
     private boolean stageCree;
+    /** Date de fin du stage lie (si existant). */
+    private LocalDate dateFinStage;
+    /**
+     * Vrai si le stage associe est termine (date du jour >= date de fin).
+     * L'offre est alors en lecture seule pour tous les acteurs.
+     */
+    private boolean stageTermine;
     private boolean stageDeclenche;
     private boolean trelloEnabled;
     private boolean affectable;
@@ -41,4 +48,9 @@ public class OffreStageResponse {
      * "edit limite a la description tant que le sujet n'est pas valide".
      */
     private String statutSujet;
+    /**
+     * Vrai si le representant entreprise peut annuler l'affectation :
+     * sujet non valide par l'encadrant academique et date de debut strictement future.
+     */
+    private boolean annulationAffectationAutorisee;
 }

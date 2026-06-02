@@ -4,13 +4,21 @@ package fsegs.pfebackendemnagouuiaa.entities;
  * Statuts internes du workflow d'une offre de stage.
  * Cote interface utilisateur, ces statuts sont projetes sur un vocabulaire simplifie
  * (Publie, En cours de stage, Termine, Archive) via les mappers du frontend.
+ *
+ * <p>Piloté principalement par {@code OffreStageServiceImpl}.</p>
  */
 public enum StatutOffre {
+    /** Soumise, en attente de validation par le service des stages. */
     EN_ATTENTE,
+    /** Visible côté entreprise après publication. */
     PUBLIEE,
+    /** Validée par le responsable des stages universitaire. */
     VALIDEE,
+    /** Stagiaire affecté à l'offre. */
     AFFECTEE,
+    /** Refusée par le service des stages. */
     REFUSEE,
+    /** Fermée manuellement ou pour cause administrative. */
     FERMEE,
     /**
      * @deprecated Conserve uniquement pour la compatibilite avec d'eventuelles lignes

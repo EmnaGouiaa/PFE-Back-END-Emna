@@ -22,8 +22,16 @@ public class ReunionHebdomadaireDto {
 
     private Long stageId;
     private String stageTitre;
+    private String stagiaireNom;
+    private String entrepriseNom;
+    private String nomTuteurEntreprise;
+    private String typeReunion;
+    private String typeEncadrantCreateur;
+    private String nomEncadrantCreateur;
+    private Long encadrantCreateurId;
 
     private Set<Long> participantIds;
+    private Set<String> participantNoms;
 
     private Long cahierStageId;
 }

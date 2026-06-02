@@ -23,6 +23,23 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
+/**
+ * Message système adressé à un ou plusieurs utilisateurs via {@link NotificationDestinataire}.
+ *
+ * <h3>Mapping JPA</h3>
+ * Table {@code notifications}. Contexte optionnel : liens {@code @ManyToOne} vers {@link Stage},
+ * réunions, documents (cahier, fiche, convention) ou {@link DemandeCreationCompteEntreprise}.
+ * Destinataires en {@code @OneToMany} cascade avec suppression en cascade.
+ *
+ * <h3>Consommation applicative</h3>
+ * <ul>
+ *   <li>Services : {@code NotificationServiceImpl}, {@code StageServiceImpl},
+ *       {@code OffreStageServiceImpl}, {@code DemandeCreationCompteEntrepriseServiceImpl}.</li>
+ *   <li>Contrôleur : {@code NotificationController}.</li>
+ * </ul>
+ *
+ * @see TypeNotification
+ */
 @Entity
 @Table(name = "notifications")
 @Data
@@ -88,6 +105,7 @@ public class Notification {
     @OneToMany(mappedBy = "notification", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<NotificationDestinataire> notificationDestinataires = new ArrayList<>();
 
+    /** Initialise {@link #dateCreation} à l'insertion si elle n'est pas déjà renseignée. */
     @PrePersist
     public void prePersist() {
         if (dateCreation == null) {

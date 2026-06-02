@@ -48,13 +48,13 @@ public class EntrepriseServiceImpl implements EntrepriseService {
         Entreprise entreprise = entrepriseRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Entreprise introuvable avec l'id : " + id));
 
-        String email = contactUniquenessService.normalizeAndValidateOptionalEmail(dto.getEmail(), "emailEntreprise");
+        contactUniquenessService.assertEntrepriseEmailUnchanged(entreprise.getEmail(), dto.getEmail());
+
         String telephone = contactUniquenessService.normalizeAndValidateOptionalPhone(dto.getTelephone(), "telephoneEntreprise");
-        contactUniquenessService.validateEntrepriseContactForUpdate(id, email, telephone);
+        contactUniquenessService.validateEntrepriseContactForUpdate(id, entreprise.getEmail(), telephone);
 
         entreprise.setNom(dto.getNom());
         entreprise.setAdresse(dto.getAdresse());
-        entreprise.setEmail(email);
         entreprise.setTelephone(telephone);
         entreprise.setSecteurActivite(dto.getSecteurActivite());
 

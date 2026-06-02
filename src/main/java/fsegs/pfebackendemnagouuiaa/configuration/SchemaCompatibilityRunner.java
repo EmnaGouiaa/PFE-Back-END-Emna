@@ -8,29 +8,26 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 /**
- * Handles schema and data migrations that cannot be expressed as pure Hibernate DDL.
+ * Exécute au démarrage les migrations de schéma et de données que Hibernate seul ne peut pas appliquer.
  *
- * <h3>Why a CommandLineRunner and not a Flyway/Liquibase migration?</h3>
- * The project uses {@code spring.jpa.hibernate.ddl-auto=update}.  Hibernate's DDL updater
- * runs <em>before</em> any {@code CommandLineRunner} / {@code ApplicationRunner} bean.
- * When the database still contains rows whose ENUM column values belong to a renamed role
- * (e.g. {@code RESPONSABLE_SERVICE_STAGES}), Hibernate's {@code ALTER TABLE … MODIFY COLUMN}
- * fails with <em>"Data truncated"</em> — MySQL refuses to narrow an ENUM that still has rows
- * using the old values.
+ * <p><b>Rôle :</b> éviter les erreurs MySQL « Data truncated » lorsque des colonnes ENUM
+ * contiennent encore d'anciennes valeurs (rôles utilisateur renommés, types de notification, etc.).</p>
  *
- * <h3>Correct 3-step migration for ENUM columns</h3>
+ * <h3>Pourquoi un {@link CommandLineRunner} plutôt que Flyway/Liquibase ?</h3>
+ * <p>Le projet utilise {@code spring.jpa.hibernate.ddl-auto=update}. Le DDL Hibernate s'exécute
+ * <em>avant</em> tout {@code CommandLineRunner}. Si des lignes portent encore
+ * {@code RESPONSABLE_SERVICE_STAGES}, un {@code ALTER TABLE … MODIFY COLUMN} échoue car MySQL
+ * refuse de rétrécir un ENUM tant que des lignes utilisent les anciennes valeurs.</p>
+ *
+ * <h3>Stratégie en trois temps pour les colonnes ENUM</h3>
  * <ol>
- *   <li><b>Expand</b> – {@code ALTER TABLE} to add the new value alongside the old ones.
- *       MySQL accepts this because we are only <em>adding</em>, never removing.</li>
- *   <li><b>Migrate data</b> – {@code UPDATE} rows from old value to new value.
- *       Now the new value is a valid enum member, so no truncation.</li>
- *   <li><b>Shrink</b> – {@code ALTER TABLE} to remove the old values.
- *       MySQL accepts this because no row uses those values any more.
- *       Hibernate will also attempt this on startup via {@code ddl-auto=update},
- *       but doing it here prevents the startup WARN.</li>
+ *   <li><b>Élargir</b> — ajouter la nouvelle valeur ENUM sans retirer les anciennes.</li>
+ *   <li><b>Migrer les données</b> — {@code UPDATE} vers la nouvelle valeur métier.</li>
+ *   <li><b>Rétrécir</b> — retirer les valeurs obsolètes une fois plus aucune ligne ne les référence.</li>
  * </ol>
  *
- * <p>All three steps are idempotent — safe to run on every startup.</p>
+ * <p><b>Ordre d'exécution :</b> {@code @Order(0)} — avant {@link DemoDataInitializer} et les seeds.</p>
+ * <p>Toutes les étapes sont idempotentes (sans effet si déjà appliquées).</p>
  */
 @Slf4j
 @Component
@@ -54,17 +51,23 @@ public class SchemaCompatibilityRunner implements CommandLineRunner {
             "'RESPONSABLE_SERVICE_STAGES','RESPONSABLE_UNIVERSITAIRE_STAGES'," +
             "'RESPONSABLE_STAGE','STAGIAIRE'";
 
+    /**
+     * Lance les trois passes de compatibilité schéma/données.
+     *
+     * @param args arguments de ligne de commande Spring Boot (non utilisés)
+     */
     @Override
     public void run(String... args) {
         backfillLegacyManagerRole();
         alignNotificationTypeEnum();
         relaxLegacyNotificationUserConstraint();
+        addWeeklyMeetingObservationColumns();
     }
 
     /**
-     * Migrates users whose {@code role} was renamed from the old
-     * {@code RESPONSABLE_SERVICE_STAGES} / {@code RESPONSABLE_UNIVERSITAIRE_STAGES}
-     * to the current {@code RESPONSABLE_STAGE}.
+     * Migre les utilisateurs dont le rôle a été renommé vers {@code RESPONSABLE_STAGE}.
+     *
+     * <p>Applique la séquence élargir → UPDATE → rétrécir sur {@code utilisateur.role}.</p>
      */
     private void backfillLegacyManagerRole() {
         // ── utilisateur.role ─────────────────────────────────────────────────────
@@ -95,6 +98,10 @@ public class SchemaCompatibilityRunner implements CommandLineRunner {
 
     }
 
+    /**
+     * Convertit {@code notifications.type_notification} de ENUM vers VARCHAR(100)
+     * ou élargit un VARCHAR trop court.
+     */
     private void alignNotificationTypeEnum() {
         try {
             String dataType = jdbcTemplate.queryForObject(
@@ -135,6 +142,9 @@ public class SchemaCompatibilityRunner implements CommandLineRunner {
         }
     }
 
+    /**
+     * Autorise {@code notifications.utilisateur_id} NULL pour les notifications système globales.
+     */
     private void relaxLegacyNotificationUserConstraint() {
         try {
             jdbcTemplate.execute("""
@@ -147,10 +157,59 @@ public class SchemaCompatibilityRunner implements CommandLineRunner {
     }
 
     /**
-     * Executes a DDL statement and swallows any exception, logging at DEBUG level.
-     * Used for idempotent ALTERs that are safe to skip if the schema is already in the
-     * target state (e.g. when running for the second time after a successful migration).
+     * Exécute un DDL en ignorant silencieusement les erreurs (migration déjà appliquée).
+     *
+     * @param sql   instruction ALTER TABLE
+     * @param label libellé pour les logs DEBUG
      */
+    /**
+     * Colonnes d'observations séparées par encadrant sur les réunions hebdomadaires.
+     */
+    private void addWeeklyMeetingObservationColumns() {
+        silentAlter(
+                "ALTER TABLE reunion ADD COLUMN observation_encadrant_academique VARCHAR(5000) NULL",
+                "reunion.observation_encadrant_academique add"
+        );
+        silentAlter(
+                "ALTER TABLE reunion ADD COLUMN observation_encadrant_professionnel VARCHAR(5000) NULL",
+                "reunion.observation_encadrant_professionnel add"
+        );
+
+        try {
+            int migratedAcademic = jdbcTemplate.update("""
+                    UPDATE reunion
+                    SET observation_encadrant_academique = observation
+                    WHERE observation IS NOT NULL
+                      AND TRIM(observation) <> ''
+                      AND UPPER(TRIM(type_reunion)) = 'HEBDOMADAIRE'
+                      AND UPPER(TRIM(type_encadrant_createur)) = 'ACADEMIQUE'
+                      AND (observation_encadrant_academique IS NULL OR TRIM(observation_encadrant_academique) = '')
+                    """);
+            int migratedProfessional = jdbcTemplate.update("""
+                    UPDATE reunion
+                    SET observation_encadrant_professionnel = observation
+                    WHERE observation IS NOT NULL
+                      AND TRIM(observation) <> ''
+                      AND UPPER(TRIM(type_reunion)) = 'HEBDOMADAIRE'
+                      AND (observation_encadrant_professionnel IS NULL OR TRIM(observation_encadrant_professionnel) = '')
+                      AND (
+                          UPPER(TRIM(type_encadrant_createur)) = 'PROFESSIONNEL'
+                          OR type_encadrant_createur IS NULL
+                          OR TRIM(type_encadrant_createur) = ''
+                      )
+                    """);
+            if (migratedAcademic > 0 || migratedProfessional > 0) {
+                log.info(
+                        "[SchemaRunner] Observations hebdomadaires migrees: academique={}, professionnel={}.",
+                        migratedAcademic,
+                        migratedProfessional
+                );
+            }
+        } catch (Exception ex) {
+            log.warn("[SchemaRunner] Migration observations hebdomadaires ignoree: {}", ex.getMessage());
+        }
+    }
+
     private void silentAlter(String sql, String label) {
         try {
             jdbcTemplate.execute(sql);

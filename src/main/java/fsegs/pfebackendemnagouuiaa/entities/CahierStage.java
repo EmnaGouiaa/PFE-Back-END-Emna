@@ -4,6 +4,7 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDate;
@@ -12,16 +13,22 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Cahier de stage.
- * <p>
- * Les anciens champs de signature role-spécifiques ont été supprimés.
- * La liste {@link #signatures} porte l'intégralité des informations de signature.
- * {@code dateSignature} (LocalDate) est conservé : il représente la date inscrite
- * dans le document lors de la dernière signature.
- * </p>
+ * Cahier de stage : journal des réunions de suivi, absences et signatures des parties.
+ *
+ * <p>Les anciens champs de signature par rôle ont été remplacés par la liste {@link #signatures}.
+ * {@link #dateSignature} reflète la date inscrite sur le document lors de la dernière signature.</p>
+ *
+ * <h3>Mapping JPA</h3>
+ * Relation 1-1 avec {@link Stage} ; {@code @OneToMany} vers {@link Reunion} et {@link Notification}.
+ * Signatures en table fille via {@code cahier_stage_id}.
+ *
+ * <h3>Consommation applicative</h3>
+ * {@code CahierStageServiceImpl}, {@code CahierStagePdfService}, {@code StageDocumentServiceImpl} ;
+ * contrôleur {@code CahierStageController}.
  */
 @Entity
 @Data
+@EqualsAndHashCode(exclude = {"stage", "reunions", "notifications"})
 @NoArgsConstructor
 @AllArgsConstructor
 public class CahierStage {

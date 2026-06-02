@@ -19,4 +19,7 @@ public interface DemandeCreationCompteEntrepriseService {
     DemandeCreationCompteEntreprise validerParResponsableStages(Long demandeId);
 
     DemandeCreationCompteEntreprise refuserParResponsableStages(Long demandeId, String commentaire);
+
+    /** Création entreprise + compte responsable, appelée en arrière-plan après approbation. */
+    void finaliserCreationCompteApresApprobation(Long demandeId);
 }

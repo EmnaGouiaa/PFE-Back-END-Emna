@@ -40,6 +40,7 @@ public class NoteAttribueeServiceImpl implements NoteAttribueeService {
         FicheEvaluation fiche = ficheEvaluationRepository.findById(dto.getFicheEvaluationId())
                 .orElseThrow(() -> new EntityNotFoundException("Fiche d'evaluation introuvable."));
         ensureProfessionalSupervisorEditor(fiche);
+        ensureEvaluationEditable(fiche);
 
         CritereEvaluation critere = critereEvaluationRepository.findById(dto.getCritereEvaluationId())
                 .orElseThrow(() -> new EntityNotFoundException("Critere d'evaluation introuvable."));
@@ -70,6 +71,9 @@ public class NoteAttribueeServiceImpl implements NoteAttribueeService {
         NoteAttribuee entity = noteAttribueeRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Note attribuee introuvable."));
         ensureCanView(entity.getFicheEvaluation());
+        if (entity.getFicheEvaluation() != null && entity.getFicheEvaluation().getStage() != null) {
+            EvaluationStageAccessRules.ensureEvaluationPeriodOpen(entity.getFicheEvaluation().getStage());
+        }
         return noteAttribueeMapper.toDto(entity);
     }
 
@@ -89,6 +93,7 @@ public class NoteAttribueeServiceImpl implements NoteAttribueeService {
         FicheEvaluation fiche = ficheEvaluationRepository.findById(ficheEvaluationId)
                 .orElseThrow(() -> new EntityNotFoundException("Fiche d'evaluation introuvable."));
         ensureCanView(fiche);
+        EvaluationStageAccessRules.ensureEvaluationPeriodOpen(fiche.getStage());
         return noteAttribueeRepository.findByFicheEvaluationId(ficheEvaluationId).stream()
                 .map(noteAttribueeMapper::toDto)
                 .toList();
@@ -112,6 +117,7 @@ public class NoteAttribueeServiceImpl implements NoteAttribueeService {
                 .orElseThrow(() -> new EntityNotFoundException("Note attribuee introuvable."));
 
         ensureProfessionalSupervisorEditor(entity.getFicheEvaluation());
+        ensureEvaluationEditable(entity.getFicheEvaluation());
         if (entity.getFicheEvaluation() != null && entity.getFicheEvaluation().estVerrouillee()) {
             throw new IllegalStateException("Impossible de modifier une note : la fiche d'evaluation est verrouillee.");
         }
@@ -126,7 +132,10 @@ public class NoteAttribueeServiceImpl implements NoteAttribueeService {
         entity.setPoids(dto.getPoids());
         entity.setBareme(dto.getBareme() == null ? 5 : dto.getBareme());
         entity.setNote(dto.getNote());
-        entity.setCommentaire(dto.getCommentaire());
+        entity.setCommentaire(dto.getCommentaire() == null ? null : dto.getCommentaire().trim());
+        if (entity.getCommentaire() != null && entity.getCommentaire().isEmpty()) {
+            entity.setCommentaire(null);
+        }
 
         NoteAttribuee updated = noteAttribueeRepository.save(entity);
         recalculerNoteFinale(entity.getFicheEvaluation());
@@ -141,6 +150,7 @@ public class NoteAttribueeServiceImpl implements NoteAttribueeService {
                 .orElseThrow(() -> new EntityNotFoundException("Note attribuee introuvable."));
 
         ensureProfessionalSupervisorEditor(entity.getFicheEvaluation());
+        ensureEvaluationEditable(entity.getFicheEvaluation());
         if (entity.getFicheEvaluation() != null && entity.getFicheEvaluation().estVerrouillee()) {
             throw new IllegalStateException("Impossible de supprimer une note : la fiche d'evaluation est verrouillee.");
         }
@@ -180,11 +190,40 @@ public class NoteAttribueeServiceImpl implements NoteAttribueeService {
     }
 
     private void recalculerNoteFinale(FicheEvaluation fiche) {
-        if (fiche == null) {
+        if (fiche == null || fiche.getId() == null) {
             return;
         }
-        fiche.setNoteFinale(fiche.calculerNoteFinale());
+        noteAttribueeRepository.flush();
+        var notes = noteAttribueeRepository.findByFicheEvaluationId(fiche.getId());
+        fiche.setNoteFinale(computeFinalScoreFromNotes(notes));
         ficheEvaluationRepository.save(fiche);
+    }
+
+    private static double computeFinalScoreFromNotes(java.util.List<NoteAttribuee> notes) {
+        if (notes == null || notes.isEmpty()) {
+            return 0.0;
+        }
+        var evaluees = notes.stream()
+                .filter(NoteAttribuee::estEvalue)
+                .toList();
+        if (evaluees.isEmpty()) {
+            return 0.0;
+        }
+        double averageOnFive = evaluees.stream()
+                .mapToDouble(n -> {
+                    int bareme = (n.getBareme() != null && n.getBareme() > 0) ? n.getBareme() : 5;
+                    return (n.getNote() / (double) bareme) * 5.0;
+                })
+                .average()
+                .orElse(0.0);
+        return Math.round(averageOnFive * 10.0) / 10.0;
+    }
+
+    private void ensureEvaluationEditable(FicheEvaluation fiche) {
+        if (fiche == null || fiche.getStage() == null) {
+            throw new EntityNotFoundException("Stage introuvable.");
+        }
+        EvaluationStageAccessRules.ensureEvaluationPeriodOpen(fiche.getStage());
     }
 
     private void ensureProfessionalSupervisorEditor(FicheEvaluation fiche) {

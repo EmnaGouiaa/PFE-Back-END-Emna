@@ -31,6 +31,8 @@ import org.springframework.web.bind.annotation.RestController;
  * Règle d'ouverture :
  *   sectionOuverte = (today >= dateFin_stage OU today >= date_réunionFinale)
  *                    ET active ET URL configurée
+ * <p>
+ * <strong>Services injectés :</strong> {@link EnqueteSatisfactionService}
  */
 @RestController
 @RequestMapping("/api/enquete")
@@ -39,11 +41,11 @@ public class EnqueteSatisfactionController {
 
     private final EnqueteSatisfactionService enqueteSatisfactionService;
 
-    // ─── Responsable des stages ──────────────────────────────────────────────
-
     /**
-     * Lecture de la configuration globale.
-     * Réservé au RESPONSABLE_STAGE et à l'ADMINISTRATEUR.
+     * Lecture de la configuration globale (titre, description, URL, indicateur actif).
+     * <p>Réservé au {@code RESPONSABLE_STAGE} et à l'{@code ADMINISTRATEUR}.
+     *
+     * @return {@link ResponseEntity} 200 avec {@link EnqueteSatisfactionDto} complet (URL incluse)
      */
     @PreAuthorize("hasAnyRole('RESPONSABLE_STAGE', 'ADMINISTRATEUR')")
     @GetMapping
@@ -52,9 +54,11 @@ public class EnqueteSatisfactionController {
     }
 
     /**
-     * Configurer / modifier l'enquête (titre, description, URL du formulaire externe).
-     * URL obligatoire et doit commencer par http:// ou https://.
-     * Réservé au RESPONSABLE_STAGE.
+     * Configure ou modifie l'enquête (titre, description, URL du formulaire externe).
+     * <p>Règle : URL obligatoire, préfixe {@code http://} ou {@code https://}.
+     *
+     * @param request paramètres de configuration
+     * @return {@link ResponseEntity} 200 avec configuration enregistrée
      */
     @PreAuthorize("hasRole('RESPONSABLE_STAGE')")
     @PutMapping
@@ -64,16 +68,15 @@ public class EnqueteSatisfactionController {
     }
 
     /**
-     * Activer ou désactiver l'enquête.
-     * Réservé au RESPONSABLE_STAGE.
+     * Active ou désactive l'enquête globalement.
+     *
+     * @return {@link ResponseEntity} 200 avec le nouvel état {@code active}
      */
     @PreAuthorize("hasRole('RESPONSABLE_STAGE')")
     @PatchMapping("/toggle")
     public ResponseEntity<EnqueteSatisfactionDto> toggleActive() {
         return ResponseEntity.ok(enqueteSatisfactionService.toggleActive());
     }
-
-    // ─── Acteurs — configuration globale lisible ─────────────────────────────
 
     /**
      * Lecture de la configuration globale visible par tous les acteurs authentifiés.

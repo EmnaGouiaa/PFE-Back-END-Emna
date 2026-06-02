@@ -20,6 +20,17 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 
+/**
+ * Lien entre une {@link Notification} et un {@link Utilisateur} destinataire :
+ * état de lecture, action attendue et réponse éventuelle.
+ *
+ * <h3>Mapping JPA</h3>
+ * Table {@code notification_destinataire} avec contrainte d'unicité
+ * {@code (notification_id, utilisateur_id)}.
+ *
+ * <h3>Consommation applicative</h3>
+ * Service {@code NotificationServiceImpl} ; contrôleur {@code NotificationController}.
+ */
 @Entity
 @Table(
         name = "notification_destinataire",

@@ -22,6 +22,25 @@ import jakarta.servlet.http.HttpServletResponse;
 
 import java.util.List;
 
+/**
+ * Configuration principale de Spring Security pour l'API REST stateless (JWT).
+ *
+ * <p><b>Rôle :</b> définir la chaîne de filtres, les règles d'autorisation par URL,
+ * la politique CORS intégrée et les réponses JSON pour 401/403.</p>
+ *
+ * <p><b>Responsabilités :</b></p>
+ * <ul>
+ *   <li>Désactiver CSRF (API sans session cookie classique).</li>
+ *   <li>Forcer {@link SessionCreationPolicy#STATELESS}.</li>
+ *   <li>Autoriser les prérequêtes OPTIONS et les endpoints publics (auth, swagger, certaines listes).</li>
+ *   <li>Insérer {@link JwtAuthenticationFilter} avant l'authentification formulaire.</li>
+ *   <li>Activer {@code @PreAuthorize} via {@link EnableMethodSecurity}.</li>
+ * </ul>
+ *
+ * <p><b>Relations :</b> s'appuie sur {@link ApplicationConfig#authenticationProvider()} et
+ * {@link JwtAuthenticationFilter} ; complète {@link fsegs.pfebackendemnagouuiaa.exception.GlobalExceptionHandler}
+ * pour le format des erreurs d'accès.</p>
+ */
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
@@ -32,6 +51,13 @@ public class SecurityConfig {
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
     private final AuthenticationProvider authenticationProvider;
 
+    /**
+     * Construit la chaîne de filtres HTTP Security de l'application.
+     *
+     * @param http builder Spring Security
+     * @return chaîne configurée (stateless + JWT + règles d'URL)
+     * @throws Exception si la configuration est incohérente
+     */
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
@@ -40,9 +66,10 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
 
-                        // ?? AJOUT CRITIQUE
+                        // Prérequis CORS : autoriser OPTIONS sans authentification sur toutes les routes
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
+                        // Routes publiques : authentification, documentation, catalogues ouverts
                         .requestMatchers(
                                 "/api/auth/**",
                                 "/api/v1/authentification/**",
@@ -87,6 +114,11 @@ public class SecurityConfig {
         return http.build();
     }
 
+    /**
+     * Source CORS utilisée par Spring Security ({@code cors(Customizer.withDefaults())}).
+     *
+     * @return configuration alignée sur le front Angular local
+     */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();

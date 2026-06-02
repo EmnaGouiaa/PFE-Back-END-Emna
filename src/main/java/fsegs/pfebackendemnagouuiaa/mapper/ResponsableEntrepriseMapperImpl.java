@@ -5,9 +5,15 @@ import fsegs.pfebackendemnagouuiaa.entities.ResponsableEntreprise;
 import fsegs.pfebackendemnagouuiaa.mapper.ResponsableEntrepriseMapper;
 import org.springframework.stereotype.Component;
 
+/**
+ * Implémentation Spring de {@link ResponsableEntrepriseMapper}.
+ * <p>
+ * Utilisée par {@link fsegs.pfebackendemnagouuiaa.services.ResponsableEntrepriseServiceImpl}.
+ */
 @Component
 public class ResponsableEntrepriseMapperImpl implements ResponsableEntrepriseMapper {
 
+    /** {@inheritDoc} */
     @Override
     public ResponsableEntrepriseDto toDto(ResponsableEntreprise entity) {
         if (entity == null) {
@@ -31,6 +37,11 @@ public class ResponsableEntrepriseMapperImpl implements ResponsableEntrepriseMap
         return dto;
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * {@code actif} est fixé à {@code true} : le constructeur vide n'applique pas la valeur @Builder.Default.
+     */
     @Override
     public ResponsableEntreprise toEntity(ResponsableEntrepriseDto dto) {
         if (dto == null) {
@@ -45,8 +56,6 @@ public class ResponsableEntrepriseMapperImpl implements ResponsableEntrepriseMap
         entity.setTelephone(dto.getTelephone());
         entity.setPoste(dto.getPoste());
         entity.setService(dto.getService());
-        // @Builder.Default is not honoured by the no-arg constructor; set explicitly so that
-        // newly created accounts have actif=true instead of null in the DB.
         entity.setActif(true);
         return entity;
     }

@@ -150,29 +150,29 @@ public class CompanyValidationServiceImpl implements CompanyValidationService {
 
     private CompanyValidationItemDto rejectStage(Long stageId, String commentaire) {
         Stage stage = getManagedStage(stageId);
-        stage.setStatut(StatutStage.REFUSE);
-        Stage saved = stageRepository.save(stage);
+        CompanyValidationItemDto response = buildStageValidationItem(stage);
 
-        notifyStudent(saved, "Stage refusé",
-                "Le stage " + safeStageTitle(saved) + " a été refusé par votre entreprise. Motif : " + commentaire);
-        notifyAcademicSupervisor(saved, "Stage refusé cété entreprise",
-                "Le stage " + safeStageTitle(saved) + " a été refusé par le représentant entreprise. Motif : " + commentaire);
+        notifyStudent(stage, "Stage refusé",
+                "Le stage " + safeStageTitle(stage) + " a été refusé par votre entreprise. Motif : " + commentaire);
+        notifyAcademicSupervisor(stage, "Stage refusé cété entreprise",
+                "Le stage " + safeStageTitle(stage) + " a été refusé par le représentant entreprise. Motif : " + commentaire);
 
-        return buildStageValidationItem(saved);
+        stageService.supprimerStageAutomatiquementApresRefus(stage.getId());
+        return response;
     }
 
     private CompanyValidationItemDto rejectSubject(Long stageId, String commentaire) {
         Stage stage = getManagedStage(stageId);
         stage.setStatutSujet(StatutValidation.REFUSEE);
-        stage.setStatut(StatutStage.REFUSE);
-        Stage saved = stageRepository.save(stage);
+        CompanyValidationItemDto response = buildSubjectValidationItem(stage);
 
-        notifyStudent(saved, "Sujet de stage refusé",
-                "Le sujet du stage " + safeStageTitle(saved) + " a été refusé par votre entreprise. Motif : " + commentaire);
-        notifyAcademicSupervisor(saved, "Sujet de stage refusé cété entreprise",
-                "Le sujet du stage " + safeStageTitle(saved) + " a été refusé par le représentant entreprise. Motif : " + commentaire);
+        notifyStudent(stage, "Sujet de stage refusé",
+                "Le sujet du stage " + safeStageTitle(stage) + " a été refusé par votre entreprise. Motif : " + commentaire);
+        notifyAcademicSupervisor(stage, "Sujet de stage refusé cété entreprise",
+                "Le sujet du stage " + safeStageTitle(stage) + " a été refusé par le représentant entreprise. Motif : " + commentaire);
 
-        return buildSubjectValidationItem(saved);
+        stageService.supprimerStageAutomatiquementApresRefus(stage.getId());
+        return response;
     }
 
     private CompanyValidationItemDto rejectDocument(Long itemId, String commentaire, String documentType) {
@@ -194,18 +194,18 @@ public class CompanyValidationServiceImpl implements CompanyValidationService {
             throw new IllegalStateException("Impossible de refuser ce document pour un stage déjé démarré ou terminé.");
         }
 
-        stage.setStatut(StatutStage.REFUSE);
-        Stage saved = stageRepository.save(stage);
+        CompanyValidationItemDto response = "CONVENTION".equals(documentType)
+                ? buildConventionValidationItem(stage, conventionStageRepository.findById(itemId).orElseThrow())
+                : buildCahierValidationItem(stage, cahierStageRepository.findById(itemId).orElseThrow());
 
         String documentLabel = "CONVENTION".equals(documentType) ? "la convention" : "le cahier de stage";
-        notifyStudent(saved, "Document refusé",
-                "Votre entreprise a refusé " + documentLabel + " du stage " + safeStageTitle(saved) + ". Motif : " + commentaire);
-        notifyAcademicSupervisor(saved, "Document refusé cété entreprise",
-                "Le représentant entreprise a refusé " + documentLabel + " du stage " + safeStageTitle(saved) + ". Motif : " + commentaire);
+        notifyStudent(stage, "Document refusé",
+                "Votre entreprise a refusé " + documentLabel + " du stage " + safeStageTitle(stage) + ". Motif : " + commentaire);
+        notifyAcademicSupervisor(stage, "Document refusé cété entreprise",
+                "Le représentant entreprise a refusé " + documentLabel + " du stage " + safeStageTitle(stage) + ". Motif : " + commentaire);
 
-        return "CONVENTION".equals(documentType)
-                ? buildConventionValidationItem(saved, conventionStageRepository.findById(itemId).orElseThrow())
-                : buildCahierValidationItem(saved, cahierStageRepository.findById(itemId).orElseThrow());
+        stageService.supprimerStageAutomatiquementApresRefus(stage.getId());
+        return response;
     }
 
     private Stage getManagedStage(Long stageId) {

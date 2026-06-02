@@ -13,6 +13,8 @@ public interface ReunionFinaleRepository extends JpaRepository<ReunionFinale, Lo
 
     List<ReunionFinale> findByStageId(Long stageId);
 
+    List<ReunionFinale> findByStageIdAndParticipants_Id(Long stageId, Long participantId);
+
     Optional<ReunionFinale> findFirstByStageIdOrderByIdAsc(Long stageId);
 
     Optional<ReunionFinale> findFirstByStageIdOrderByIdDesc(Long stageId);

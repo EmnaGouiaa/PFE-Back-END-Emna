@@ -4,9 +4,16 @@ import fsegs.pfebackendemnagouuiaa.dto.EncadrantAcademiqueDto;
 import fsegs.pfebackendemnagouuiaa.entities.EncadrantAcademique;
 import org.springframework.stereotype.Component;
 
+/**
+ * Implémentation Spring de {@link EncadrantAcademiqueMapper}.
+ * <p>
+ * Conversion symétrique via le pattern builder Lombok, consommée par
+ * {@link fsegs.pfebackendemnagouuiaa.services.EncadrantAcademiqueServiceImpl}.
+ */
 @Component
 public class EncadrantAcademiqueMapperImpl implements EncadrantAcademiqueMapper {
 
+    /** {@inheritDoc} */
     @Override
     public EncadrantAcademiqueDto toDto(EncadrantAcademique entity) {
         if (entity == null)
@@ -24,6 +31,7 @@ public class EncadrantAcademiqueMapperImpl implements EncadrantAcademiqueMapper 
                 .build();
     }
 
+    /** {@inheritDoc} */
     @Override
     public EncadrantAcademique toEntity(EncadrantAcademiqueDto dto) {
         if (dto == null)

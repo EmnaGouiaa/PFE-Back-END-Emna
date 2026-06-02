@@ -2,6 +2,7 @@ package fsegs.pfebackendemnagouuiaa.services;
 
 import fsegs.pfebackendemnagouuiaa.dto.AdminCompanyAccountRequest;
 import fsegs.pfebackendemnagouuiaa.dto.AdminCompanyAccountResponse;
+import fsegs.pfebackendemnagouuiaa.validation.PersonNameValidation;
 import fsegs.pfebackendemnagouuiaa.dto.CreateRepresentantEntrepriseRequest;
 import fsegs.pfebackendemnagouuiaa.dto.EntrepriseDto;
 import fsegs.pfebackendemnagouuiaa.dto.RepresentantEntrepriseResponse;
@@ -127,6 +128,13 @@ public class AdminCompanyAccountServiceImpl implements AdminCompanyAccountServic
                 .orElseThrow(() -> new EntityNotFoundException("Entreprise introuvable avec l'id : " + entrepriseId));
 
         ResponsableEntreprise representant = resolveRepresentant(entrepriseId, request.getRepresentantId());
+        contactUniquenessService.assertEntrepriseEmailUnchanged(entreprise.getEmail(), request.getEmailEntreprise());
+        if (representant != null) {
+            contactUniquenessService.assertResponsableEntrepriseEmailUnchanged(
+                    representant.getEmail(),
+                    request.getEmailResponsable()
+            );
+        }
         NormalizedCompanyAccountRequest normalized = normalizeForUpdate(request, entrepriseId, representant != null ? representant.getId() : null);
 
         boolean createdRepresentative = false;
@@ -137,7 +145,6 @@ public class AdminCompanyAccountServiceImpl implements AdminCompanyAccountServic
             final ResponsableEntreprise existingRepresentant = representant;
             persisted = transactionTemplate().execute(status -> {
                 entreprise.setNom(normalized.nomEntreprise());
-                entreprise.setEmail(normalized.emailEntreprise());
                 entreprise.setTelephone(normalized.telephoneEntreprise());
                 entreprise.setAdresse(normalized.adresse());
                 entreprise.setSecteurActivite(normalized.secteurActivite());
@@ -147,7 +154,6 @@ public class AdminCompanyAccountServiceImpl implements AdminCompanyAccountServic
                 if (existingRepresentant != null) {
                     existingRepresentant.setNom(normalized.nomResponsable());
                     existingRepresentant.setPrenom(normalized.prenomResponsable());
-                    existingRepresentant.setEmail(normalized.emailResponsable());
                     existingRepresentant.setTelephone(normalized.telephoneResponsable());
                     existingRepresentant.setRole(Role.RESPONSABLE_ENTREPRISE);
                     existingRepresentant.setEntreprise(updatedEntreprise);
@@ -289,14 +295,19 @@ public class AdminCompanyAccountServiceImpl implements AdminCompanyAccountServic
             contactUniquenessService.validateEntrepriseContactForCreate(entrepriseEmail, entrepriseTelephone);
             contactUniquenessService.validateUserContactForCreate(responsableEmail, responsableTelephone);
 
+            String nomResponsable = request.getNomResponsable().trim();
+            String prenomResponsable = request.getPrenomResponsable().trim();
+            PersonNameValidation.requireValid(nomResponsable, "Le nom du responsable");
+            PersonNameValidation.requireValid(prenomResponsable, "Le prenom du responsable");
+
             return new NormalizedCompanyAccountRequest(
                     request.getNomEntreprise().trim(),
                     entrepriseEmail,
                     entrepriseTelephone,
                     trimToNull(request.getAdresse()),
                     trimToNull(request.getSecteurActivite()),
-                    request.getNomResponsable().trim(),
-                    request.getPrenomResponsable().trim(),
+                    nomResponsable,
+                    prenomResponsable,
                     responsableEmail,
                     responsableTelephone
             );
@@ -346,14 +357,19 @@ public class AdminCompanyAccountServiceImpl implements AdminCompanyAccountServic
             contactUniquenessService.validateEntrepriseContactForUpdate(entrepriseId, entrepriseEmail, entrepriseTelephone);
             contactUniquenessService.validateUserContactForUpdate(representantId, responsableEmail, responsableTelephone);
 
+            String nomResponsable = request.getNomResponsable().trim();
+            String prenomResponsable = request.getPrenomResponsable().trim();
+            PersonNameValidation.requireValid(nomResponsable, "Le nom du responsable");
+            PersonNameValidation.requireValid(prenomResponsable, "Le prenom du responsable");
+
             return new NormalizedCompanyAccountRequest(
                     request.getNomEntreprise().trim(),
                     entrepriseEmail,
                     entrepriseTelephone,
                     trimToNull(request.getAdresse()),
                     trimToNull(request.getSecteurActivite()),
-                    request.getNomResponsable().trim(),
-                    request.getPrenomResponsable().trim(),
+                    nomResponsable,
+                    prenomResponsable,
                     responsableEmail,
                     responsableTelephone
             );

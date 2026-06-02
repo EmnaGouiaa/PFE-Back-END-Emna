@@ -24,6 +24,9 @@ import java.io.Serializable;
  * {@code @Data} (ici remplacé par les annotations granulaires) génère déjà
  * {@code equals} et {@code hashCode} — la double annotation était sans effet
  * mais créait une confusion de lecture.
+ *
+ * <h3>Consommation applicative</h3>
+ * {@code NoteAttribueeServiceImpl}, {@code FicheEvaluationServiceImpl}.
  */
 @Embeddable
 @Getter                 // Pas de @Setter : la clé est immuable une fois assignée

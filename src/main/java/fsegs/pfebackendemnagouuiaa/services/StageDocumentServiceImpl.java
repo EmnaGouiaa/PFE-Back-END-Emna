@@ -1,7 +1,5 @@
 package fsegs.pfebackendemnagouuiaa.services;
 
-import com.itextpdf.io.image.ImageData;
-import com.itextpdf.io.image.ImageDataFactory;
 import com.itextpdf.kernel.colors.Color;
 import com.itextpdf.kernel.colors.ColorConstants;
 import com.itextpdf.kernel.colors.DeviceRgb;
@@ -24,6 +22,7 @@ import com.itextpdf.layout.properties.VerticalAlignment;
 import fsegs.pfebackendemnagouuiaa.dto.CahierStageDto;
 import fsegs.pfebackendemnagouuiaa.dto.ConventionStageDto;
 import fsegs.pfebackendemnagouuiaa.dto.FicheEvaluationDto;
+import fsegs.pfebackendemnagouuiaa.dto.DocumentSignatoryStatusDto;
 import fsegs.pfebackendemnagouuiaa.dto.StageDocumentActionResponseDto;
 import fsegs.pfebackendemnagouuiaa.dto.StageDocumentStatusDto;
 import fsegs.pfebackendemnagouuiaa.dto.StageDocumentsOverviewDto;
@@ -49,24 +48,21 @@ import fsegs.pfebackendemnagouuiaa.repository.ReunionRepository;
 import fsegs.pfebackendemnagouuiaa.repository.ReunionFinaleRepository;
 import fsegs.pfebackendemnagouuiaa.repository.StageRepository;
 import fsegs.pfebackendemnagouuiaa.repository.UtilisateurRepository;
+import fsegs.pfebackendemnagouuiaa.service.LogbookMeetingSupport;
+import fsegs.pfebackendemnagouuiaa.services.pdf.InternshipPdfEvaluationFormat;
+import fsegs.pfebackendemnagouuiaa.exception.BusinessException;
 import fsegs.pfebackendemnagouuiaa.security.JwtService;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayOutputStream;
-import java.net.URI;
-import java.net.URL;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -77,6 +73,38 @@ import java.util.Optional;
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
 public class StageDocumentServiceImpl implements StageDocumentService {
+
+//    1. findById(stageId)
+//   → cherche le stage en base de données
+//   → si introuvable : exception 404 "Stage introuvable"
+//         ↓
+//2. authorizeLinkedStageAccess(stage)
+//   → récupère l'utilisateur connecté depuis le JWT
+//   → vérifie qu'il est bien lié à ce stage
+//   → si non autorisé : exception 403 "Accès refusé"
+//         ↓
+//3. ensureStageEligibleForDocuments(stage)
+//   → vérifie que le stage n'est pas REFUSE
+//   → si refusé : exception "Documents indisponibles"
+    private static final List<RoleSignature> CONVENTION_SIGNATORIES = List.of(
+            RoleSignature.STAGIAIRE,
+            RoleSignature.ENCADRANT_ACADEMIQUE,
+            RoleSignature.ENCADRANT_PROFESSIONNEL,
+            RoleSignature.RESPONSABLE_ENTREPRISE,
+            RoleSignature.RESPONSABLE_UNIVERSITAIRE
+    );
+
+    private static final List<RoleSignature> LOGBOOK_SIGNATORIES = List.of(
+            RoleSignature.STAGIAIRE,
+            RoleSignature.ENCADRANT_ACADEMIQUE,
+            RoleSignature.ENCADRANT_PROFESSIONNEL,
+            RoleSignature.RESPONSABLE_ENTREPRISE
+    );
+
+    private static final List<RoleSignature> EVALUATION_SIGNATORIES = List.of(
+            RoleSignature.ENCADRANT_PROFESSIONNEL,
+            RoleSignature.RESPONSABLE_ENTREPRISE
+    );
 
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("dd/MM/yyyy");
     private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
@@ -103,13 +131,17 @@ public class StageDocumentServiceImpl implements StageDocumentService {
     private final AbsenceRepository absenceRepository;
     private final UtilisateurRepository utilisateurRepository;
     private final ConventionStageService conventionStageService;
+    private final ConventionStagePdfService conventionStagePdfService;
+    private final CahierStagePdfService cahierStagePdfService;
+    private final FicheEvaluationPdfService ficheEvaluationPdfService;
     private final FicheEvaluationService ficheEvaluationService;
+    private final EvaluationSheetBootstrapService evaluationSheetBootstrapService;
     private final CahierStageService cahierStageService;
     private final TrelloService trelloService;
     private final JwtService jwtService;
-
-    @Value("${app.signature.base-dir:}")
-    private String signatureBaseDir;
+    private final FinalStageDocumentPdfAccessService finalStageDocumentPdfAccessService;
+    private final ConventionStagePdfAccessService conventionStagePdfAccessService;
+    private final SignatureImagePdfHelper signatureImagePdfHelper;
 
     private record SignaturePdfRow(
             String signer,
@@ -124,9 +156,11 @@ public class StageDocumentServiceImpl implements StageDocumentService {
     private record TrelloSnapshot(boolean synchronizedBoard, List<Map<String, Object>> tasks, Map<String, String> listNames) {}
 
     @Override
+    @Transactional
     public List<StageDocumentsOverviewDto> listStageDocuments() {
         return stageRepository.findAll()
                 .stream()
+                .filter(this::isEligibleForStageDocuments)
                 .sorted(Comparator.comparing(Stage::getId).reversed())
                 .map(this::toOverview)
                 .filter(this::hasVisibleDocuments)
@@ -134,6 +168,7 @@ public class StageDocumentServiceImpl implements StageDocumentService {
     }
 
     @Override
+    @Transactional
     public StageDocumentsOverviewDto getStageDocuments(Long stageId) {
         return toOverview(getAuthorizedStage(stageId));
     }
@@ -143,10 +178,9 @@ public class StageDocumentServiceImpl implements StageDocumentService {
     public StageDocumentActionResponseDto generateConventionPdf(Long stageId) {
         Stage stage = getAuthorizedStage(stageId);
         ensureConventionVisible(stage, conventionStageRepository.findByStageId(stageId));
-        ConventionStage convention = getOrCreateConventionForProcess(stage);
-        validateNoBlockingReasons(getConventionPdfBlockingReasons(stage, convention));
+        getOrCreateConventionForProcess(stage);
         return new StageDocumentActionResponseDto(
-                "La convention finale est prete pour generation.",
+                "La convention de stage est initialisee.",
                 getStageDocuments(stageId)
         );
     }
@@ -185,7 +219,30 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         ensureConventionVisible(stage, Optional.of(convention));
         validateNoBlockingReasons(getConventionPdfBlockingReasons(stage, convention));
 
-        return createConventionPdf(stage, convention);
+        return generateConventionPdfBytes(stage, convention);
+    }
+
+    @Override
+    public byte[] getConventionPdfByConventionId(Long conventionId) {
+        ConventionStage convention = conventionStageRepository.findById(conventionId)
+                .orElseThrow(() -> new EntityNotFoundException("Convention introuvable."));
+        if (convention.getStage() == null || convention.getStage().getId() == null) {
+            throw new EntityNotFoundException("Stage introuvable pour cette convention.");
+        }
+        Long stageId = convention.getStage().getId();
+        Stage stage = getAuthorizedStage(stageId);
+        ensureConventionVisible(stage, Optional.of(convention));
+        validateNoBlockingReasons(getConventionPdfBlockingReasons(stage, convention));
+        return generateConventionPdfBytes(stage, convention);
+    }
+
+    private byte[] generateConventionPdfBytes(Stage stage, ConventionStage convention) {
+        try {
+            FicheEvaluation evaluation = ficheEvaluationRepository.findFirstByStageId(stage.getId()).orElse(null);
+            return conventionStagePdfService.generer(stage, convention, evaluation);
+        } catch (java.io.IOException e) {
+            throw new BusinessException("Impossible de generer le PDF de la convention.");
+        }
     }
 
     @Override
@@ -196,7 +253,11 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         ensureEvaluationVisible(stage, Optional.of(fiche));
         validateNoBlockingReasons(getEvaluationPdfBlockingReasons(stage, fiche));
 
-        return createEvaluationPdf(stage, fiche);
+        try {
+            return ficheEvaluationPdfService.generer(stage, fiche);
+        } catch (java.io.IOException e) {
+            throw new BusinessException("Impossible de generer le PDF de la fiche d'evaluation.");
+        }
     }
 
     @Override
@@ -210,8 +271,20 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         return createLogbookPdf(stage, cahierStage);
     }
 
-    private StageDocumentsOverviewDto toOverview(Stage stage) {
+    /**
+     * Cree la convention en base si le stage y est eligible et qu'elle n'existe pas encore
+     * (aligne l'UI « generation autorisee » avec un document initialisable / signable).
+     */
+    private Optional<ConventionStage> resolveConventionForDocuments(Stage stage) {
         Optional<ConventionStage> convention = conventionStageRepository.findByStageId(stage.getId());
+        if (convention.isPresent() || !isConventionProcessTriggered(stage)) {
+            return convention;
+        }
+        return Optional.of(getOrCreateConventionForProcess(stage));
+    }
+
+    private StageDocumentsOverviewDto toOverview(Stage stage) {
+        Optional<ConventionStage> convention = resolveConventionForDocuments(stage);
         Optional<FicheEvaluation> evaluation = ficheEvaluationRepository.findFirstByStageId(stage.getId());
         Optional<CahierStage> cahierStage = cahierStageRepository.findByStageId(stage.getId());
         Role role = getCurrentRole();
@@ -220,6 +293,7 @@ public class StageDocumentServiceImpl implements StageDocumentService {
                 stage.getId(),
                 safeText(stage.getTitre()),
                 stage.getStatut() != null ? stage.getStatut().name() : "-",
+                stage.getDateFin(),
                 buildFullName(stage.getStagiaire() != null ? stage.getStagiaire().getPrenom() : null, stage.getStagiaire() != null ? stage.getStagiaire().getNom() : null),
                 stage.getEntreprise() != null ? safeText(stage.getEntreprise().getNom()) : "-",
                 buildFullName(stage.getEncadrantAcademique() != null ? stage.getEncadrantAcademique().getPrenom() : null, stage.getEncadrantAcademique() != null ? stage.getEncadrantAcademique().getNom() : null),
@@ -238,12 +312,14 @@ public class StageDocumentServiceImpl implements StageDocumentService {
 
     private StageDocumentStatusDto buildConventionStatus(Stage stage, Optional<ConventionStage> convention) {
         if (convention.isEmpty()) {
-            return missingStatus(
+            StageDocumentStatusDto missing = missingStatus(
                     "CONVENTION",
                     "Convention de stage",
                     "Convention non generee pour ce stage.",
                     isConventionProcessTriggered(stage)
             );
+            applyPendingConventionSignatureFlags(missing);
+            return missing;
         }
 
         ConventionStage item = convention.get();
@@ -255,68 +331,95 @@ public class StageDocumentServiceImpl implements StageDocumentService {
                 blockers.isEmpty(),
                 true,
                 isConventionProcessTriggered(stage),
-                blockers.isEmpty() ? "Disponible" : "En attente de signatures",
+                blockers.isEmpty() ? "Disponible" : "PDF indisponible",
                 joinReasons(blockers)
         );
         status.setSigneeParResponsableUniversitaire(item.estSignePar(RoleSignature.RESPONSABLE_UNIVERSITAIRE));
         status.setDateSignatureResponsableUniversitaire(formatDateTime(
                 item.getSignaturePour(RoleSignature.RESPONSABLE_UNIVERSITAIRE)
                         .map(Signature::getDateSignature).orElse(null)));
+        applyConventionSignatureFlags(status, item);
         return status;
     }
 
     private StageDocumentStatusDto buildEvaluationStatus(Stage stage, Optional<FicheEvaluation> evaluation) {
         if (evaluation.isPresent()) {
             List<String> blockers = getEvaluationPdfBlockingReasons(stage, evaluation.get());
-            return documentStatus(
+            FicheEvaluation fiche = evaluation.get();
+            String libelle = blockers.isEmpty() ? "Disponible" : "PDF indisponible";
+            StageDocumentStatusDto status = documentStatus(
                     "FICHE_EVALUATION",
                     "Fiche d'evaluation",
-                    evaluation.get().getId(),
+                    fiche.getId(),
                     blockers.isEmpty(),
                     true,
                     blockers.isEmpty(),
-                    blockers.isEmpty() ? "Disponible" : "Incomplete",
+                    libelle,
                     joinReasons(blockers)
             );
+            applyEvaluationSignatureFlags(status, fiche);
+            return status;
         }
 
         String reason = "Fiche d'evaluation non generee pour ce stage.";
-        if (stage.getStatut() != StatutStage.TERMINE) {
-            reason = "La fiche d'evaluation peut etre generee quand le stage est termine.";
-        } else if (reunionFinaleRepository.findByStageId(stage.getId()).isEmpty()) {
-            reason = "Aucune reunion finale n'est encore liee a ce stage.";
+        if (!EvaluationStageAccessRules.isEvaluationPeriodOpen(stage)) {
+            reason = EvaluationStageAccessRules.UNAVAILABLE_MESSAGE;
         }
 
-        return missingStatus(
+        StageDocumentStatusDto missing = missingStatus(
                 "FICHE_EVALUATION",
                 "Fiche d'evaluation",
                 reason,
                 canCreateEvaluationDraft(stage)
         );
+        applyPendingEvaluationSignatureFlags(missing);
+        return missing;
     }
 
     private StageDocumentStatusDto buildLogbookStatus(Stage stage, Optional<CahierStage> cahierStage) {
+        boolean stageEndReached = FinalStageDocumentPdfAccessService.isStageEndDateReached(stage);
+
         if (cahierStage.isEmpty()) {
-            return missingStatus(
+            List<String> draftBlockers = getLogbookDraftCreationBlockingReasons(stage);
+            String reason;
+            if (!stageEndReached) {
+                reason = "Le cahier de stage est en preparation jusqu'a la date de fin du stage.";
+            } else if (draftBlockers.isEmpty()) {
+                reason = "Le cahier de stage n'est pas encore initialise.";
+            } else {
+                reason = "Le cahier de stage n'est pas encore disponible. " + joinReasons(draftBlockers);
+            }
+            boolean generationAutorisee = stageEndReached && draftBlockers.isEmpty();
+            StageDocumentStatusDto missing = missingStatus(
                     "CAHIER_STAGE",
                     "Cahier de stage",
-                    joinReasons(getLogbookDraftCreationBlockingReasons(stage)),
-                    getLogbookDraftCreationBlockingReasons(stage).isEmpty()
+                    reason,
+                    generationAutorisee
             );
+            missing.setStatut(stageEndReached ? "Manquant" : "En préparation");
+            applyPendingLogbookSignatureFlags(missing);
+            return missing;
         }
 
         CahierStage item = cahierStage.get();
         List<String> blockers = getLogbookPdfBlockingReasons(stage, item);
-        return documentStatus(
+        boolean ready = blockers.isEmpty();
+        String statutLabel = ready
+                ? "Disponible"
+                : (stageEndReached ? "Conditions non satisfaites" : "En préparation");
+
+        StageDocumentStatusDto status = documentStatus(
                 "CAHIER_STAGE",
                 "Cahier de stage",
                 item.getId(),
-                blockers.isEmpty(),
+                ready,
                 true,
-                blockers.isEmpty(),
-                blockers.isEmpty() ? "Disponible" : "Conditions non satisfaites",
+                ready,
+                statutLabel,
                 joinReasons(blockers)
         );
+        applyLogbookSignatureFlags(status, item);
+        return status;
     }
 
     private StageDocumentStatusDto documentStatus(String code,
@@ -330,15 +433,70 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         StatutDocument statutDocument = resolveStatutDocument(disponible, genere, raison);
         StageDocumentStatusDto dto = new StageDocumentStatusDto(
                 code, libelle, documentId, disponible, genere, generationAutorisee,
-                statut, raison, false, "", statutDocument);
+                statut, raison, false, "",
+                new ArrayList<>(),
+                statutDocument);
         return dto;
     }
 
     private StageDocumentStatusDto missingStatus(String code, String libelle, String reason, boolean generationAutorisee) {
         StageDocumentStatusDto dto = new StageDocumentStatusDto(
                 code, libelle, null, false, false, generationAutorisee,
-                "Manquant", reason, false, "", StatutDocument.BROUILLON);
+                "Manquant", reason, false, "",
+                new ArrayList<>(),
+                StatutDocument.BROUILLON);
         return dto;
+    }
+
+    private void applyConventionSignatureFlags(StageDocumentStatusDto dto, ConventionStage convention) {
+        dto.setSignataires(buildSignatoryStatuses(CONVENTION_SIGNATORIES, convention::estSignePar));
+    }
+
+    private void applyPendingConventionSignatureFlags(StageDocumentStatusDto dto) {
+        dto.setSignataires(buildPendingSignatoryStatuses(CONVENTION_SIGNATORIES));
+    }
+
+    private void applyLogbookSignatureFlags(StageDocumentStatusDto dto, CahierStage cahier) {
+        dto.setSignataires(buildLogbookSignatoryStatuses(cahier));
+    }
+
+    private void applyPendingLogbookSignatureFlags(StageDocumentStatusDto dto) {
+        dto.setSignataires(buildPendingSignatoryStatuses(LOGBOOK_SIGNATORIES));
+    }
+
+    private void applyEvaluationSignatureFlags(StageDocumentStatusDto dto, FicheEvaluation fiche) {
+        dto.setSignataires(buildSignatoryStatuses(EVALUATION_SIGNATORIES, fiche::estSignePar));
+    }
+
+    private void applyPendingEvaluationSignatureFlags(StageDocumentStatusDto dto) {
+        dto.setSignataires(buildPendingSignatoryStatuses(EVALUATION_SIGNATORIES));
+    }
+
+    private List<DocumentSignatoryStatusDto> buildSignatoryStatuses(
+            List<RoleSignature> roles,
+            java.util.function.Predicate<RoleSignature> signedPredicate) {
+        List<DocumentSignatoryStatusDto> result = new ArrayList<>();
+        for (RoleSignature role : roles) {
+            result.add(new DocumentSignatoryStatusDto(
+                    role.name(),
+                    signatoryLabel(role),
+                    signedPredicate.test(role)));
+        }
+        return result;
+    }
+
+    private List<DocumentSignatoryStatusDto> buildPendingSignatoryStatuses(List<RoleSignature> roles) {
+        return buildSignatoryStatuses(roles, role -> false);
+    }
+
+    private String signatoryLabel(RoleSignature role) {
+        return switch (role) {
+            case STAGIAIRE -> "Stagiaire";
+            case ENCADRANT_ACADEMIQUE -> "Encadrant academique";
+            case ENCADRANT_PROFESSIONNEL -> "Encadrant professionnel";
+            case RESPONSABLE_ENTREPRISE -> "Responsable entreprise";
+            case RESPONSABLE_UNIVERSITAIRE -> "Responsable universitaire";
+        };
     }
 
     /**
@@ -375,10 +533,8 @@ public class StageDocumentServiceImpl implements StageDocumentService {
                     STAGIAIRE,
                     ENCADRANT_ACADEMIQUE,
                     ENCADRANT_PROFESSIONNEL,
-                    RESPONSABLE_STAGE -> true;
-            case RESPONSABLE_ENTREPRISE -> convention
-                    .map(item -> !item.estSignePar(RoleSignature.RESPONSABLE_ENTREPRISE))
-                    .orElse(false);
+                    RESPONSABLE_STAGE,
+                    RESPONSABLE_ENTREPRISE -> true;
             default -> false;
         };
     }
@@ -409,10 +565,8 @@ public class StageDocumentServiceImpl implements StageDocumentService {
                     STAGIAIRE,
                     ENCADRANT_ACADEMIQUE,
                     ENCADRANT_PROFESSIONNEL,
-                    RESPONSABLE_STAGE -> true;
-            case RESPONSABLE_ENTREPRISE -> cahierStage
-                    .map(item -> !item.estSignePar(RoleSignature.RESPONSABLE_ENTREPRISE))
-                    .orElse(false);
+                    RESPONSABLE_STAGE,
+                    RESPONSABLE_ENTREPRISE -> true;
             default -> false;
         };
     }
@@ -457,145 +611,79 @@ public class StageDocumentServiceImpl implements StageDocumentService {
     }
 
     private FicheEvaluation getOrCreateEvaluationForProcess(Stage stage) {
-        Optional<FicheEvaluation> existing = ficheEvaluationRepository.findFirstByStageId(stage.getId());
-        if (existing.isPresent()) {
-            return existing.get();
-        }
+        EvaluationStageAccessRules.ensureEvaluationPeriodOpen(stage);
         if (!canCreateEvaluationDraft(stage)) {
             throw new IllegalStateException(buildEvaluationDraftMissingReason(stage));
         }
-
-        ReunionFinale reunionFinale = reunionFinaleRepository.findByStageId(stage.getId())
-                .stream()
-                .max(Comparator.comparing(ReunionFinale::getId))
-                .orElseThrow(() -> new IllegalStateException("Aucune reunion finale n'est disponible pour ce stage."));
-
-        FicheEvaluationDto ficheEvaluationDto = new FicheEvaluationDto();
-        ficheEvaluationDto.setStageId(stage.getId());
-        ficheEvaluationDto.setStageTitre(stage.getTitre());
-        ficheEvaluationDto.setReunionFinaleId(reunionFinale.getId());
-        ficheEvaluationDto.setPointFortEncadrantPro("");
-        ficheEvaluationDto.setAxeAmeliorationEncadrantPro("");
-        ficheEvaluationDto.setPointFortResponsableEntreprise("");
-        ficheEvaluationDto.setAxeAmeliorationResponsableEntreprise("");
-        ficheEvaluationDto.setNoteFinale(0.0);
-        ficheEvaluationDto.setDonneesCompletes(false);
-        ficheEvaluationDto.setSignaturesCompletes(false);
-        ficheEvaluationDto.setComplete(false);
-        ficheEvaluationDto.setVerrouillee(false);
-        ficheEvaluationService.create(ficheEvaluationDto);
-        return ficheEvaluationRepository.findFirstByStageId(stage.getId())
-                .orElseThrow(() -> new IllegalStateException("Fiche d'evaluation introuvable pour ce stage."));
+        return evaluationSheetBootstrapService.ensureSheetExists(stage.getId());
     }
 
     private void validateConventionProcessTriggered(Stage stage) {
         if (!isConventionProcessTriggered(stage)) {
-            throw new IllegalStateException("La convention ne peut etre lancee qu'apres la validation du sujet par l'encadrant academique.");
+            throw new IllegalStateException("La convention n'est pas disponible pour un stage refuse ou annule.");
         }
     }
 
+    /**
+     * Autorise l'initialisation de la convention dès la création du stage,
+     * sans attendre la date de début ni le passage en {@link StatutStage#EN_COURS}.
+     */
     private boolean isConventionProcessTriggered(Stage stage) {
-        return stage != null
-                && (stage.getStatutSujet() != null && "VALIDEE".equals(stage.getStatutSujet().name())
-                || stage.getStatut() == StatutStage.EN_COURS
-                || stage.getStatut() == StatutStage.TERMINE);
+        if (stage == null || stage.getId() == null) {
+            return false;
+        }
+        StatutStage statut = stage.getStatut();
+        return statut != StatutStage.REFUSE && statut != StatutStage.ANNULE;
     }
 
     private boolean canCreateEvaluationDraft(Stage stage) {
-        return stage.getStatut() == StatutStage.TERMINE && !reunionFinaleRepository.findByStageId(stage.getId()).isEmpty();
+        return EvaluationStageAccessRules.isEvaluationPeriodOpen(stage);
     }
 
     private String buildEvaluationDraftMissingReason(Stage stage) {
-        if (stage.getStatut() != StatutStage.TERMINE) {
-            return "La fiche d'evaluation ne peut etre initialisee que pour un stage termine.";
+        if (!EvaluationStageAccessRules.isEvaluationPeriodOpen(stage)) {
+            return EvaluationStageAccessRules.UNAVAILABLE_MESSAGE;
         }
-        return "Aucune reunion finale n'est disponible pour ce stage.";
+        return "La fiche d'evaluation n'est pas encore disponible pour ce stage.";
     }
 
     private List<String> getConventionPdfBlockingReasons(Stage stage, ConventionStage convention) {
-        List<String> reasons = new ArrayList<>();
-        validateCondition(isConventionProcessTriggered(stage), reasons, "Le sujet du stage n'a pas encore ete valide par l'encadrant academique.");
-        validateCondition(convention != null, reasons, "La convention de stage n'est pas encore disponible.");
-        if (convention != null) {
-            addMissingSignatureReasons(reasons, List.of(
-                    signatureRequirement(convention.estSignePar(RoleSignature.STAGIAIRE), "Signature stagiaire manquante."),
-                    signatureRequirement(convention.estSignePar(RoleSignature.ENCADRANT_ACADEMIQUE), "Signature encadrant academique manquante."),
-                    signatureRequirement(convention.estSignePar(RoleSignature.ENCADRANT_PROFESSIONNEL), "Signature encadrant professionnel manquante."),
-                    signatureRequirement(convention.estSignePar(RoleSignature.RESPONSABLE_ENTREPRISE), "Signature representant entreprise manquante."),
-                    signatureRequirement(convention.estSignePar(RoleSignature.RESPONSABLE_UNIVERSITAIRE), "Signature responsable universitaire manquante.")
-            ));
-        }
-        return reasons;
+        return conventionStagePdfAccessService.collectBlockingReasons(stage, convention);
     }
 
     private List<String> getEvaluationPdfBlockingReasons(Stage stage, FicheEvaluation fiche) {
-        List<String> reasons = new ArrayList<>();
-        validateCondition(fiche != null, reasons, "La fiche d'evaluation n'est pas encore disponible.");
-        validateCondition(stage.getDateFin() != null, reasons, "La date de fin du stage est absente.");
-        if (stage.getDateFin() != null) {
-            validateCondition(!LocalDate.now().isBefore(stage.getDateFin()), reasons,
-                    "La fiche d'evaluation ne peut etre imprimee qu'a partir de la date de fin du stage.");
-        }
-        if (fiche != null) {
-            validateCondition(fiche.donneesCompletes(), reasons, "La fiche d'evaluation est incomplete : le formulaire doit etre entierement renseigne.");
-            addMissingSignatureReasons(reasons, List.of(
-                    signatureRequirement(fiche.estSignePar(RoleSignature.ENCADRANT_PROFESSIONNEL), "Signature encadrant professionnel manquante."),
-                    signatureRequirement(fiche.estSignePar(RoleSignature.RESPONSABLE_ENTREPRISE), "Signature representant entreprise manquante.")
-            ));
-        }
-        return reasons;
+        return finalStageDocumentPdfAccessService.collectEvaluationPdfBlockingReasons(stage, fiche);
     }
 
     private List<String> getLogbookDraftCreationBlockingReasons(Stage stage) {
         List<String> reasons = new ArrayList<>();
-
-        // Condition obligatoire : la date systeme doit etre EGALE a la date de fin du stage.
-        validateCondition(stage.getDateFin() != null, reasons, "La date de fin du stage est absente.");
-        if (stage.getDateFin() != null) {
-            validateCondition(LocalDate.now().isEqual(stage.getDateFin()),
-                    reasons,
-                    "Le cahier de stage ne peut etre genere que le jour de la date de fin du stage.");
+        if (stage == null || stage.getStatut() == StatutStage.REFUSE || stage.getStatut() == StatutStage.ANNULE) {
+            reasons.add("Le cahier de stage n'est pas disponible pour un stage refuse ou annule.");
         }
-
-        // Condition obligatoire : au moins une observation de reunion doit etre disponible.
-        validateCondition(!getMeetingsWithObservations(stage.getId()).isEmpty(),
-                reasons,
-                "Aucune observation de reunion n'est disponible pour ce stage.");
-
-        // Trello optionnel : si un tableau Trello est rattache au stage, sa synchronisation
-        // doit reussir. En l'absence de lien Trello, cela ne bloque pas la generation.
-        if (hasText(stage.getTrelloBoardId())) {
-            TrelloSnapshot trelloSnapshot = getTrelloSnapshot(stage);
-            validateCondition(trelloSnapshot.synchronizedBoard(),
-                    reasons,
-                    "Les taches Trello n'ont pas pu etre collectees ou synchronisees.");
-        }
-
         return reasons;
     }
 
     private List<String> getLogbookPdfBlockingReasons(Stage stage, CahierStage cahierStage) {
-        List<String> reasons = new ArrayList<>();
-        validateCondition(cahierStage != null, reasons, "Le cahier de stage n'est pas encore initialise.");
-        validateCondition(stage.getDateFin() != null, reasons, "La date de fin du stage est absente.");
-        if (stage.getDateFin() != null) {
-            validateCondition(!LocalDate.now().isBefore(stage.getDateFin()), reasons,
-                    "Le cahier de stage ne peut etre imprime qu'a partir de la date de fin du stage.");
-        }
-        if (cahierStage != null) {
-            addMissingSignatureReasons(reasons, List.of(
-                    signatureRequirement(cahierStage.estSignePar(RoleSignature.STAGIAIRE), "Signature stagiaire manquante."),
-                    signatureRequirement(cahierStage.estSignePar(RoleSignature.ENCADRANT_ACADEMIQUE), "Signature encadrant academique manquante."),
-                    signatureRequirement(cahierStage.estSignePar(RoleSignature.ENCADRANT_PROFESSIONNEL), "Signature encadrant professionnel manquante."),
-                    signatureRequirement(cahierStage.estSignePar(RoleSignature.RESPONSABLE_ENTREPRISE), "Signature representant entreprise manquante.")
+        return finalStageDocumentPdfAccessService.collectLogbookPdfBlockingReasons(stage, cahierStage);
+    }
+
+    private List<DocumentSignatoryStatusDto> buildLogbookSignatoryStatuses(CahierStage cahier) {
+        List<DocumentSignatoryStatusDto> result = new ArrayList<>();
+        for (RoleSignature role : LOGBOOK_SIGNATORIES) {
+            var signature = cahier.getSignaturePour(role);
+            result.add(new DocumentSignatoryStatusDto(
+                    role.name(),
+                    signatoryLabel(role),
+                    signature.isPresent(),
+                    signature.map(Signature::getDateSignature).orElse(null)
             ));
         }
-        return reasons;
+        return result;
     }
 
     private void validateNoBlockingReasons(List<String> reasons) {
         if (!reasons.isEmpty()) {
-            throw new IllegalStateException(joinReasons(reasons));
+            throw new BusinessException(joinReasons(reasons));
         }
     }
 
@@ -627,174 +715,25 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         return String.join(" ", filtered);
     }
 
-    private byte[] createConventionPdf(Stage stage, ConventionStage convention) {
-        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-        PdfWriter writer = new PdfWriter(outputStream);
-        PdfDocument pdfDocument = new PdfDocument(writer);
-        Document document = new Document(pdfDocument, PageSize.A4);
-        document.setMargins(26, 26, 30, 26);
-
-        document.add(buildConventionHero(convention, stage));
-        document.add(buildConventionSummary(convention, stage));
-
-        document.add(buildDualCard(
-                buildSectionCard("Informations stagiaire", buildInfoContentTable(List.of(
-                        new String[]{"Nom complet", stage.getStagiaire() == null ? "-" : buildFullName(stage.getStagiaire().getPrenom(), stage.getStagiaire().getNom())},
-                        new String[]{"Email", stage.getStagiaire() == null ? "-" : safeText(stage.getStagiaire().getEmail())},
-                        new String[]{"Telephone", stage.getStagiaire() == null ? "-" : safeText(stage.getStagiaire().getTelephone())},
-                        new String[]{"Matricule", stage.getStagiaire() == null ? "-" : safeText(stage.getStagiaire().getMatricule())},
-                        new String[]{"Filiere / niveau", buildStudentTrack(stage)}
-                )), PDF_PRIMARY_SOFT),
-                buildSectionCard("Informations entreprise", buildInfoContentTable(List.of(
-                        new String[]{"Entreprise", stage.getEntreprise() == null ? "-" : safeText(stage.getEntreprise().getNom())},
-                        new String[]{"Adresse", stage.getEntreprise() == null ? "-" : safeText(stage.getEntreprise().getAdresse())},
-                        new String[]{"Email", stage.getEntreprise() == null ? "-" : safeText(stage.getEntreprise().getEmail())},
-                        new String[]{"Telephone", stage.getEntreprise() == null ? "-" : safeText(stage.getEntreprise().getTelephone())},
-                        new String[]{"Representant", buildCompanyRepresentative(stage)}
-                )), PDF_SECONDARY_SOFT)
-        ));
-
-        document.add(buildDualCard(
-                buildSectionCard("Informations stage", buildInfoContentTable(List.of(
-                        new String[]{"Titre", safeText(stage.getTitre())},
-                        new String[]{"Dates", formatDate(convention.getDateDebut()) + " - " + formatDate(convention.getDateFin())},
-                        new String[]{"Duree", stage.getDuree() == null ? "-" : stage.getDuree() + " mois"},
-                        new String[]{"Nombre de semaines", stage.getNbSemaine() == null ? "-" : String.valueOf(stage.getNbSemaine())},
-                        new String[]{"Statut", stage.getStatut() == null ? "-" : stage.getStatut().name()}
-                )), PDF_PRIMARY_SOFT),
-                buildSectionCard("Encadrement", buildInfoContentTable(List.of(
-                        new String[]{"Encadrant academique", stage.getEncadrantAcademique() == null ? "-" : buildFullName(stage.getEncadrantAcademique().getPrenom(), stage.getEncadrantAcademique().getNom())},
-                        new String[]{"Email academique", stage.getEncadrantAcademique() == null ? "-" : safeText(stage.getEncadrantAcademique().getEmail())},
-                        new String[]{"Encadrant professionnel", stage.getEncadrantProfessionnel() == null ? "-" : buildFullName(stage.getEncadrantProfessionnel().getPrenom(), stage.getEncadrantProfessionnel().getNom())},
-                        new String[]{"Email professionnel", stage.getEncadrantProfessionnel() == null ? "-" : safeText(stage.getEncadrantProfessionnel().getEmail())}
-                )), PDF_SECONDARY_SOFT)
-        ));
-
-        document.add(buildSectionCard(
-                "Mission ou sujet",
-                buildNarrativeTable(safeText(stage.getSujet())),
-                PDF_PRIMARY_SOFT
-        ));
-
-        document.add(buildSectionCard(
-                "Section signatures",
-                buildSignatureContentTable(stage, convention),
-                PDF_SECONDARY_SOFT
-        ));
-
-        document.add(new Paragraph("Document administratif officiel genere automatiquement des que les signatures obligatoires sont completes.")
-                .setFontSize(9)
-                .setFontColor(PDF_MUTED)
-                .setMarginTop(8)
-                .setTextAlignment(TextAlignment.RIGHT));
-
-        document.close();
-        return outputStream.toByteArray();
-    }
-
     private byte[] createLogbookPdf(Stage stage, CahierStage cahierStage) {
         TrelloSnapshot trelloSnapshot = getTrelloSnapshot(stage);
-        List<Reunion> meetings = getMeetingsWithObservations(stage.getId());
+        List<Reunion> meetings = getWeeklyMeetingsForLogbook(stage.getId());
         List<Absence> absences = absenceRepository.findByStageId(stage.getId())
                 .stream()
                 .sorted(Comparator.comparing(Absence::getDateAbsence, Comparator.nullsLast(Comparator.naturalOrder())))
                 .toList();
 
-        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
-        PdfWriter writer = new PdfWriter(outputStream);
-        PdfDocument pdfDocument = new PdfDocument(writer);
-        Document document = new Document(pdfDocument, PageSize.A4);
-        document.setMargins(32, 32, 36, 32);
-
-        document.add(new Paragraph("Cahier de stage")
-                .setTextAlignment(TextAlignment.CENTER)
-                .setFontSize(18)
-                .setBold()
-                .setFontColor(ColorConstants.BLACK)
-                .setMarginBottom(4));
-        document.add(new Paragraph("Document final genere apres synchronisation des taches, reunions et absences.")
-                .setTextAlignment(TextAlignment.CENTER)
-                .setFontSize(9)
-                .setFontColor(ColorConstants.GRAY)
-                .setMarginBottom(16));
-
-        document.add(sectionTitle("Informations du stage"));
-        document.add(buildInfoTable(List.of(
-                new String[]{"Titre", safeText(stage.getTitre())},
-                new String[]{"Sujet / mission", safeText(stage.getSujet())},
-                new String[]{"Periode", formatDate(stage.getDateDebut()) + " - " + formatDate(stage.getDateFin())},
-                new String[]{"Stagiaire", stage.getStagiaire() == null ? "-" : buildFullName(stage.getStagiaire().getPrenom(), stage.getStagiaire().getNom())},
-                new String[]{"Entreprise", stage.getEntreprise() == null ? "-" : safeText(stage.getEntreprise().getNom())},
-                new String[]{"Encadrant academique", stage.getEncadrantAcademique() == null ? "-" : buildFullName(stage.getEncadrantAcademique().getPrenom(), stage.getEncadrantAcademique().getNom())},
-                new String[]{"Encadrant professionnel", stage.getEncadrantProfessionnel() == null ? "-" : buildFullName(stage.getEncadrantProfessionnel().getPrenom(), stage.getEncadrantProfessionnel().getNom())},
-                new String[]{"Date de generation", formatDate(cahierStage.getDateGeneration())},
-                new String[]{"Date de signature", formatDate(cahierStage.getDateSignature())}
-        )));
-
-        document.add(sectionTitle("Etat du cahier"));
-        document.add(buildInfoTable(List.of(
-                new String[]{"Signature stagiaire", toStatus(cahierStage.estSignePar(RoleSignature.STAGIAIRE))},
-                new String[]{"Signature encadrant academique", toStatus(cahierStage.estSignePar(RoleSignature.ENCADRANT_ACADEMIQUE))},
-                new String[]{"Signature encadrant professionnel", toStatus(cahierStage.estSignePar(RoleSignature.ENCADRANT_PROFESSIONNEL))},
-                new String[]{"Signature responsable entreprise", toStatus(cahierStage.estSignePar(RoleSignature.RESPONSABLE_ENTREPRISE))},
-                new String[]{"Statut global", cahierStage.estCompletementSigne() ? "Complet" : "Incomplet"}
-        )));
-
-        document.add(sectionTitle("Taches Trello synchronisees"));
-        document.add(buildTrelloTasksTable(trelloSnapshot));
-
-        document.add(sectionTitle("Observations et comptes rendus des reunions"));
-        document.add(buildMeetingsTable(meetings));
-
-        document.add(sectionTitle("Feuille de presence / absences"));
-        document.add(buildAbsenceTable(absences));
-
-        document.add(sectionTitle("Signatures"));
-        document.add(buildSignatureTable(buildLogbookSignatureRows(stage, cahierStage)));
-
-        document.close();
-        return outputStream.toByteArray();
-    }
-
-    private Table buildConventionHero(ConventionStage convention, Stage stage) {
-        Table hero = new Table(UnitValue.createPercentArray(new float[]{2.3f, 1f}))
-                .useAllAvailableWidth()
-                .setMarginBottom(14);
-
-        Cell leftCell = new Cell()
-                .setBackgroundColor(PDF_PRIMARY)
-                .setBorder(Border.NO_BORDER)
-                .setPadding(18);
-
-        leftCell.add(new Paragraph("FSEGS - Gestion des stages")
-                .setFontSize(10)
-                .setBold()
-                .setFontColor(ColorConstants.WHITE)
-                .setMarginBottom(8));
-        leftCell.add(new Paragraph("Convention de stage")
-                .setFontSize(22)
-                .setBold()
-                .setFontColor(ColorConstants.WHITE)
-                .setMarginBottom(6));
-        leftCell.add(new Paragraph("Document officiel de suivi du stage, presente dans une mise en page plus claire et professionnelle.")
-                .setFontSize(10)
-                .setFontColor(new DeviceRgb(226, 232, 240))
-                .setMultipliedLeading(1.3f));
-
-        Cell rightCell = new Cell()
-                .setBackgroundColor(PDF_SECONDARY)
-                .setBorder(Border.NO_BORDER)
-                .setPadding(18);
-
-        rightCell.add(heroMeta("Convention", safeNumber(convention.getNumConv())));
-        rightCell.add(heroMeta("Periode", formatDate(convention.getDateDebut()) + " - " + formatDate(convention.getDateFin())));
-        rightCell.add(heroMeta("Generation", formatDateTime(LocalDateTime.now())));
-        rightCell.add(heroMeta("Statut", convention.estCompletementSigne() ? "Completement signee" : "Signatures en attente"));
-        rightCell.add(heroMeta("Stage", safeText(stage.getTitre())));
-
-        hero.addCell(leftCell);
-        hero.addCell(rightCell);
-        return hero;
+        CahierStagePdfService.TrelloSnapshot trello = new CahierStagePdfService.TrelloSnapshot(
+                trelloSnapshot.synchronizedBoard(),
+                trelloSnapshot.tasks(),
+                trelloSnapshot.listNames()
+        );
+        try {
+            FicheEvaluation evaluation = ficheEvaluationRepository.findFirstByStageId(stage.getId()).orElse(null);
+            return cahierStagePdfService.generer(stage, cahierStage, trello, meetings, absences, evaluation);
+        } catch (java.io.IOException e) {
+            throw new BusinessException("Impossible de generer le PDF du cahier de stage.");
+        }
     }
 
     private Paragraph heroMeta(String label, String value) {
@@ -808,24 +747,6 @@ public class StageDocumentServiceImpl implements StageDocumentService {
                         .setBold()
                         .setFontColor(ColorConstants.WHITE))
                 .setMarginBottom(8);
-    }
-
-    private Table buildConventionSummary(ConventionStage convention, Stage stage) {
-        Table summary = new Table(UnitValue.createPercentArray(new float[]{1f, 1f, 1f, 1f}))
-                .useAllAvailableWidth()
-                .setMarginBottom(14);
-
-        summary.addCell(summaryCell("Stagiaire",
-                stage.getStagiaire() == null ? "-" : buildFullName(stage.getStagiaire().getPrenom(), stage.getStagiaire().getNom())));
-        summary.addCell(summaryCell("Entreprise",
-                stage.getEntreprise() == null ? "-" : safeText(stage.getEntreprise().getNom())));
-        summary.addCell(summaryCell("Responsable universitaire",
-                resolveSignerName(convention.getSignaturePour(RoleSignature.RESPONSABLE_UNIVERSITAIRE),
-                        "Responsable universitaire des stages")));
-        summary.addCell(summaryCell("Signature globale",
-                convention.estCompletementSigne() ? "Complete" : "En cours"));
-
-        return summary;
     }
 
     private Cell summaryCell(String label, String value) {
@@ -920,46 +841,6 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         return table;
     }
 
-    private Table buildSignatureContentTable(Stage stage, ConventionStage convention) {
-        Table container = new Table(UnitValue.createPercentArray(new float[]{1f}))
-                .useAllAvailableWidth();
-
-        container.addCell(new Cell()
-                .setBorder(Border.NO_BORDER)
-                .setPadding(0)
-                .add(new Paragraph("La situation de signature de chaque partie est affichee de maniere distincte afin de faciliter le suivi administratif.")
-                        .setFontSize(9)
-                        .setFontColor(PDF_MUTED)
-                        .setMarginBottom(10)));
-
-        Table table = new Table(UnitValue.createPercentArray(new float[]{2.0f, 1.4f, 1.0f, 1.2f, 1.5f}))
-                .useAllAvailableWidth();
-
-        table.addHeaderCell(signatureHeaderCell("Signataire"));
-        table.addHeaderCell(signatureHeaderCell("Qualite"));
-        table.addHeaderCell(signatureHeaderCell("Statut"));
-        table.addHeaderCell(signatureHeaderCell("Date"));
-        table.addHeaderCell(signatureHeaderCell("Signature"));
-
-        addConventionSigRow(table, convention, RoleSignature.STAGIAIRE, "Stagiaire",
-                stage.getStagiaire() == null ? "-" : buildFullName(stage.getStagiaire().getPrenom(), stage.getStagiaire().getNom()),
-                stage.getStagiaire() == null ? "" : stage.getStagiaire().getUrlSignature());
-        addConventionSigRow(table, convention, RoleSignature.ENCADRANT_ACADEMIQUE, "Encadrant academique",
-                stage.getEncadrantAcademique() == null ? "-" : buildFullName(stage.getEncadrantAcademique().getPrenom(), stage.getEncadrantAcademique().getNom()),
-                stage.getEncadrantAcademique() == null ? "" : stage.getEncadrantAcademique().getUrlSignature());
-        addConventionSigRow(table, convention, RoleSignature.ENCADRANT_PROFESSIONNEL, "Encadrant professionnel",
-                stage.getEncadrantProfessionnel() == null ? "-" : buildFullName(stage.getEncadrantProfessionnel().getPrenom(), stage.getEncadrantProfessionnel().getNom()),
-                stage.getEncadrantProfessionnel() == null ? "" : stage.getEncadrantProfessionnel().getUrlSignature());
-        addConventionSigRow(table, convention, RoleSignature.RESPONSABLE_ENTREPRISE, "Entreprise",
-                buildCompanyRepresentative(stage),
-                stage.getTuteurEntreprise() == null ? "" : stage.getTuteurEntreprise().getUrlSignature());
-        addConventionSigRow(table, convention, RoleSignature.RESPONSABLE_UNIVERSITAIRE, "Responsable universitaire",
-                "Responsable universitaire des stages", "");
-
-        container.addCell(new Cell().setBorder(Border.NO_BORDER).setPadding(0).add(table));
-        return container;
-    }
-
     private Cell signatureHeaderCell(String text) {
         return new Cell()
                 .setBackgroundColor(PDF_PRIMARY)
@@ -1015,8 +896,16 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         Optional<Image> image = loadSignatureImage(signatureImage);
         if (image.isPresent()) {
             cell.add(image.get());
+        } else if (signatureImagePdfHelper.isExploitableImageSource(signatureImage)) {
+            cell.add(new Paragraph("Image indisponible")
+                    .setFontSize(8)
+                    .setFontColor(PDF_MUTED));
+        } else if (!safeText(signatureImage).equals("-") && !signatureImage.isBlank()) {
+            cell.add(new Paragraph("Signature enregistrée (aperçu indisponible)")
+                    .setFontSize(8)
+                    .setFontColor(PDF_MUTED));
         } else {
-            cell.add(new Paragraph(safeText(signatureImage).equals("-") ? "-" : "Image indisponible")
+            cell.add(new Paragraph("-")
                     .setFontSize(8)
                     .setFontColor(PDF_MUTED));
         }
@@ -1203,7 +1092,7 @@ public class StageDocumentServiceImpl implements StageDocumentService {
                 .setBorder(Border.NO_BORDER)
                 .setPadding(18);
         rightCell.add(heroMeta("Stage", safeText(stage.getTitre())));
-        rightCell.add(heroMeta("Note finale", fiche.getNoteFinale() == null ? "-" : String.format(java.util.Locale.US, "%.2f", fiche.getNoteFinale())));
+        rightCell.add(heroMeta("Note finale", InternshipPdfEvaluationFormat.formatFinalScoreValue(fiche.getNoteFinale())));
         rightCell.add(heroMeta("Etat", fiche.estVerrouillee() ? "Verrouillee" : "En cours"));
         rightCell.add(heroMeta("Generation", formatDateTime(LocalDateTime.now())));
 
@@ -1233,40 +1122,34 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         Table container = new Table(UnitValue.createPercentArray(new float[]{1f}))
                 .useAllAvailableWidth();
 
-        Table table = new Table(UnitValue.createPercentArray(new float[]{2.2f, 1f, 1f, 1.1f}))
+        Table table = new Table(UnitValue.createPercentArray(new float[]{2.5f, 1f, 2f}))
                 .useAllAvailableWidth();
 
         table.addHeaderCell(signatureHeaderCell("Critere evalue"));
         table.addHeaderCell(signatureHeaderCell("Note / 5"));
-        table.addHeaderCell(signatureHeaderCell("Coefficient"));
-        table.addHeaderCell(signatureHeaderCell("Score pondere"));
+        table.addHeaderCell(signatureHeaderCell("Commentaire"));
 
-        fiche.getNotesAttribuees().stream()
-                .sorted(Comparator.comparing(note -> note.getCritereEvaluation() == null
-                        ? ""
-                        : String.valueOf(note.getCritereEvaluation().getLibelle()), String.CASE_INSENSITIVE_ORDER))
-                .forEach(note -> {
-                    String critere = note.getCritereEvaluation() == null ? "-" : safeText(note.getCritereEvaluation().getLibelle());
-                    table.addCell(signatureBodyCell(critere));
-                    table.addCell(signatureBodyCell(note.getNote() == null ? "-" : String.valueOf(note.getNote())));
-                    table.addCell(signatureBodyCell(note.getPoids() == null ? "-" : String.valueOf(note.getPoids())));
-                    table.addCell(signatureBodyCell(String.format(java.util.Locale.US, "%.2f", note.calculerScorePondere())));
-                });
-
-        if (fiche.getNotesAttribuees().isEmpty()) {
-            table.addCell(new Cell(1, 4)
+        List<String[]> rows = InternshipPdfEvaluationFormat.buildCriterionRows(fiche);
+        if (rows.isEmpty()) {
+            table.addCell(new Cell(1, 3)
                     .setBorder(new SolidBorder(PDF_BORDER, 1))
                     .setPadding(10)
                     .add(new Paragraph("Aucune note attribuee n'a encore ete renseignee.")
                             .setFontSize(9)
                             .setFontColor(PDF_MUTED)));
+        } else {
+            rows.forEach(row -> {
+                table.addCell(signatureBodyCell(row[0]));
+                table.addCell(signatureBodyCell(row[1]));
+                table.addCell(signatureBodyCell(row[2]));
+            });
         }
 
         container.addCell(new Cell().setBorder(Border.NO_BORDER).setPadding(0).add(table));
         container.addCell(new Cell()
                 .setBorder(Border.NO_BORDER)
                 .setPaddingTop(8)
-                .add(new Paragraph("Note finale : " + (fiche.getNoteFinale() == null ? "-" : String.format(java.util.Locale.US, "%.2f", fiche.getNoteFinale())))
+                .add(new Paragraph(InternshipPdfEvaluationFormat.formatFinalScoreLabel(fiche.getNoteFinale()))
                         .setBold()
                         .setFontSize(10)
                         .setTextAlignment(TextAlignment.RIGHT)
@@ -1431,94 +1314,11 @@ public class StageDocumentServiceImpl implements StageDocumentService {
     }
 
     private String resolveSignerUrl(Optional<Signature> sigOpt, String fallback) {
-        return sigOpt
-                .flatMap(sig -> sig.getSignataireId() != null
-                        ? utilisateurRepository.findById(sig.getSignataireId())
-                        : Optional.empty())
-                .map(Utilisateur::getUrlSignature)
-                .filter(url -> url != null && !url.isBlank())
-                .orElse(fallback == null ? "" : fallback);
-    }
-
-    private void addConventionSigRow(Table table, ConventionStage convention, RoleSignature role,
-                                     String qualite, String fallbackName, String fallbackUrl) {
-        Optional<Signature> sigOpt = convention.getSignaturePour(role);
-        boolean signed = sigOpt.isPresent();
-        addSignatureRow(table,
-                resolveSignerName(sigOpt, fallbackName),
-                qualite,
-                signed,
-                sigOpt.map(Signature::getDateSignature).orElse(null),
-                signed ? resolveSignerUrl(sigOpt, fallbackUrl) : "");
+        return signatureImagePdfHelper.resolveImageSource(sigOpt, fallback == null ? "" : fallback);
     }
 
     private Optional<Image> loadSignatureImage(String signatureSource) {
-        String source = signatureSource == null ? "" : signatureSource.trim();
-        if (source.isBlank()) {
-            return Optional.empty();
-        }
-
-        try {
-            ImageData imageData;
-            if (source.startsWith("data:image/")) {
-                int commaIndex = source.indexOf(',');
-                if (commaIndex < 0) {
-                    return Optional.empty();
-                }
-                imageData = ImageDataFactory.create(Base64.getDecoder().decode(source.substring(commaIndex + 1)));
-            } else if (source.startsWith("http://") || source.startsWith("https://")) {
-                imageData = ImageDataFactory.create(new URL(source));
-            } else {
-                Path path = resolveSignaturePath(source);
-                if (path == null || !Files.exists(path) || !Files.isRegularFile(path)) {
-                    return Optional.empty();
-                }
-                imageData = ImageDataFactory.create(Files.readAllBytes(path));
-            }
-
-            Image image = new Image(imageData);
-            image.setAutoScale(false);
-            image.scaleToFit(105, 45);
-            image.setHorizontalAlignment(com.itextpdf.layout.properties.HorizontalAlignment.CENTER);
-            return Optional.of(image);
-        } catch (Exception ex) {
-            return Optional.empty();
-        }
-    }
-
-    private Path resolveSignaturePath(String source) {
-        try {
-            if (source.startsWith("file:")) {
-                return Path.of(URI.create(source));
-            }
-
-            Path path = Path.of(source);
-            if (path.isAbsolute()) {
-                return path.normalize();
-            }
-
-            Path userDir = Path.of(System.getProperty("user.dir", "."));
-            List<Path> candidates = signatureBaseDir == null || signatureBaseDir.isBlank()
-                    ? List.of(
-                    userDir.resolve(source),
-                    userDir.resolve("uploads").resolve("signatures").resolve(source),
-                    userDir.resolve("src").resolve("main").resolve("resources").resolve("static").resolve(source)
-            )
-                    : List.of(
-                    Path.of(signatureBaseDir).resolve(source),
-                    userDir.resolve(source),
-                    userDir.resolve("uploads").resolve("signatures").resolve(source),
-                    userDir.resolve("src").resolve("main").resolve("resources").resolve("static").resolve(source)
-            );
-
-            return candidates.stream()
-                    .map(Path::normalize)
-                    .filter(Files::exists)
-                    .findFirst()
-                    .orElse(candidates.get(0).normalize());
-        } catch (Exception ex) {
-            return null;
-        }
+        return signatureImagePdfHelper.loadSignatureImage(signatureSource, 105f, 45f);
     }
 
     private Table buildTrelloTasksTable(TrelloSnapshot snapshot) {
@@ -1606,12 +1406,8 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         }
     }
 
-    private List<Reunion> getMeetingsWithObservations(Long stageId) {
-        return reunionRepository.findByStageId(stageId)
-                .stream()
-                .filter(item -> hasText(item.getObservation()) || hasText(item.getCompteRendu()))
-                .sorted(Comparator.comparing(Reunion::getDate, Comparator.nullsLast(Comparator.naturalOrder()))
-                        .thenComparing(Reunion::getHeure, Comparator.nullsLast(Comparator.naturalOrder())))
+    private List<Reunion> getWeeklyMeetingsForLogbook(Long stageId) {
+        return LogbookMeetingSupport.weeklyMeetingsSorted(reunionRepository.findByStageId(stageId))
                 .toList();
     }
 
@@ -1619,7 +1415,19 @@ public class StageDocumentServiceImpl implements StageDocumentService {
         Stage stage = stageRepository.findById(stageId)
                 .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
         authorizeLinkedStageAccess(stage);
+        ensureStageEligibleForDocuments(stage);
         return stage;
+    }
+
+    /** Les stages refuses n'ont pas de documents accessibles dans l'application. */
+    private boolean isEligibleForStageDocuments(Stage stage) {
+        return stage != null && stage.getStatut() != StatutStage.REFUSE;
+    }
+
+    private void ensureStageEligibleForDocuments(Stage stage) {
+        if (!isEligibleForStageDocuments(stage)) {
+            throw new BusinessException("Les documents ne sont pas disponibles pour un stage refuse.");
+        }
     }
 
     private void authorizeLinkedStageAccess(Stage stage) {

@@ -1,5 +1,6 @@
 package fsegs.pfebackendemnagouuiaa.dto;
 
+import fsegs.pfebackendemnagouuiaa.validation.PersonName;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -15,8 +16,8 @@ public class AdminCompanyAccountRequest {
     @NotBlank(message = "Le nom de l'entreprise est obligatoire")
     private String nomEntreprise;
 
-    @Email(message = "Format d'email entreprise invalide")
-    @Pattern(regexp = "^$|.*@.*", message = "L'email entreprise doit contenir @")
+    /** Vide ou adresse valide (pas de {@link Email} : la chaine vide est refusee par {@code @Email}). */
+    @Pattern(regexp = "^$|^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", message = "Format d'email entreprise invalide")
     private String emailEntreprise;
 
     @Pattern(
@@ -29,9 +30,11 @@ public class AdminCompanyAccountRequest {
     private String secteurActivite;
 
     @NotBlank(message = "Le nom du responsable est obligatoire")
+    @PersonName
     private String nomResponsable;
 
     @NotBlank(message = "Le prenom du responsable est obligatoire")
+    @PersonName
     private String prenomResponsable;
 
     @NotBlank(message = "L'email du responsable est obligatoire")

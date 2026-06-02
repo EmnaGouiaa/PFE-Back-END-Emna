@@ -52,14 +52,14 @@ public class ResponsableEntrepriseServiceImpl implements ResponsableEntrepriseSe
         ResponsableEntreprise entity = responsableEntrepriseRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Responsable entreprise introuvable avec l'id : " + id));
 
-        String email = contactUniquenessService.normalizeAndValidateRequiredEmail(dto.getEmail(), "emailResponsable");
+        contactUniquenessService.assertResponsableEntrepriseEmailUnchanged(entity.getEmail(), dto.getEmail());
+
         String telephone = contactUniquenessService.normalizeAndValidateOptionalPhone(dto.getTelephone(), "telephoneResponsable");
-        contactUniquenessService.validateUserContactForUpdate(id, email, telephone);
+        contactUniquenessService.validateUserContactForUpdate(id, entity.getEmail(), telephone);
         Entreprise entreprise = loadRequiredEntreprise(dto.getEntrepriseId());
 
         entity.setNom(dto.getNom());
         entity.setPrenom(dto.getPrenom());
-        entity.setEmail(email);
         entity.setTelephone(telephone);
         entity.setPoste(dto.getPoste());
         entity.setService(dto.getService());

@@ -6,9 +6,22 @@ import fsegs.pfebackendemnagouuiaa.entities.NoteAttribuee;
 import fsegs.pfebackendemnagouuiaa.mapper.NoteAttribueeMapper;
 import org.springframework.stereotype.Component;
 
+/**
+ * Implémentation Spring de {@link NoteAttribueeMapper}.
+ * <p>
+ * Gère la clé composite {@link CleNoteAttribuee} et les champs calculés côté entité.
+ * Utilisée par {@link fsegs.pfebackendemnagouuiaa.services.NoteAttribueeServiceImpl} et
+ * {@link FicheEvaluationMapperImpl}.
+ */
 @Component
 public class NoteAttribueeMapperImpl implements NoteAttribueeMapper {
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Déploie l'identifiant embarqué en {@code ficheEvaluationId} / {@code critereEvaluationId}.
+     * {@code evaluee} et {@code scorePondere} sont calculés par l'entité, pas recopiés du DTO entrant.
+     */
     @Override
     public NoteAttribueeDto toDto(NoteAttribuee entity) {
         if (entity == null) {
@@ -36,6 +49,11 @@ public class NoteAttribueeMapperImpl implements NoteAttribueeMapper {
         return dto;
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * La clé composite n'est créée que si les deux identifiants sont non nuls.
+     */
     @Override
     public NoteAttribuee toEntity(NoteAttribueeDto dto) {
         if (dto == null) {

@@ -1,6 +1,7 @@
 package fsegs.pfebackendemnagouuiaa.dto;
 
-import jakarta.validation.constraints.NotBlank;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import fsegs.pfebackendemnagouuiaa.configuration.LocalTimeObjectDeserializer;
 import jakarta.validation.constraints.NotNull;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -23,6 +24,7 @@ public class ReunionDto {
     private LocalDate date;
 
     @NotNull(message = "L'heure est obligatoire")
+    @JsonDeserialize(using = LocalTimeObjectDeserializer.class)
     private LocalTime heure;
 
     private String observation;
@@ -35,6 +37,8 @@ public class ReunionDto {
     private String stageTitre;
     private String stagiaireNom;
     private String entrepriseNom;
+    /** Nom du responsable / tuteur entreprise rattaché au stage. */
+    private String nomTuteurEntreprise;
     private String typeReunion;
     private String typeEncadrantCreateur;
     private String nomEncadrantCreateur;

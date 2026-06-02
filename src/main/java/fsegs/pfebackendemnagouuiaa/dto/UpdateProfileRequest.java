@@ -1,6 +1,8 @@
 package fsegs.pfebackendemnagouuiaa.dto;
 
+import fsegs.pfebackendemnagouuiaa.validation.PersonName;
 import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.PastOrPresent;
 import jakarta.validation.constraints.Size;
 import lombok.Getter;
 import lombok.Setter;
@@ -11,9 +13,11 @@ import java.time.LocalDate;
 @Setter
 public class UpdateProfileRequest {
 
+    @PersonName
     @Size(max = 100, message = "Le nom ne doit pas depasser 100 caracteres")
     private String nom;
 
+    @PersonName
     @Size(max = 100, message = "Le prenom ne doit pas depasser 100 caracteres")
     private String prenom;
 
@@ -42,6 +46,7 @@ public class UpdateProfileRequest {
     @Size(max = 100, message = "Le matricule ne doit pas depasser 100 caracteres")
     private String matricule;
 
+    @PastOrPresent(message = "La date de naissance ne peut pas etre posterieure a la date du jour.")
     private LocalDate dateNaiss;
 
     private Integer niveau;

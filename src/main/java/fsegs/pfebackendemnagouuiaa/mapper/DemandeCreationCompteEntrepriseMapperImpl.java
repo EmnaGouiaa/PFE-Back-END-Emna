@@ -5,9 +5,20 @@ import fsegs.pfebackendemnagouuiaa.entities.DemandeCreationCompteEntreprise;
 import fsegs.pfebackendemnagouuiaa.mapper.DemandeCreationCompteEntrepriseMapper;
 import org.springframework.stereotype.Component;
 
+/**
+ * Implémentation Spring de {@link DemandeCreationCompteEntrepriseMapper}.
+ * <p>
+ * Conversion {@link DemandeCreationCompteEntreprise} ↔ {@link DemandeCreationCompteEntrepriseDto}.
+ * Bean disponible pour une future exposition REST ; le service métier retourne encore l'entité.
+ */
 @Component
 public class DemandeCreationCompteEntrepriseMapperImpl implements DemandeCreationCompteEntrepriseMapper {
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Concatène nom et prénom du stagiaire pour l'affichage ({@code stagiaireNom}).
+     */
     @Override
     public DemandeCreationCompteEntrepriseDto toDto(DemandeCreationCompteEntreprise entity) {
         if (entity == null) {
@@ -36,12 +47,18 @@ public class DemandeCreationCompteEntrepriseMapperImpl implements DemandeCreatio
 
         if (entity.getStagiaire() != null) {
             dto.setStagiaireId(entity.getStagiaire().getId());
+            // Libellé affiché : nom puis prénom (ordre fixe côté API)
             dto.setStagiaireNom(entity.getStagiaire().getNom() + " " + entity.getStagiaire().getPrenom());
         }
 
         return dto;
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Ne résout pas la relation {@code stagiaire} : elle est gérée par le service à la création.
+     */
     @Override
     public DemandeCreationCompteEntreprise toEntity(DemandeCreationCompteEntrepriseDto dto) {
         if (dto == null) {

@@ -1,9 +1,11 @@
 package fsegs.pfebackendemnagouuiaa.services;
 
 import fsegs.pfebackendemnagouuiaa.dto.ReunionDto;
+import fsegs.pfebackendemnagouuiaa.dto.ReunionEligibleParticipantDto;
 import fsegs.pfebackendemnagouuiaa.entities.CahierStage;
 import fsegs.pfebackendemnagouuiaa.entities.ResponsableEntreprise;
 import fsegs.pfebackendemnagouuiaa.entities.Reunion;
+import fsegs.pfebackendemnagouuiaa.entities.ReunionFinale;
 import fsegs.pfebackendemnagouuiaa.entities.ReunionHebdomadaire;
 import fsegs.pfebackendemnagouuiaa.entities.Role;
 import fsegs.pfebackendemnagouuiaa.entities.Stage;
@@ -13,20 +15,28 @@ import fsegs.pfebackendemnagouuiaa.exception.TechnicalOperationException;
 import fsegs.pfebackendemnagouuiaa.mapper.ReunionMapper;
 import fsegs.pfebackendemnagouuiaa.repository.CahierStageRepository;
 import fsegs.pfebackendemnagouuiaa.repository.ResponsableEntrepriseRepository;
+import fsegs.pfebackendemnagouuiaa.repository.ReunionHebdomadaireRepository;
 import fsegs.pfebackendemnagouuiaa.repository.ReunionRepository;
 import fsegs.pfebackendemnagouuiaa.repository.StageRepository;
 import fsegs.pfebackendemnagouuiaa.repository.UtilisateurRepository;
 import fsegs.pfebackendemnagouuiaa.security.JwtService;
+import fsegs.pfebackendemnagouuiaa.service.FinalMeetingUpdatePolicy;
+import fsegs.pfebackendemnagouuiaa.service.MeetingVisibilityRules;
+import fsegs.pfebackendemnagouuiaa.service.MeetingInvitationRules;
+import fsegs.pfebackendemnagouuiaa.service.WeeklyMeetingObservationPolicy;
+import fsegs.pfebackendemnagouuiaa.service.WeeklyMeetingParticipantPolicy;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
@@ -43,13 +53,21 @@ public class ReunionServiceImpl implements ReunionService {
     private static final Duration MIN_UPDATE_DELAY = Duration.ofHours(24);
     private static final String ERROR_REQUIRED = "Tous les champs obligatoires doivent étre renseignés.";
     private static final String ERROR_INVALID = "Les données saisies sont invalides ou hors période du stage.";
+    private static final String ERROR_PERIOD =
+            "La date de la réunion doit être comprise entre le début et la fin du stage.";
+    private static final String ERROR_DUPLICATE_HEBDOMADAIRE =
+            "Une réunion hebdomadaire existe déjà à cette date et heure pour ce stage.";
+    private static final String ERROR_STAGE_ENDED =
+            "Impossible de planifier une réunion : la période du stage est terminée.";
     private static final String ERROR_NOT_FOUND = "Réunion introuvable.";
     private static final String ERROR_FORBIDDEN_STAGE = "Accés non autorisé à ce stage.";
+    private static final String ERROR_NOT_PARTICIPANT = "Accès refusé : vous n'êtes pas participant à cette réunion.";
     private static final String ERROR_DELETE_FORBIDDEN = "La suppression des réunions est interdite.";
     private static final String ERROR_TECHNICAL = "Une erreur technique est survenue lors de l'enregistrement ou de l'envoi des notifications.";
     private static final String ERROR_DELAY = "Une réunion doit étre planifiée ou modifiée au moins 24 heures avant son début.";
 
     private final ReunionRepository reunionRepository;
+    private final ReunionHebdomadaireRepository reunionHebdomadaireRepository;
     private final StageRepository stageRepository;
     private final CahierStageRepository cahierStageRepository;
     private final UtilisateurRepository utilisateurRepository;
@@ -59,14 +77,16 @@ public class ReunionServiceImpl implements ReunionService {
     private final JwtService jwtService;
 
     @Override
+    @Transactional
     public ReunionDto create(ReunionDto dto) {
-        validateMeetingPayload(dto);
+        validateWeeklyMeetingCreatePayload(dto);
 
-        Stage stage = stageRepository.findById(dto.getStageId())
+        Stage stage = stageRepository.findByIdWithMeetingActors(dto.getStageId())
                 .orElseThrow(() -> new EntityNotFoundException("Stage introuvable avec l'id : " + dto.getStageId()));
 
         Utilisateur supervisor = getAuthorizedSupervisorForStage(stage);
-        validateActiveStage(stage);
+        WeeklyMeetingParticipantPolicy.assertEncadrantSupervisorCreates(supervisor);
+        validateStageAllowsMeetingPlanning(stage);
         validateMeetingWithinStagePeriod(stage, dto.getDate());
         ensureMeetingDelayRespected(dto.getDate(), dto.getHeure());
         validateNoDuplicateMeeting(stage.getId(), dto.getDate(), dto.getHeure(), null);
@@ -75,7 +95,6 @@ public class ReunionServiceImpl implements ReunionService {
         reunion.setId(dto.getId());
         reunion.setDate(dto.getDate());
         reunion.setHeure(dto.getHeure());
-        reunion.setObservation(normalizeRequiredText(dto.getObservation(), ERROR_REQUIRED));
         reunion.setCompteRendu(normalizeNullableText(dto.getCompteRendu()));
         reunion.setStage(stage);
         reunion.setCahierStage(resolveOrCreateCahierStage(stage));
@@ -85,12 +104,12 @@ public class ReunionServiceImpl implements ReunionService {
         reunion.setNumReunion(normalizeNullableText(dto.getNumReunion()) != null
                 ? dto.getNumReunion().trim()
                 : generateNumReunion(stage.getId()));
-        reunion.setParticipants(resolveParticipants(dto.getParticipantIds()));
+        reunion.setParticipants(WeeklyMeetingParticipantPolicy.resolveParticipants(stage, supervisor));
 
         try {
             Reunion saved = reunionRepository.save(reunion);
             notifierCreationMeeting(saved);
-            return reunionMapper.toDto(saved);
+            return mapReunionForCurrentUser(saved);
         } catch (RuntimeException ex) {
             log.error("Erreur technique lors de la creation de la reunion pour le stage {}", dto.getStageId(), ex);
             throw new TechnicalOperationException(ERROR_TECHNICAL, ex);
@@ -112,28 +131,27 @@ public class ReunionServiceImpl implements ReunionService {
     public ReunionDto getById(Long id) {
         Reunion reunion = reunionRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException(ERROR_NOT_FOUND));
-        ensureCanAccessMeetingStage(reunion.getStage());
+        ensureCanAccessReunion(reunion);
 
-        return reunionMapper.toDto(reunion);
+        return mapReunionForCurrentUser(reunion);
     }
 
     @Override
     public List<ReunionDto> getAll() {
         Utilisateur authenticatedUser = getOptionalAuthenticatedUser();
-        if (isSupervisor(authenticatedUser)) {
-            return stageRepository.findAll().stream()
-                    .filter(stage -> canSupervisorAccessStage(authenticatedUser, stage))
-                    .map(Stage::getId)
-                    .filter(Objects::nonNull)
-                    .distinct()
-                    .flatMap(stageId -> reunionRepository.findByStageIdOrderByDateDescHeureDesc(stageId).stream())
-                    .map(reunionMapper::toDto)
+        if (MeetingVisibilityRules.isSupervisor(authenticatedUser) && authenticatedUser.getId() != null) {
+            return reunionRepository.findByEncadrantCreateurIdOrderByDateDescHeureDesc(authenticatedUser.getId())
+                    .stream()
+                    .filter(reunion -> !(reunion instanceof ReunionFinale))
+                    .filter(reunion -> MeetingVisibilityRules.canSupervisorAccessMeeting(
+                            authenticatedUser, reunion, reunion.getStage()))
+                    .map(this::mapReunionForCurrentUser)
                     .toList();
         }
 
         return reunionRepository.findAllByOrderByDateDescHeureDesc()
                 .stream()
-                .map(reunionMapper::toDto)
+                .map(this::mapReunionForCurrentUser)
                 .toList();
     }
 
@@ -143,9 +161,17 @@ public class ReunionServiceImpl implements ReunionService {
                 .orElseThrow(() -> new EntityNotFoundException("Stage introuvable avec l'id : " + stageId));
         ensureCanAccessMeetingStage(stage);
 
-        List<ReunionDto> reunions = reunionRepository.findByStageIdOrderByDateDescHeureDesc(stageId)
-                .stream()
-                .map(reunionMapper::toDto)
+        Utilisateur authenticatedUser = getOptionalAuthenticatedUser();
+        List<Reunion> reunionsStage = reunionRepository.findByStageIdOrderByDateDescHeureDesc(stageId);
+        if (MeetingVisibilityRules.isSupervisor(authenticatedUser) && authenticatedUser.getId() != null) {
+            reunionsStage = reunionsStage.stream()
+                    .filter(reunion -> MeetingVisibilityRules.canSupervisorAccessMeeting(
+                            authenticatedUser, reunion, stage))
+                    .toList();
+        }
+
+        List<ReunionDto> reunions = reunionsStage.stream()
+                .map(this::mapReunionForCurrentUser)
                 .toList();
 
         log.info("Chargement des reunions pour le stage {} -> {} reunion(s)", stageId, reunions.size());
@@ -154,6 +180,19 @@ public class ReunionServiceImpl implements ReunionService {
         }
 
         return reunions;
+    }
+
+    @Override
+    public List<ReunionEligibleParticipantDto> getEligibleParticipantsForStage(Long stageId) {
+        Stage stage = stageRepository.findById(stageId)
+                .orElseThrow(() -> new EntityNotFoundException("Stage introuvable avec l'id : " + stageId));
+        getAuthorizedSupervisorForStage(stage);
+
+        List<ReunionEligibleParticipantDto> participants = new ArrayList<>();
+        appendEligibleParticipant(participants, stage.getStagiaire(), Role.STAGIAIRE, "Stagiaire");
+        appendEligibleParticipant(participants, stage.getEncadrantAcademique(), Role.ENCADRANT_ACADEMIQUE, "Encadrant académique");
+        appendEligibleParticipant(participants, stage.getEncadrantProfessionnel(), Role.ENCADRANT_PROFESSIONNEL, "Encadrant professionnel");
+        return participants;
     }
 
     @Override
@@ -167,7 +206,7 @@ public class ReunionServiceImpl implements ReunionService {
 
         return reunionRepository.findByStageStagiaireIdOrderByDateDescHeureDesc(utilisateur.getId())
                 .stream()
-                .map(reunionMapper::toDto)
+                .map(this::mapReunionForCurrentUser)
                 .toList();
     }
 
@@ -196,7 +235,7 @@ public class ReunionServiceImpl implements ReunionService {
 
         List<ReunionDto> reunions = reunionRepository.findByStageEntrepriseIdOrderByDateDescHeureDesc(entrepriseId)
                 .stream()
-                .map(reunionMapper::toDto)
+                .map(this::mapReunionForCurrentUser)
                 .toList();
 
         String repartitionParType = reunions.stream()
@@ -235,12 +274,17 @@ public class ReunionServiceImpl implements ReunionService {
 
     @Override
     public ReunionDto update(Long id, ReunionDto dto) {
-        validateMeetingPayload(dto);
-
         Reunion reunion = reunionRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException(ERROR_NOT_FOUND));
 
-        getAuthorizedSupervisorForStage(reunion.getStage());
+        if (reunion instanceof ReunionFinale finale) {
+            return updateFinalMeetingAllowedFields(finale, dto);
+        }
+
+        validateWeeklyMeetingUpdatePayload(dto);
+
+        Utilisateur supervisor = getAuthorizedSupervisorForStage(reunion.getStage());
+        ensureMeetingCreator(reunion, supervisor);
         ensureMeetingCanBeModified(reunion.getDate(), reunion.getHeure());
 
         if (dto.getNumReunion() != null && !dto.getNumReunion().isBlank()) {
@@ -248,7 +292,6 @@ public class ReunionServiceImpl implements ReunionService {
         }
         reunion.setDate(dto.getDate());
         reunion.setHeure(dto.getHeure());
-        reunion.setObservation(normalizeRequiredText(dto.getObservation(), ERROR_REQUIRED));
         reunion.setCompteRendu(normalizeNullableText(dto.getCompteRendu()));
 
         if (dto.getStageId() != null) {
@@ -263,7 +306,7 @@ public class ReunionServiceImpl implements ReunionService {
             throw new IllegalArgumentException("Le stage est obligatoire");
         }
 
-        validateActiveStage(reunion.getStage());
+        validateStageAllowsMeetingPlanning(reunion.getStage());
         validateMeetingWithinStagePeriod(reunion.getStage(), reunion.getDate());
         ensureMeetingDelayRespected(reunion.getDate(), reunion.getHeure());
         validateNoDuplicateMeeting(reunion.getStage().getId(), reunion.getDate(), reunion.getHeure(), reunion.getId());
@@ -271,14 +314,10 @@ public class ReunionServiceImpl implements ReunionService {
             reunion.setCahierStage(resolveOrCreateCahierStage(reunion.getStage()));
         }
 
-        if (dto.getParticipantIds() != null) {
-            reunion.setParticipants(resolveParticipants(dto.getParticipantIds()));
-        }
-
         try {
             Reunion updated = reunionRepository.save(reunion);
             notifierMeetingUpdate(updated);
-            return reunionMapper.toDto(updated);
+            return mapReunionForCurrentUser(updated);
         } catch (RuntimeException ex) {
             log.error("Erreur technique lors de la modification de la reunion {}", id, ex);
             throw new TechnicalOperationException(ERROR_TECHNICAL, ex);
@@ -290,12 +329,22 @@ public class ReunionServiceImpl implements ReunionService {
         Reunion reunion = reunionRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Reunion introuvable avec l'id : " + id));
 
-        getAuthorizedSupervisorForStage(reunion.getStage());
-        reunion.setObservation(normalizeNullableText(observation));
+        ensureCanAccessReunion(reunion);
+        Utilisateur supervisor = getAuthorizedSupervisorForStage(reunion.getStage());
+        if (reunion instanceof ReunionFinale) {
+            throw new IllegalArgumentException(FinalMeetingUpdatePolicy.ERROR_OBSERVATION_FORBIDDEN);
+        }
+        validateStageAllowsSupervisorActions(reunion.getStage());
+        WeeklyMeetingObservationPolicy.assertCanManageObservation(supervisor, reunion);
+        WeeklyMeetingObservationPolicy.writeObservationForUser(
+                reunion,
+                supervisor,
+                normalizeRequiredText(observation, ERROR_REQUIRED)
+        );
         Reunion updated = reunionRepository.save(reunion);
         notifierParticipants(updated, "Observation de reunion mise a jour",
                 "L'observation de la reunion de suivi " + updated.getNumReunion() + " a ete mise a jour.");
-        return reunionMapper.toDto(updated);
+        return mapReunionForCurrentUser(updated);
     }
 
     @Override
@@ -309,7 +358,7 @@ public class ReunionServiceImpl implements ReunionService {
         notifierParticipants(updated, "Compte rendu de reunion mis a jour",
                 "Le compte rendu de la reunion de suivi " + updated.getNumReunion() + " a ete mis a jour.");
 
-        return reunionMapper.toDto(updated);
+        return mapReunionForCurrentUser(updated);
     }
 
     @Override
@@ -327,14 +376,16 @@ public class ReunionServiceImpl implements ReunionService {
     }
 
     private void validateMeetingWithinStagePeriod(Stage stage, LocalDate meetingDate) {
-        if (stage.getDateDebut() == null || stage.getDateFin() == null) {
+        LocalDate dateDebut = stage.getDateDebut();
+        LocalDate dateFin = resolveStageEndDate(stage);
+        if (dateDebut == null || dateFin == null) {
             throw new IllegalArgumentException(ERROR_INVALID);
         }
 
         if (meetingDate == null
-                || meetingDate.isBefore(stage.getDateDebut())
-                || meetingDate.isAfter(stage.getDateFin())) {
-            throw new IllegalArgumentException(ERROR_INVALID);
+                || meetingDate.isBefore(dateDebut)
+                || meetingDate.isAfter(dateFin)) {
+            throw new IllegalArgumentException(ERROR_PERIOD);
         }
     }
 
@@ -344,18 +395,77 @@ public class ReunionServiceImpl implements ReunionService {
         }
 
         boolean exists = currentMeetingId == null
-                ? reunionRepository.existsByStageIdAndDateAndHeure(stageId, date, heure)
-                : reunionRepository.existsByStageIdAndDateAndHeureAndIdNot(stageId, date, heure, currentMeetingId);
+                ? reunionHebdomadaireRepository.existsByStageIdAndDateAndHeure(stageId, date, heure)
+                : reunionHebdomadaireRepository.existsByStageIdAndDateAndHeureAndIdNot(
+                        stageId, date, heure, currentMeetingId);
 
         if (exists) {
+            throw new IllegalArgumentException(ERROR_DUPLICATE_HEBDOMADAIRE);
+        }
+    }
+
+    /**
+     * Autorise la planification ou la modification d'une réunion hebdomadaire :
+     * stage non annulé/refusé, dates de stage connues, période du stage non terminée.
+     * La date du jour peut être antérieure à {@code dateDebut} (stage à venir).
+     */
+    private void validateStageAllowsMeetingPlanning(Stage stage) {
+        if (stage == null) {
+            throw new IllegalArgumentException(ERROR_INVALID);
+        }
+        StatutStage statut = stage.getStatut();
+        if (statut == StatutStage.REFUSE || statut == StatutStage.ANNULE) {
+            throw new IllegalArgumentException(ERROR_INVALID);
+        }
+
+        LocalDate dateDebut = stage.getDateDebut();
+        LocalDate dateFin = resolveStageEndDate(stage);
+        if (dateDebut == null || dateFin == null) {
+            throw new IllegalArgumentException(ERROR_INVALID);
+        }
+
+        LocalDate today = LocalDate.now();
+        if (today.isAfter(dateFin)) {
+            throw new IllegalArgumentException(ERROR_STAGE_ENDED);
+        }
+    }
+
+    /**
+     * Autorise les actions encadrant (observations, etc.) lorsque la date du jour
+     * est comprise entre dateDebut et dateFin du stage (bornes incluses).
+     */
+    private void validateStageAllowsSupervisorActions(Stage stage) {
+        if (stage == null) {
+            throw new IllegalArgumentException(ERROR_INVALID);
+        }
+        StatutStage statut = stage.getStatut();
+        if (statut == StatutStage.REFUSE || statut == StatutStage.ANNULE) {
+            throw new IllegalArgumentException(ERROR_INVALID);
+        }
+
+        LocalDate dateDebut = stage.getDateDebut();
+        LocalDate dateFin = resolveStageEndDate(stage);
+        if (dateDebut == null || dateFin == null) {
+            throw new IllegalArgumentException(ERROR_INVALID);
+        }
+
+        LocalDate today = LocalDate.now();
+        if (today.isBefore(dateDebut) || today.isAfter(dateFin)) {
             throw new IllegalArgumentException(ERROR_INVALID);
         }
     }
 
-    private void validateActiveStage(Stage stage) {
-        if (stage == null || stage.getStatut() != StatutStage.EN_COURS) {
-            throw new IllegalArgumentException(ERROR_INVALID);
+    private LocalDate resolveStageEndDate(Stage stage) {
+        if (stage == null) {
+            return null;
         }
+        if (stage.getDateFin() != null) {
+            return stage.getDateFin();
+        }
+        if (stage.getDateDebut() != null && stage.getDuree() != null) {
+            return stage.getDateDebut().plusMonths(stage.getDuree().longValue());
+        }
+        return null;
     }
 
     private void ensureMeetingCanBeModified(LocalDate date, LocalTime heure) {
@@ -461,6 +571,65 @@ public class ReunionServiceImpl implements ReunionService {
         return fullName.isBlank() ? safeText(utilisateur.getEmail(), "Encadrant") : fullName;
     }
 
+    private ReunionDto updateFinalMeetingAllowedFields(ReunionFinale reunion, ReunionDto dto) {
+        Utilisateur supervisor = getAuthorizedSupervisorForStage(reunion.getStage());
+        ensureSupervisorIsMeetingParticipant(reunion, supervisor);
+
+        FinalMeetingUpdatePolicy.assertLockedFieldsUnchanged(
+                reunion,
+                dto != null ? dto.getStageId() : null,
+                dto != null ? dto.getNumReunion() : null,
+                dto != null ? dto.getCompteRendu() : null,
+                dto != null ? dto.getParticipantIds() : null
+        );
+        FinalMeetingUpdatePolicy.assertOnlyHeureMayChange(
+                reunion,
+                dto != null ? dto.getDate() : null,
+                dto != null ? dto.getHeure() : null,
+                dto != null ? dto.getObservation() : null
+        );
+
+        reunion.setHeure(dto.getHeure());
+
+        Stage stage = reunion.getStage();
+        if (stage == null || stage.getId() == null) {
+            throw new IllegalArgumentException("Le stage est obligatoire");
+        }
+
+        validateMeetingWithinStagePeriod(stage, reunion.getDate());
+        validateNoDuplicateMeeting(stage.getId(), reunion.getDate(), reunion.getHeure(), reunion.getId());
+
+        try {
+            Reunion updated = reunionRepository.save(reunion);
+            notifierMeetingUpdate(updated);
+            return mapReunionForCurrentUser(updated);
+        } catch (RuntimeException ex) {
+            log.error("Erreur technique lors de la modification de l'horaire de la reunion finale {}", reunion.getId(), ex);
+            throw new TechnicalOperationException(ERROR_TECHNICAL, ex);
+        }
+    }
+
+    private void appendEligibleParticipant(List<ReunionEligibleParticipantDto> target,
+                                           Utilisateur utilisateur,
+                                           Role expectedRole,
+                                           String roleLabel) {
+        if (!MeetingInvitationRules.isEligibleMeetingParticipant(utilisateur)
+                || utilisateur.getId() == null) {
+            return;
+        }
+        if (utilisateur.getRole() != expectedRole) {
+            return;
+        }
+
+        target.add(ReunionEligibleParticipantDto.builder()
+                .id(utilisateur.getId())
+                .fullName(formatFullName(utilisateur))
+                .email(safeText(utilisateur.getEmail(), ""))
+                .role(expectedRole.name())
+                .roleLabel(roleLabel)
+                .build());
+    }
+
     private String safeText(String value, String fallback) {
         if (value == null || value.isBlank()) {
             return fallback;
@@ -485,7 +654,7 @@ public class ReunionServiceImpl implements ReunionService {
         return normalized;
     }
 
-    private void validateMeetingPayload(ReunionDto dto) {
+    private void validateWeeklyMeetingCreatePayload(ReunionDto dto) {
         if (dto == null) {
             throw new IllegalArgumentException(ERROR_REQUIRED);
         }
@@ -493,10 +662,7 @@ public class ReunionServiceImpl implements ReunionService {
         if (dto.getStageId() == null
                 || dto.getDate() == null
                 || dto.getHeure() == null
-                || normalizeNullableText(dto.getTypeReunion()) == null
-                || normalizeNullableText(dto.getObservation()) == null
-                || dto.getParticipantIds() == null
-                || dto.getParticipantIds().isEmpty()) {
+                || normalizeNullableText(dto.getTypeReunion()) == null) {
             throw new IllegalArgumentException(ERROR_REQUIRED);
         }
 
@@ -504,6 +670,26 @@ public class ReunionServiceImpl implements ReunionService {
         if (!"HEBDOMADAIRE".equals(normalizedType)) {
             throw new IllegalArgumentException(ERROR_INVALID);
         }
+    }
+
+    private void validateWeeklyMeetingUpdatePayload(ReunionDto dto) {
+        validateWeeklyMeetingCreatePayload(dto);
+    }
+
+    private ReunionDto mapReunionForCurrentUser(Reunion reunion) {
+        ReunionDto dto = reunionMapper.toDto(reunion);
+        if (dto == null || reunion instanceof ReunionFinale) {
+            return dto;
+        }
+
+        Utilisateur utilisateur = getOptionalAuthenticatedUser();
+        if (utilisateur == null) {
+            dto.setObservation(null);
+            return dto;
+        }
+
+        dto.setObservation(WeeklyMeetingObservationPolicy.readObservationForUser(reunion, utilisateur));
+        return dto;
     }
 
     private void ensureMeetingDelayRespected(LocalDate date, LocalTime heure) {
@@ -514,6 +700,34 @@ public class ReunionServiceImpl implements ReunionService {
         LocalDateTime meetingStart = LocalDateTime.of(date, heure);
         if (Duration.between(LocalDateTime.now(), meetingStart).compareTo(MIN_UPDATE_DELAY) < 0) {
             throw new IllegalArgumentException(ERROR_DELAY);
+        }
+    }
+
+    private void ensureCanAccessReunion(Reunion reunion) {
+        if (reunion == null) {
+            throw new EntityNotFoundException(ERROR_NOT_FOUND);
+        }
+
+        Utilisateur utilisateur = getOptionalAuthenticatedUser();
+        if (utilisateur == null) {
+            return;
+        }
+
+        if (isSupervisor(utilisateur)) {
+            if (!MeetingVisibilityRules.canSupervisorAccessMeeting(utilisateur, reunion, reunion.getStage())) {
+                throw new AccessDeniedException(MeetingVisibilityRules.ERROR_NOT_MEETING_CREATOR);
+            }
+            return;
+        }
+
+        if (utilisateur.getRole() == Role.STAGIAIRE) {
+            boolean participant = isMeetingParticipant(reunion, utilisateur);
+            boolean stageOwner = reunion.getStage() != null
+                    && reunion.getStage().getStagiaire() != null
+                    && Objects.equals(utilisateur.getId(), reunion.getStage().getStagiaire().getId());
+            if (!participant && !stageOwner) {
+                throw new AccessDeniedException(ERROR_FORBIDDEN_STAGE);
+            }
         }
     }
 
@@ -537,6 +751,40 @@ public class ReunionServiceImpl implements ReunionService {
             if (!canAccess) {
                 throw new AccessDeniedException(ERROR_FORBIDDEN_STAGE);
             }
+        }
+    }
+
+    private boolean isMeetingParticipant(Reunion reunion, Utilisateur utilisateur) {
+        if (reunion == null || utilisateur == null || utilisateur.getId() == null) {
+            return false;
+        }
+        if (reunion.getParticipants() == null || reunion.getParticipants().isEmpty()) {
+            return false;
+        }
+        return reunion.getParticipants().stream()
+                .anyMatch(participant -> participant != null
+                        && Objects.equals(participant.getId(), utilisateur.getId()));
+    }
+
+    private void ensureSupervisorIsMeetingParticipant(Reunion reunion, Utilisateur supervisor) {
+        if (!isMeetingParticipant(reunion, supervisor)) {
+            throw new AccessDeniedException(ERROR_NOT_PARTICIPANT);
+        }
+    }
+
+    private void ensureMeetingCreator(Reunion reunion, Utilisateur utilisateur) {
+        if (!MeetingVisibilityRules.isMeetingCreator(reunion, utilisateur)) {
+            throw new AccessDeniedException(MeetingVisibilityRules.ERROR_NOT_MEETING_CREATOR);
+        }
+    }
+
+    private void ensureCreatorIsParticipant(Utilisateur supervisor, Reunion reunion) {
+        if (supervisor == null || supervisor.getId() == null) {
+            throw new AccessDeniedException(ERROR_NOT_PARTICIPANT);
+        }
+        if (!isMeetingParticipant(reunion, supervisor)) {
+            throw new IllegalArgumentException(
+                    "L'encadrant qui crée ou modifie la réunion doit figurer parmi les participants.");
         }
     }
 
@@ -613,7 +861,8 @@ public class ReunionServiceImpl implements ReunionService {
             throw new EntityNotFoundException("Un ou plusieurs participants sont introuvables.");
         }
 
-        return new HashSet<>(participants);
+        MeetingInvitationRules.assertNoCompanyManagerInvitation(participants);
+        return new HashSet<>(MeetingInvitationRules.retainEligibleParticipants(participants));
     }
 
     private CahierStage resolveOrCreateCahierStage(Stage stage) {

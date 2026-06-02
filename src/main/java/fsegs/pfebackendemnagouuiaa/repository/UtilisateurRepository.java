@@ -10,8 +10,20 @@ import org.springframework.stereotype.Repository;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Accès JPA à la hiérarchie {@link Utilisateur} (tous rôles, stratégie JOINED).
+ * <p>
+ * Centralise les recherches par email normalisé, matricule, téléphone et la liste
+ * des comptes « visibles » (non supprimés logiquement).
+ * </p>
+ * <p>
+ * Injecté par {@code UtilisateurServiceImpl}, {@code AuthenticationServiceImpl},
+ * {@code JwtService} et la plupart des services nécessitant un acteur authentifié.
+ * </p>
+ */
 @Repository
 public interface UtilisateurRepository extends JpaRepository<Utilisateur, Long> {
+    /** @param telephone numéro à tester @return {@code true} si déjà enregistré */
     boolean existsByTelephone(String telephone);
     boolean existsByMatricule(String matricule);
     Optional<Utilisateur> findByEmailIgnoreCase(String email);

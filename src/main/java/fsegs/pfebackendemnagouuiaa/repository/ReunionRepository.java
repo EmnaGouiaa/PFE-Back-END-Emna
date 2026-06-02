@@ -16,6 +16,12 @@ public interface ReunionRepository extends JpaRepository<Reunion, Long> {
 
     List<Reunion> findByStageIdOrderByDateDescHeureDesc(Long stageId);
 
+    List<Reunion> findByStageIdAndParticipants_IdOrderByDateDescHeureDesc(Long stageId, Long participantId);
+
+    List<Reunion> findByParticipants_IdOrderByDateDescHeureDesc(Long participantId);
+
+    List<Reunion> findByEncadrantCreateurIdOrderByDateDescHeureDesc(Long encadrantCreateurId);
+
     List<Reunion> findByStageStagiaireIdOrderByDateDescHeureDesc(Long stagiaireId);
 
     List<Reunion> findByStageEntrepriseIdOrderByDateDescHeureDesc(Long entrepriseId);

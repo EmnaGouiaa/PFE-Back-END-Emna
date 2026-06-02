@@ -8,13 +8,15 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 /**
- * Signature apposée par une partie prenante sur un document de stage.
- * <p>
- * Intentionnellement sans relation JPA vers {@link Utilisateur} : {@code signataireId}
- * est un simple identifiant technique, ce qui simplifie la persistance et évite les
- * problèmes de chargement Hibernate. La résolution du signataire se fait à la demande
- * (génération PDF, enrichissement DTO) via {@code UtilisateurRepository}.
- * </p>
+ * Trace d'une signature électronique sur un document de stage (convention, cahier ou fiche).
+ *
+ * <p>Sans FK JPA vers {@link Utilisateur} : {@link #signataireId} est résolu à la demande
+ * (PDF, DTO) via {@code UtilisateurRepository}. Le document parent porte la FK
+ * ({@code convention_stage_id}, {@code cahier_stage_id} ou {@code fiche_evaluation_id}).</p>
+ *
+ * <h3>Consommation applicative</h3>
+ * Services de documents ({@code ConventionStageServiceImpl}, {@code CahierStageServiceImpl},
+ * {@code FicheEvaluationServiceImpl}, {@code StageDocumentServiceImpl}) et services PDF associés.
  */
 @Entity
 @Table(name = "signatures")

@@ -1,5 +1,6 @@
 package fsegs.pfebackendemnagouuiaa.dto;
 
+import fsegs.pfebackendemnagouuiaa.validation.PersonName;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -16,8 +17,10 @@ public class ResponsableEntrepriseDto {
     private Long id;
 
     @NotBlank(message = "Le nom du responsable est obligatoire")
+    @PersonName
     private String nom;
     @NotBlank(message = "Le prenom du responsable est obligatoire")
+    @PersonName
     private String prenom;
 
     @NotBlank(message = "L'email du responsable est obligatoire")

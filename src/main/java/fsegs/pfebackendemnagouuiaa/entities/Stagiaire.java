@@ -9,13 +9,29 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
-
+/**
+ * Étudiant en stage : sous-type de {@link Utilisateur} ({@code @DiscriminatorValue("Stagiaire")}).
+ *
+ * <h3>Mapping JPA</h3>
+ * Table fille liée par héritage JOINED. {@link #filiere} en {@code @ManyToOne},
+ * {@link #stages} en {@code @OneToMany} vers les stages suivis.
+ *
+ * <h3>Consommation applicative</h3>
+ * <ul>
+ *   <li>Services : {@code StagiaireServiceImpl}, {@code UtilisateurServiceImpl},
+ *       {@code OffreStageServiceImpl}.</li>
+ *   <li>Contrôleur : {@code StagiaireController}.</li>
+ *   <li>Dépôt : {@code StagiaireRepository}.</li>
+ * </ul>
+ */
 @Entity
-@Data
-@EqualsAndHashCode(callSuper = true)
+@Getter
+@Setter
+@EqualsAndHashCode(callSuper = true, exclude = {"filiere", "stages", "encadrantAcademique"})
 @SuperBuilder
 @NoArgsConstructor
 @DiscriminatorValue("Stagiaire")
+//pour stocker dans la base de données le type réel de chaque entité héritée
 public class Stagiaire extends Utilisateur {
     private LocalDate dateNaiss;
 

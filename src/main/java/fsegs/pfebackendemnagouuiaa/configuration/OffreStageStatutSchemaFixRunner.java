@@ -8,6 +8,18 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+/**
+ * Correctif de schéma au démarrage pour la colonne {@code offre_stage.statut}.
+ *
+ * <p><b>Rôle :</b> convertir un type MySQL ENUM obsolète en {@code VARCHAR(32)} afin que
+ * Hibernate et l'énumération {@link fsegs.pfebackendemnagouuiaa.entities.StatutOffre}
+ * puissent évoluer sans erreur « Data truncated » au démarrage.</p>
+ *
+ * <p><b>Idempotence :</b> si la colonne n'est plus ENUM, le runner se termine sans action.</p>
+ *
+ * <p><b>Relations :</b> complète {@link StageStatutMigrationRunner} pour la table des offres ;
+ * s'exécute via {@link ApplicationRunner} après l'initialisation du contexte Spring.</p>
+ */
 @Component
 @RequiredArgsConstructor
 public class OffreStageStatutSchemaFixRunner implements ApplicationRunner {
@@ -16,6 +28,11 @@ public class OffreStageStatutSchemaFixRunner implements ApplicationRunner {
 
     private final JdbcTemplate jdbcTemplate;
 
+    /**
+     * Inspecte {@code offre_stage.statut} et applique ALTER TABLE si le type est ENUM.
+     *
+     * @param args arguments de démarrage (ignorés)
+     */
     @Override
     public void run(ApplicationArguments args) {
         try {
@@ -56,6 +73,7 @@ public class OffreStageStatutSchemaFixRunner implements ApplicationRunner {
                 return;
             }
 
+            // Conversion ENUM → VARCHAR en conservant la nullabilité d'origine
             String nullabilityClause = "NO".equalsIgnoreCase(metadata.isNullable()) ? "NOT NULL" : "NULL";
             jdbcTemplate.execute("ALTER TABLE offre_stage MODIFY COLUMN statut VARCHAR(32) " + nullabilityClause);
             log.info("Colonne offre_stage.statut convertie de ENUM vers VARCHAR(32).");
@@ -64,6 +82,7 @@ public class OffreStageStatutSchemaFixRunner implements ApplicationRunner {
         }
     }
 
+    /** Type SQL et nullabilité lus depuis information_schema. */
     private record ColumnMetadata(String dataType, String isNullable) {
     }
 }

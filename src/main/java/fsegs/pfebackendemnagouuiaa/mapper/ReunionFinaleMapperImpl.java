@@ -3,14 +3,25 @@ package fsegs.pfebackendemnagouuiaa.mapper;
 import fsegs.pfebackendemnagouuiaa.dto.ReunionFinaleDto;
 import fsegs.pfebackendemnagouuiaa.entities.ReunionFinale;
 import fsegs.pfebackendemnagouuiaa.entities.Utilisateur;
+import fsegs.pfebackendemnagouuiaa.service.MeetingInvitationRules;
 import org.springframework.stereotype.Component;
 
 import java.util.Set;
 import java.util.stream.Collectors;
 
+/**
+ * Implémentation Spring de {@link ReunionFinaleMapper}.
+ * <p>
+ * Utilisée par {@link fsegs.pfebackendemnagouuiaa.services.ReunionFinaleServiceImpl}.
+ */
 @Component
 public class ReunionFinaleMapperImpl implements ReunionFinaleMapper {
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Si l'entité n'a pas de créateur explicite, déduit l'encadrant professionnel rattaché au stage.
+     */
     @Override
     public ReunionFinaleDto toDto(ReunionFinale entity) {
         if (entity == null) {
@@ -35,6 +46,13 @@ public class ReunionFinaleMapperImpl implements ReunionFinaleMapper {
             if (entity.getStage().getEntreprise() != null) {
                 dto.setEntrepriseNom(entity.getStage().getEntreprise().getNom());
             }
+            if (entity.getStage().getTuteurEntreprise() != null) {
+                dto.setNomTuteurEntreprise(
+                        (entity.getStage().getTuteurEntreprise().getPrenom() + " "
+                                + entity.getStage().getTuteurEntreprise().getNom()).trim()
+                );
+            }
+            // Repli métier : créateur = encadrant pro du stage lorsque non renseigné sur la réunion
             if (entity.getNomEncadrantCreateur() == null && entity.getStage().getEncadrantProfessionnel() != null) {
                 dto.setNomEncadrantCreateur(
                         (entity.getStage().getEncadrantProfessionnel().getPrenom() + " "
@@ -58,6 +76,7 @@ public class ReunionFinaleMapperImpl implements ReunionFinaleMapper {
         if (entity.getParticipants() != null) {
             Set<Long> participantIds = entity.getParticipants()
                     .stream()
+                    .filter(MeetingInvitationRules::isEligibleMeetingParticipant)
                     .map(Utilisateur::getId)
                     .collect(Collectors.toSet());
             dto.setParticipantIds(participantIds);
@@ -66,6 +85,7 @@ public class ReunionFinaleMapperImpl implements ReunionFinaleMapper {
         return dto;
     }
 
+    /** {@inheritDoc} */
     @Override
     public ReunionFinale toEntity(ReunionFinaleDto dto) {
         if (dto == null) {

@@ -20,6 +20,21 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
+/**
+ * Contrôleur REST d'administration des comptes entreprise et de leurs encadrants professionnels.
+ * <p>
+ * <strong>Domaine exposé :</strong> provisioning comptes entreprise, gestion des encadrants pro par entreprise.
+ * <p>
+ * <strong>Chemin de base :</strong> {@code /api/admin/company-accounts}
+ * <p>
+ * <strong>Sécurité :</strong> {@code @PreAuthorize("hasRole('ADMINISTRATEUR')")} au niveau classe.
+ * <p>
+ * <strong>Services injectés :</strong>
+ * <ul>
+ *   <li>{@link AdminCompanyAccountService} — comptes entreprise</li>
+ *   <li>{@link EncadrantProfessionnelService} — encadrants professionnels</li>
+ * </ul>
+ */
 @RestController
 @RequestMapping("/api/admin/company-accounts")
 @RequiredArgsConstructor
@@ -29,16 +44,34 @@ public class AdminCompanyAccountController {
     private final AdminCompanyAccountService adminCompanyAccountService;
     private final EncadrantProfessionnelService encadrantProfessionnelService;
 
+    /**
+     * Liste tous les comptes entreprise gérés par l'administration.
+     *
+     * @return {@link ResponseEntity} 200 avec la liste des {@link AdminCompanyAccountResponse}
+     */
     @GetMapping
     public ResponseEntity<List<AdminCompanyAccountResponse>> getAll() {
         return ResponseEntity.ok(adminCompanyAccountService.getAll());
     }
 
+    /**
+     * Crée un compte entreprise complet (entreprise + responsable).
+     *
+     * @param request données du compte
+     * @return {@link ResponseEntity} 201 avec {@link AdminCompanyAccountResponse}
+     */
     @PostMapping
     public ResponseEntity<AdminCompanyAccountResponse> create(@Valid @RequestBody AdminCompanyAccountRequest request) {
         return ResponseEntity.status(HttpStatus.CREATED).body(adminCompanyAccountService.create(request));
     }
 
+    /**
+     * Met à jour un compte entreprise existant.
+     *
+     * @param entrepriseId identifiant de l'entreprise
+     * @param request      champs modifiés
+     * @return {@link ResponseEntity} 200 avec {@link AdminCompanyAccountResponse}
+     */
     @PutMapping("/{entrepriseId}")
     public ResponseEntity<AdminCompanyAccountResponse> update(
             @PathVariable Long entrepriseId,
@@ -47,10 +80,11 @@ public class AdminCompanyAccountController {
         return ResponseEntity.ok(adminCompanyAccountService.update(entrepriseId, request));
     }
 
-    // ─── Encadrants professionnels liés à une entreprise ──────────────────────
-
     /**
-     * Liste tous les encadrants professionnels d'une entreprise.
+     * Liste les encadrants professionnels rattachés à une entreprise.
+     *
+     * @param entrepriseId identifiant de l'entreprise
+     * @return {@link ResponseEntity} 200 avec la liste des {@link EncadrantProfessionnelDto}
      */
     @GetMapping("/{entrepriseId}/encadrants")
     public ResponseEntity<List<EncadrantProfessionnelDto>> getEncadrants(@PathVariable Long entrepriseId) {
@@ -58,8 +92,12 @@ public class AdminCompanyAccountController {
     }
 
     /**
-     * Crée un encadrant professionnel rattaché à cette entreprise.
-     * L'entrepriseId du corps est forcé par le paramètre de chemin.
+     * Crée un encadrant professionnel pour l'entreprise indiquée.
+     * <p>Règle : l'{@code entrepriseId} du corps est écrasé par le paramètre de chemin.
+     *
+     * @param entrepriseId identifiant de l'entreprise
+     * @param dto          données de l'encadrant
+     * @return {@link ResponseEntity} 201 avec {@link EncadrantProfessionnelDto}
      */
     @PostMapping("/{entrepriseId}/encadrants")
     public ResponseEntity<EncadrantProfessionnelDto> createEncadrant(
@@ -72,7 +110,12 @@ public class AdminCompanyAccountController {
     }
 
     /**
-     * Met à jour un encadrant professionnel appartenant à l'entreprise donnée.
+     * Met à jour un encadrant professionnel d'une entreprise.
+     *
+     * @param entrepriseId identifiant de l'entreprise
+     * @param encadrantId  identifiant de l'encadrant
+     * @param dto          champs modifiés
+     * @return {@link ResponseEntity} 200 avec {@link EncadrantProfessionnelDto}
      */
     @PutMapping("/{entrepriseId}/encadrants/{encadrantId}")
     public ResponseEntity<EncadrantProfessionnelDto> updateEncadrant(

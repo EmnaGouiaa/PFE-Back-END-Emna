@@ -143,6 +143,8 @@ public class CahierStageServiceImpl implements CahierStageService {
         Utilisateur utilisateur = getAuthenticatedSigner(typeSignature);
         ensureSignerBelongsToStage(cahier.getStage(), utilisateur, typeSignature);
 
+        StageDocumentSignatureRules.ensureLogbookSigningAllowed(cahier.getStage());
+
         RoleSignature role = roleSignature(typeSignature);
 
         // Idempotence : déjà signé → retour sans erreur

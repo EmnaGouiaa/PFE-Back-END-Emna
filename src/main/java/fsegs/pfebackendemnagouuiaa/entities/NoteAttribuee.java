@@ -18,10 +18,7 @@ import lombok.ToString;
  * Note attribuée pour un critère donné dans une fiche d'évaluation.
  *
  * <h3>Formule de calcul</h3>
- * {@code scorePondere = (note / bareme) * poids}
- * <p>La somme de tous les {@code poids} doit être égale à 20 pour que
- * {@code noteFinale} soit exprimée sur 20. Cette contrainte est imposée
- * par le service, pas par l'entité.</p>
+ * {@code scorePondere = (note / bareme) * poids} (legacy, non utilisé pour la note finale /5).
  *
  * <h3>Mapping JPA</h3>
  * {@code @MapsId} relie chaque champ de la clé composite ({@code @EmbeddedId})
@@ -44,6 +41,11 @@ import lombok.ToString;
  *       est maintenant journalisé via {@code System.err} pour ne pas masquer
  *       un problème d'initialisation.</li>
  * </ul>
+ *
+ * <h3>Consommation applicative</h3>
+ * {@code NoteAttribueeServiceImpl}, {@code FicheEvaluationServiceImpl},
+ * {@code FicheEvaluationPdfService} ; contrôleurs {@code NoteAttribueeController},
+ * {@code FicheEvaluationController}.
  */
 @Entity
 @Table(name = "note_attribuee")

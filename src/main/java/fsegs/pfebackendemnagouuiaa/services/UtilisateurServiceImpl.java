@@ -45,13 +45,42 @@ import java.util.Map;
 import fsegs.pfebackendemnagouuiaa.security.JwtService;
 import fsegs.pfebackendemnagouuiaa.entities.Stage;
 
+/**
+ * Implémentation du cycle de vie des comptes utilisateurs (tous rôles métier).
+ * <p>
+ * <strong>Rôle :</strong> centraliser la création, la mise à jour, l'activation/désactivation,
+ * le changement de rôle, la gestion du profil et des identifiants (email, mot de passe)
+ * pour les acteurs du système de stages (admin, responsable stages, encadrants, stagiaire, entreprise).
+ * </p>
+ * <p>
+ * <strong>Responsabilités principales :</strong>
+ * <ul>
+ *   <li>Créer un utilisateur typé selon {@link Role} (héritage JPA {@link Utilisateur}).</li>
+ *   <li>Garantir l'unicité email / téléphone / matricule via {@link ContactUniquenessService}.</li>
+ *   <li>Générer le matricule stagiaire ({@link MatriculeGeneratorService}) et fixer le service
+ *       « Service des stages » pour {@link Role#RESPONSABLE_STAGE}.</li>
+ *   <li>Envoyer les courriels d'accès ({@link AccountEmailService}) et notifier les stagiaires
+ *       lors d'une mise à jour de signature collaborateur.</li>
+ *   <li>Synchroniser nom/prénom sur convention et cahier de stage liés au stagiaire modifié.</li>
+ * </ul>
+ * </p>
+ * <p>
+ * <strong>Relations :</strong> exposé par {@link fsegs.pfebackendemnagouuiaa.controller.UtilisateurController}
+ * et {@link fsegs.pfebackendemnagouuiaa.controller.ProfileController} ; s'appuie sur
+ * {@link UtilisateurRepository}, {@link UtilisateurMapper}, {@link JwtService},
+ * {@link NotificationService}, repositories de documents de stage.
+ * </p>
+ */
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class UtilisateurServiceImpl implements UtilisateurService {
 
+    /** Message affiché si un responsable entreprise tente de créer un rôle autre qu'encadrant pro. */
     private static final String RESPONSABLE_ENTREPRISE_ONLY_CREATE_MESSAGE =
             "Le responsable entreprise peut seulement creer un encadrant professionnel.";
+    /** Valeur imposée pour le champ {@code service} des comptes {@link Role#RESPONSABLE_STAGE}. */
+    private static final String RESPONSABLE_STAGE_SERVICE_VALUE = "Service des stages";
 
     private final UtilisateurRepository utilisateurRepository;
     private final PasswordEncoder passwordEncoder;
@@ -66,6 +95,21 @@ public class UtilisateurServiceImpl implements UtilisateurService {
     private final FiliereRepository filiereRepository;
     private final MatriculeGeneratorService matriculeGeneratorService;
 
+    /**
+     * Crée un compte utilisateur selon le rôle demandé (admin ou responsable entreprise limité).
+     * <p>
+     * Règles métier : niveau et filière obligatoires pour un stagiaire ; matricule auto-généré
+     * pour {@link Role#STAGIAIRE} ; service figé pour {@link Role#RESPONSABLE_STAGE} ;
+     * envoi d'un email d'activation avec mot de passe temporaire si configuré.
+     * </p>
+     *
+     * @param request données de création (rôle, identité, contacts, champs spécifiques au rôle)
+     * @return utilisateur persisté converti en {@link UserResponse}
+     * @throws IllegalArgumentException      validation des champs obligatoires
+     * @throws DuplicateFieldException       email, téléphone ou matricule déjà utilisé
+     * @throws AccountCreationException      échec de persistance ou d'envoi critique
+     * @throws AccessDeniedException         création interdite pour le rôle appelant
+     */
     @Override
     public UserResponse createUser(CreateUserRequest request) {
         validateAdminManagedRoleCreation(request.getRole());
@@ -81,6 +125,7 @@ public class UtilisateurServiceImpl implements UtilisateurService {
         }
 
         Utilisateur utilisateur = UtilisateurMapper.toEntity(request);
+        applyFixedServiceForResponsableStage(utilisateur);
 
         // Affecter la filiere au stagiaire apres la creation de l'entite.
         if (utilisateur instanceof Stagiaire stagiaire && request.getFiliereId() != null) {
@@ -183,6 +228,19 @@ public class UtilisateurServiceImpl implements UtilisateurService {
         return response;
     }
 
+    /**
+     * Met à jour un utilisateur existant (administration).
+     * <p>
+     * L'email et le rôle ne sont pas modifiables ; filière/niveau du stagiaire verrouillés
+     * dès qu'un {@link Stage} existe ({@link #ensureStagiaireAcademicDataMutable(Stagiaire)}).
+     * </p>
+     *
+     * @param id      identifiant utilisateur
+     * @param request champs modifiables (nom, téléphone, champs métier selon le type)
+     * @return utilisateur mis à jour
+     * @throws EntityNotFoundException si l'id est inconnu
+     * @throws IllegalArgumentException si email/rôle changent ou données académiques verrouillées
+     */
     @Override
     public UserResponse updateUser(Long id, UpdateUserRequest request) {
         Utilisateur utilisateur = utilisateurRepository.findById(id)
@@ -205,6 +263,7 @@ public class UtilisateurServiceImpl implements UtilisateurService {
         UtilisateurMapper.updateEntity(utilisateur, request);
         utilisateur.setEmail(existingEmail);
         utilisateur.setTelephone(telephone);
+        applyFixedServiceForResponsableStage(utilisateur);
 
         // Champs propres au stagiaire modifiables par l'administrateur : filiere + niveau.
         // Regle metier : ces donnees academiques sont VERROUILLEES des qu'un stage existe
@@ -236,6 +295,7 @@ public class UtilisateurServiceImpl implements UtilisateurService {
         return UtilisateurMapper.toResponse(updated);
     }
 
+    /** @return profil de l'utilisateur connecté (JWT) */
     @Override
     public UserResponse getCurrentProfile() {
         Utilisateur authenticatedUser = jwtService.getAuthenticatedUtilisateur()
@@ -243,11 +303,23 @@ public class UtilisateurServiceImpl implements UtilisateurService {
         return UtilisateurMapper.toProfileResponse(authenticatedUser);
     }
 
+    /**
+     * Profil d'un utilisateur ; l'appelant ne peut consulter que son propre id.
+     *
+     * @throws AccessDeniedException si id ≠ utilisateur authentifié
+     */
     @Override
     public UserResponse getProfile(Long id) {
         return UtilisateurMapper.toProfileResponse(findOwnedUser(id));
     }
 
+    /**
+     * Retourne l'URL de signature d'un collaborateur pour affichage documentaire.
+     *
+     * @param userId identifiant du collaborateur cible
+     * @return signature ou chaîne vide si absente
+     * @throws AccessDeniedException si le viewer n'est pas autorisé
+     */
     @Override
     @Transactional(readOnly = true)
     public CollaborateurSignatureDto getCollaborateurSignature(Long userId) {
@@ -371,9 +443,7 @@ public class UtilisateurServiceImpl implements UtilisateurService {
             responsableEntreprise.setService(requireNonBlank(request.getService(), "Le service ne peut pas etre vide"));
         }
 
-        if (request.getService() != null && utilisateur instanceof ResponsableServiceStages responsableServiceStages) {
-            responsableServiceStages.setService(requireNonBlank(request.getService(), "Le service ne peut pas etre vide"));
-        }
+        applyFixedServiceForResponsableStage(utilisateur);
 
         if (request.getUrlSignature() != null) {
             String sig = request.getUrlSignature().trim();
@@ -511,6 +581,33 @@ public class UtilisateurServiceImpl implements UtilisateurService {
 
     @Override
     @Transactional
+    public UserResponse deleteUserSignature(Long id) {
+        Utilisateur authenticatedUser = jwtService.getAuthenticatedUtilisateur()
+                .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifie introuvable."));
+
+        Utilisateur utilisateur = utilisateurRepository.findVisibleUserById(id)
+                .orElseThrow(() -> new EntityNotFoundException("Utilisateur introuvable avec l'id : " + id));
+
+        if (authenticatedUser.getId().equals(utilisateur.getId())) {
+            throw new IllegalArgumentException("Vous ne pouvez pas supprimer votre propre signature.");
+        }
+
+        if (!hasText(utilisateur.getUrlSignature())) {
+            UserResponse response = UtilisateurMapper.toResponse(utilisateur);
+            response.setMessage("Aucune signature a supprimer pour cet utilisateur.");
+            return response;
+        }
+
+        utilisateur.setUrlSignature(null);
+        Utilisateur updated = utilisateurRepository.save(utilisateur);
+
+        UserResponse response = UtilisateurMapper.toResponse(updated);
+        response.setMessage("Signature supprimee avec succes. L'utilisateur peut televerser une nouvelle signature.");
+        return response;
+    }
+
+    @Override
+    @Transactional
     public void deleteUser(Long id) {
         Utilisateur authenticatedUser = jwtService.getAuthenticatedUtilisateur()
                 .orElseThrow(() -> new AccessDeniedException("Utilisateur authentifie introuvable."));
@@ -539,41 +636,9 @@ public class UtilisateurServiceImpl implements UtilisateurService {
     @Override
     @Transactional
     public UserResponse changeUserRole(Long id, ChangeRoleRequest request) {
-        Utilisateur utilisateur = utilisateurRepository.findById(id)
-                .orElseThrow(() -> new EntityNotFoundException("Utilisateur introuvable avec l'id : " + id));
-
-        if (Boolean.TRUE.equals(utilisateur.getSupprime())) {
-            throw new EntityNotFoundException("Utilisateur introuvable avec l'id : " + id);
-        }
-
-        Role nouveauRole;
-        try {
-            String roleStr = request.getRole().trim().toUpperCase(Locale.ROOT);
-            if (roleStr.startsWith("ROLE_")) {
-                roleStr = roleStr.substring("ROLE_".length());
-            }
-            nouveauRole = Role.valueOf(roleStr);
-        } catch (IllegalArgumentException ex) {
-            throw new IllegalArgumentException(
-                    "Role invalide : \"" + request.getRole() + "\". "
-                    + "Les roles valides sont : " + java.util.Arrays.toString(Role.values()) + "."
-            );
-        }
-
-        Role ancienRole = utilisateur.getRole();
-        if (ancienRole == nouveauRole) {
-            UserResponse response = UtilisateurMapper.toResponse(utilisateur);
-            response.setMessage("Le role est deja \"" + nouveauRole.name() + "\". Aucune modification effectuee.");
-            return response;
-        }
-
-        utilisateur.setRole(nouveauRole);
-        Utilisateur updated = utilisateurRepository.save(utilisateur);
-        log.info("Role modifie pour l'utilisateur id={}: {} -> {}", id, ancienRole, nouveauRole);
-
-        UserResponse response = UtilisateurMapper.toResponse(updated);
-        response.setMessage("Role modifie avec succes.");
-        return response;
+        throw new AccessDeniedException(
+                "La modification des rôles utilisateur par l'administrateur est désactivée."
+        );
     }
 
     private UserResponse updateUserActivation(Long id, boolean active) {
@@ -651,6 +716,16 @@ public class UtilisateurServiceImpl implements UtilisateurService {
 
     private String safeValue(String value) {
         return value == null || value.isBlank() ? "<vide>" : value.trim();
+    }
+
+    /**
+     * Regle metier : le service du Responsable des stages est impose et non modifiable.
+     * Toute valeur saisie par le client est ignoree.
+     */
+    private void applyFixedServiceForResponsableStage(Utilisateur utilisateur) {
+        if (utilisateur instanceof ResponsableServiceStages responsableServiceStages) {
+            responsableServiceStages.setService(RESPONSABLE_STAGE_SERVICE_VALUE);
+        }
     }
 
     private void ensureEmailIsNotChangedByProfilePatch(Utilisateur utilisateur, UpdateProfileRequest request) {

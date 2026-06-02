@@ -6,6 +6,7 @@ import fsegs.pfebackendemnagouuiaa.repository.UtilisateurRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
+import java.util.Objects;
 import java.util.regex.Pattern;
 
 @Service
@@ -101,6 +102,43 @@ public class ContactUniquenessService {
     public void validateEntrepriseContactForUpdate(Long entrepriseId, String email, String telephone) {
         validateEmailAvailable(email, "emailEntreprise", null, entrepriseId);
         validateTelephoneAvailable(telephone, "telephoneEntreprise", null, entrepriseId);
+    }
+
+    /**
+     * Verifie que l'email d'entreprise n'est pas modifie lors d'une mise a jour.
+     */
+    public void assertEntrepriseEmailUnchanged(String currentEmail, String requestedEmail) {
+        assertEmailUnchanged(
+                currentEmail,
+                requestedEmail,
+                "L'email de l'entreprise ne peut pas etre modifie apres la creation."
+        );
+    }
+
+    /**
+     * Verifie que l'email du responsable d'entreprise n'est pas modifie lors d'une mise a jour.
+     */
+    public void assertResponsableEntrepriseEmailUnchanged(String currentEmail, String requestedEmail) {
+        assertEmailUnchanged(
+                currentEmail,
+                requestedEmail,
+                "L'email du responsable ne peut pas etre modifie apres la creation."
+        );
+    }
+
+    private void assertEmailUnchanged(String currentEmail, String requestedEmail, String message) {
+        String normalizedCurrent = normalizeEmailForComparison(currentEmail);
+        String normalizedRequested = normalizeEmailForComparison(requestedEmail);
+        if (!Objects.equals(normalizedCurrent, normalizedRequested)) {
+            throw new IllegalArgumentException(message);
+        }
+    }
+
+    private String normalizeEmailForComparison(String email) {
+        if (email == null || email.isBlank()) {
+            return null;
+        }
+        return email.trim().toLowerCase();
     }
 
     private void validateEmailAvailable(String email, String fieldName, Long currentUserId, Long currentEntrepriseId) {

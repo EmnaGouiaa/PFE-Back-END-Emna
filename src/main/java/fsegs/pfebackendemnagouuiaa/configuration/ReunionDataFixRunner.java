@@ -8,6 +8,22 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+/**
+ * Correctifs de données au démarrage pour la table {@code reunion}.
+ *
+ * <p><b>Rôle :</b> normaliser les valeurs héritées de versions antérieures du modèle
+ * (types de réunion, URLs de formulaires placeholder, lien vers le cahier de stage).</p>
+ *
+ * <p><b>Étapes :</b></p>
+ * <ul>
+ *   <li>{@link #normalizeMeetingTypes()} — uniformiser {@code type_reunion}.</li>
+ *   <li>{@link #cleanupLegacyFormUrls()} — purger les URL vides ou {@code "string"}.</li>
+ *   <li>{@link #backfillCahierStageLinks()} — renseigner {@code cahier_stage_id} manquants.</li>
+ * </ul>
+ *
+ * <p><b>Relations :</b> prépare des données cohérentes pour les services de réunion et
+ * d'évaluation ; idempotent via UPDATE conditionnels.</p>
+ */
 @Component
 @RequiredArgsConstructor
 public class ReunionDataFixRunner implements ApplicationRunner {
@@ -16,6 +32,11 @@ public class ReunionDataFixRunner implements ApplicationRunner {
 
     private final JdbcTemplate jdbcTemplate;
 
+    /**
+     * Orchestre les trois passes de correction sur les réunions existantes.
+     *
+     * @param args arguments Spring Boot (non utilisés)
+     */
     @Override
     public void run(ApplicationArguments args) {
         try {
@@ -27,6 +48,9 @@ public class ReunionDataFixRunner implements ApplicationRunner {
         }
     }
 
+    /**
+     * Harmonise les libellés de type de réunion vers {@code FINALE} ou {@code HEBDOMADAIRE}.
+     */
     private void normalizeMeetingTypes() {
         int finaleUpdated = jdbcTemplate.update(
                 "UPDATE reunion SET type_reunion = 'FINALE' WHERE UPPER(TRIM(type_reunion)) = 'FINALE' OR TRIM(type_reunion) = 'Finale'"
@@ -37,6 +61,9 @@ public class ReunionDataFixRunner implements ApplicationRunner {
         log.info("Correction type_reunion terminee: finale={}, hebdomadaire={}", finaleUpdated, hebdomadaireUpdated);
     }
 
+    /**
+     * Met à NULL les URL de formulaires laissées vides ou avec la valeur placeholder Swagger.
+     */
     private void cleanupLegacyFormUrls() {
         int evaluationUpdated = jdbcTemplate.update(
                 "UPDATE reunion SET url_form_evaluation = NULL WHERE url_form_evaluation IS NOT NULL AND TRIM(LOWER(url_form_evaluation)) IN ('', 'string')"
@@ -47,6 +74,9 @@ public class ReunionDataFixRunner implements ApplicationRunner {
         log.info("Nettoyage des URLs reunion termine: evaluation={}, satisfaction={}", evaluationUpdated, satisfactionUpdated);
     }
 
+    /**
+     * Rattache chaque réunion à son {@code cahier_stage} via {@code stage_id} lorsque le lien est absent.
+     */
     private void backfillCahierStageLinks() {
         int linksUpdated = jdbcTemplate.update(
                 """

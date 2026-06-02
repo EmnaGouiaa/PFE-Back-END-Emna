@@ -7,6 +7,7 @@ import fsegs.pfebackendemnagouuiaa.mapper.CritereEvaluationMapper;
 import fsegs.pfebackendemnagouuiaa.repository.CritereEvaluationRepository;
 import fsegs.pfebackendemnagouuiaa.repository.FicheEvaluationRepository;
 import fsegs.pfebackendemnagouuiaa.services.CritereEvaluationService;
+import fsegs.pfebackendemnagouuiaa.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -28,8 +29,11 @@ public class CritereEvaluationServiceImpl implements CritereEvaluationService {
             FicheEvaluation fiche = ficheRepository.findById(dto.getFicheId())
                     .orElseThrow(() -> new RuntimeException("Fiche introuvable"));
             entity.setFiche(fiche);
+            if (fiche.getStage() != null) {
+                EvaluationStageAccessRules.ensureEvaluationPeriodOpen(fiche.getStage());
+            }
             if (fiche.estVerrouillee()) {
-                throw new RuntimeException("Impossible d'ajouter un critére : la fiche d'évaluation est verrouillée");
+                throw new BusinessException("Impossible d'ajouter un critere : la fiche d'evaluation est verrouillee.");
             }
         }
 
@@ -64,8 +68,11 @@ public class CritereEvaluationServiceImpl implements CritereEvaluationService {
         CritereEvaluation entity = repository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Critére introuvable"));
 
+        if (entity.getFiche() != null && entity.getFiche().getStage() != null) {
+            EvaluationStageAccessRules.ensureEvaluationPeriodOpen(entity.getFiche().getStage());
+        }
         if (entity.getFiche() != null && entity.getFiche().estVerrouillee()) {
-            throw new RuntimeException("Impossible de modifier un critére : la fiche d'évaluation est verrouillée");
+            throw new BusinessException("Impossible de modifier un critere : la fiche d'evaluation est verrouillee.");
         }
 
         if (dto.getPartie() == null) {

@@ -13,6 +13,37 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+/**
+ * Compte utilisateur racine du système, intégré à Spring Security via {@link UserDetails}.
+ *
+ * <h3>Rôle métier</h3>
+ * Représente toute personne pouvant se connecter : stagiaire, encadrants, responsables
+ * entreprise ou universitaires, administrateur. Le discriminant JPA {@code dtype} distingue
+ * les sous-types ({@link Stagiaire}, {@link EncadrantAcademique}, etc.).
+ *
+ * <h3>Mapping JPA</h3>
+ * Stratégie {@link InheritanceType#JOINED} : table {@code utilisateur} + tables filles par sous-type.
+ * Colonne {@code dtype} comme discriminant. Identifiant technique {@link #id}.
+ *
+ * <h3>Champs clés</h3>
+ * <ul>
+ *   <li>{@link #email} — identifiant de connexion (unique, obligatoire).</li>
+ *   <li>{@link #role} — {@link Role}, source des autorités Spring ({@code ROLE_*}).</li>
+ *   <li>{@link #actif}, {@link #supprime}, {@link #doitChangerMotDePasse} — états du compte.</li>
+ *   <li>{@link #urlSignature} — image de signature (Base64 ou URL) pour les documents PDF.</li>
+ *   <li>{@link #reunions} — participation N-N aux {@link Reunion} via table de jointure.</li>
+ * </ul>
+ *
+ * <h3>Consommation applicative</h3>
+ * <ul>
+ *   <li>Services : {@code UtilisateurServiceImpl}, {@code AuthenticationServiceImpl},
+ *       {@code ServiceAuthentification}, et la plupart des services métier (résolution du connecté).</li>
+ *   <li>Contrôleurs : {@code UtilisateurController}, {@code AuthenticationController},
+ *       {@code ControleurAuthentification}, {@code ProfileController}.</li>
+ * </ul>
+ *
+ * @see Role
+ */
 @Entity
 @Inheritance(strategy = InheritanceType.JOINED) // ou SINGLE_TABLE
 @Getter
@@ -22,6 +53,7 @@ import java.util.Set;
 @SuperBuilder
 @EqualsAndHashCode(onlyExplicitlyIncluded = true)
 @DiscriminatorColumn(name = "dtype")
+//userDetail représentant l'utilisateur connecté , elle est from spring security
 public class Utilisateur implements UserDetails {
 
 
@@ -38,6 +70,7 @@ public class Utilisateur implements UserDetails {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @EqualsAndHashCode.Include
     private Long id;
 
     @Column(nullable = false)
@@ -68,7 +101,12 @@ public class Utilisateur implements UserDetails {
     @Column(columnDefinition = "LONGTEXT")
     private String urlSignature;
 
-    // Méthodes de sécurité Spring
+    // ── Contrat Spring Security (UserDetails) ───────────────────────────────────
+
+    /**
+     * Construit l'autorité unique {@code ROLE_<nomRole>} à partir de {@link #role}.
+     * Utilisé par les filtres de sécurité pour l'annotation {@code @PreAuthorize}.
+     */
     @Override 
     @JsonIgnore
     public Collection<? extends GrantedAuthority> getAuthorities() {
@@ -96,10 +134,14 @@ public class Utilisateur implements UserDetails {
     @JsonIgnore
     public boolean isCredentialsNonExpired() { return true; }
     
+    /**
+     * Compte utilisable si non désactivé explicitement et non marqué supprimé (soft delete).
+     * Les valeurs {@code null} en base (anciens comptes) sont traitées comme actives.
+     */
     @Override 
     @JsonIgnore
     public boolean isEnabled() { 
-        // Si la valeur est null en base (pour les vieux comptes), on considére qu'il est actif
+        // Si la valeur est null en base (pour les vieux comptes), on considère qu'il est actif
         return !Boolean.FALSE.equals(this.actif) && !Boolean.TRUE.equals(this.supprime);
     }
 

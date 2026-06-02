@@ -11,15 +11,23 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * Convention de stage.
- * <p>
- * Les anciens champs de signature (signeeEncPro, nomSignataireEncPro, etc.) ont été supprimés.
- * La liste {@link #signatures} remplace l'ensemble des booléens et champs role-spécifiques.
- * </p>
+ * Convention tripartite (ou plus) formalisant l'engagement de stage entre université, entreprise et stagiaire.
+ *
+ * <p>La liste {@link #signatures} centralise l'état des signatures par {@link RoleSignature}
+ * (remplace les anciens booléens par rôle).</p>
+ *
+ * <h3>Mapping JPA</h3>
+ * Table {@code conventions_stage}. 1-1 avec {@link Stage} ; lien optionnel vers
+ * {@link DemandeCreationCompteEntreprise}.
+ *
+ * <h3>Consommation applicative</h3>
+ * {@code ConventionStageServiceImpl}, {@code ConventionStagePdfService},
+ * {@code StageDocumentServiceImpl} ; contrôleur {@code ConventionStageController}.
  */
 @Entity
 @Table(name = "conventions_stage")
 @Data
+@EqualsAndHashCode(exclude = "stage")
 @SuperBuilder
 @NoArgsConstructor
 @AllArgsConstructor

@@ -1,6 +1,8 @@
 package fsegs.pfebackendemnagouuiaa.services;
 
 import fsegs.pfebackendemnagouuiaa.dto.CreateDemandeCreationCompteEntrepriseRequest;
+import fsegs.pfebackendemnagouuiaa.validation.PersonNameValidation;
+import fsegs.pfebackendemnagouuiaa.events.DemandeEntrepriseApprouveeEvent;
 import fsegs.pfebackendemnagouuiaa.entities.DemandeCreationCompteEntreprise;
 import fsegs.pfebackendemnagouuiaa.entities.Entreprise;
 import fsegs.pfebackendemnagouuiaa.entities.ResponsableEntreprise;
@@ -18,6 +20,7 @@ import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,6 +42,7 @@ public class DemandeCreationCompteEntrepriseServiceImpl implements DemandeCreati
     private final NotificationService notificationService;
     private final DemandeEntrepriseCommunicationAsyncService communicationAsyncService;
     private final JwtService jwtService;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Override
     public DemandeCreationCompteEntreprise createDemande(CreateDemandeCreationCompteEntrepriseRequest request) {
@@ -120,12 +124,14 @@ public class DemandeCreationCompteEntrepriseServiceImpl implements DemandeCreati
     @Override
     @Transactional
     public DemandeCreationCompteEntreprise validerParResponsableStages(Long demandeId) {
-        DemandeCreationCompteEntreprise demande = demandeRepository.findById(demandeId)
+        DemandeCreationCompteEntreprise demande = demandeRepository.findByIdForUpdate(demandeId)
                 .orElseThrow(() -> new EntityNotFoundException("Demande introuvable"));
 
-        // Idempotence : si déjà validée par le responsable, retour sans re-créer le compte.
-        if (demande.getStatutResponsableStages() == StatutValidation.VALIDEE) {
+        // Idempotence : demande déjà traitée (évite 409 sur double clic / requêtes parallèles).
+        if (demande.getStatutResponsableStages() == StatutValidation.VALIDEE
+                || demande.getStatut() == StatutDemande.VALIDEE) {
             log.info("[DemandeService] validerParResponsableStages: demande {} deja approuvee — retour idempotent.", demandeId);
+            publierFinalisationApresCommit(demande.getId());
             return demande;
         }
 
@@ -138,8 +144,42 @@ public class DemandeCreationCompteEntrepriseServiceImpl implements DemandeCreati
         mettreAJourStatutGlobal(demande);
 
         DemandeCreationCompteEntreprise saved = demandeRepository.save(demande);
-        finaliserCreationCompteEntrepriseSiApprouvee(saved);
+        publierFinalisationApresCommit(saved.getId());
         return saved;
+    }
+
+    @Override
+    @Transactional
+    public void finaliserCreationCompteApresApprobation(Long demandeId) {
+        DemandeCreationCompteEntreprise demande = demandeRepository.findById(demandeId).orElse(null);
+        if (demande == null) {
+            log.warn("[DemandeService] Finalisation ignoree : demande {} introuvable.", demandeId);
+            return;
+        }
+        finaliserCreationCompteEntrepriseSansEchecTransaction(demande);
+    }
+
+    private void publierFinalisationApresCommit(Long demandeId) {
+        if (demandeId == null) {
+            return;
+        }
+        eventPublisher.publishEvent(new DemandeEntrepriseApprouveeEvent(demandeId));
+    }
+
+    /**
+     * La création entreprise / compte responsable ne doit pas annuler la validation déjà persistée.
+     */
+    private void finaliserCreationCompteEntrepriseSansEchecTransaction(DemandeCreationCompteEntreprise demande) {
+        try {
+            finaliserCreationCompteEntrepriseSiApprouvee(demande);
+        } catch (RuntimeException ex) {
+            log.error(
+                    "[DemandeService] Finalisation entreprise echouee pour la demande {} (statut conserve) : {}",
+                    demande != null ? demande.getId() : null,
+                    ex.getMessage(),
+                    ex
+            );
+        }
     }
 
     private void verifierCreationCompteResponsablePossible(DemandeCreationCompteEntreprise demande) {
@@ -281,10 +321,17 @@ public class DemandeCreationCompteEntrepriseServiceImpl implements DemandeCreati
 
         Utilisateur existingUser = utilisateurRepository.findByEmailIgnoreCase(demande.getEmailResponsable()).orElse(null);
         if (existingUser != null) {
-            if (existingUser instanceof ResponsableEntreprise) {
+            if (existingUser instanceof ResponsableEntreprise responsable) {
+                if (responsable.getEntreprise() == null && entreprise != null) {
+                    responsable.setEntreprise(entreprise);
+                    responsableEntrepriseRepository.save(responsable);
+                }
+                log.info("[DemandeService] Compte responsable deja present pour la demande {} — creation ignoree.", demande.getId());
                 return;
             }
-            throw new RuntimeException("Un compte utilisateur existe deja avec cet email");
+            throw new IllegalStateException(
+                    "Un compte utilisateur existe deja avec l'adresse email du responsable : " + demande.getEmailResponsable()
+            );
         }
 
         String motDePasseTemporaire = genererMotDePasseTemporaire();
@@ -400,6 +447,8 @@ public class DemandeCreationCompteEntrepriseServiceImpl implements DemandeCreati
         String secteurActivite = requireText(request.getSecteurActivite(), "Le secteur d'activite est obligatoire.");
         String nomResponsable = requireText(request.getNomResponsable(), "Le nom du responsable est obligatoire.");
         String prenomResponsable = requireText(request.getPrenomResponsable(), "Le prenom du responsable est obligatoire.");
+        PersonNameValidation.requireValid(nomResponsable, "Le nom du responsable");
+        PersonNameValidation.requireValid(prenomResponsable, "Le prenom du responsable");
 
         String emailEntreprise = contactUniquenessService.normalizeAndValidateRequiredEmail(
                 request.getEmailEntreprise(),

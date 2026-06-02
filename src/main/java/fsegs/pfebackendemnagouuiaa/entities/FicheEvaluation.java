@@ -19,6 +19,8 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.ToString;
 
+import fsegs.pfebackendemnagouuiaa.services.EvaluationCriteriaCatalog;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -69,6 +71,15 @@ import java.util.Optional;
  *       de modifier la règle de verrouillage (ex. ajouter une signature académique)
  *       sans changer tous les appels à {@code estVerrouillee()}.</li>
  * </ul>
+ *
+ * <h3>Mapping JPA</h3>
+ * Table {@code fiche_evaluation}. 1-1 avec {@link Stage} ; {@code @ManyToOne} vers
+ * {@link ReunionFinale} ; collections signatures, notes et notifications.
+ *
+ * <h3>Consommation applicative</h3>
+ * {@code FicheEvaluationServiceImpl}, {@code FicheEvaluationPdfService},
+ * {@code StageDocumentServiceImpl} ; contrôleurs {@code FicheEvaluationController},
+ * {@code StageDocumentController} ; mapper {@code FicheEvaluationMapperImpl}.
  */
 @Entity
 @Table(name = "fiche_evaluation")
@@ -208,27 +219,32 @@ public class FicheEvaluation {
     // ── Méthodes de calcul ─────────────────────────────────────────────────────
 
     /**
-     * Calcule la note finale comme somme des scores pondérés :
-     * <pre>noteFinale = Σ (note_i / bareme_i) × poids_i</pre>
-     *
-     * <p>Pour un résultat sur 20, la somme des {@code poids} de toutes les notes
-     * doit être égale à 20. Cette invariant est imposé par le service, pas par
-     * cette méthode.</p>
+     * Calcule la note finale sur 5 : moyenne arithmétique des notes de critères (chaque note entre 0 et 5).
+     * <pre>noteFinale = somme(note_i) / nombre_de_criteres_evalues</pre>
      *
      * <p><b>Pré-condition (F3)</b> : {@code notesAttribuees} doit être chargée
-     * en mémoire avant l'appel. N'appeler cette méthode que dans un contexte
-     * transactionnel où la collection est initialisée.</p>
+     * en mémoire avant l'appel.</p>
      *
-     * @return somme des scores pondérés, ou {@code 0.0} si aucune note n'est évaluée.
+     * @return note finale sur 5, ou {@code 0.0} si aucune note n'est évaluée.
      */
     public double calculerNoteFinale() {
         if (notesAttribuees == null || notesAttribuees.isEmpty()) {
             return 0.0;
         }
-        return notesAttribuees.stream()
+        var evaluees = notesAttribuees.stream()
                 .filter(NoteAttribuee::estEvalue)
-                .mapToDouble(NoteAttribuee::calculerScorePondere)
-                .sum();
+                .toList();
+        if (evaluees.isEmpty()) {
+            return 0.0;
+        }
+        double averageOnFive = evaluees.stream()
+                .mapToDouble(n -> {
+                    int bareme = (n.getBareme() != null && n.getBareme() > 0) ? n.getBareme() : 5;
+                    return (n.getNote() / (double) bareme) * 5.0;
+                })
+                .average()
+                .orElse(0.0);
+        return Math.round(averageOnFive * 10.0) / 10.0;
     }
 
     // ── Méthodes de validation métier ──────────────────────────────────────────
@@ -247,16 +263,17 @@ public class FicheEvaluation {
      * (points forts et axes d'amélioration non vides).
      */
     public boolean partieEncadrantProfessionnelComplete() {
-        return isNotBlank(pointFortEncadrantPro)
-                && isNotBlank(axeAmeliorationEncadrantPro);
+        return isRequiredCommentText(pointFortEncadrantPro)
+                && isRequiredCommentText(resolveAxesText(axeAmeliorationEncadrantPro, pointFortEncadrantPro));
     }
 
     /**
      * Retourne {@code true} si la section du représentant entreprise est complète.
      */
     public boolean partieResponsableEntrepriseComplete() {
-        return isNotBlank(pointFortResponsableEntreprise)
-                && isNotBlank(axeAmeliorationResponsableEntreprise);
+        return isRequiredCommentText(pointFortResponsableEntreprise)
+                && isRequiredCommentText(
+                resolveAxesText(axeAmeliorationResponsableEntreprise, pointFortResponsableEntreprise));
     }
 
     /**
@@ -268,6 +285,47 @@ public class FicheEvaluation {
         return partieEncadrantProfessionnelComplete()
                 && partieResponsableEntrepriseComplete()
                 && toutesLesNotesSontRenseignees();
+    }
+
+    /**
+     * Retourne {@code true} si toutes les notes de la partie indiquée sont saisies.
+     * Utilisé pour autoriser la signature d'un seul signataire sans exiger l'autre partie.
+     */
+    public boolean notesPartieComplete(PartieEvaluation partie) {
+        if (partie == null) {
+            return false;
+        }
+        List<String> requiredLabels = EvaluationCriteriaCatalog.requiredLabelsFor(partie);
+        if (requiredLabels.isEmpty()) {
+            return false;
+        }
+        return requiredLabels.stream().allMatch(this::hasEvaluatedNoteForCriterionLabel);
+    }
+
+    private boolean hasEvaluatedNoteForCriterionLabel(String expectedLabel) {
+        if (notesAttribuees == null || notesAttribuees.isEmpty()) {
+            return false;
+        }
+        return notesAttribuees.stream()
+                .filter(NoteAttribuee::estEvalue)
+                .anyMatch(note -> {
+                    String label = note.getCritereEvaluation() != null
+                            ? note.getCritereEvaluation().getLibelle()
+                            : null;
+                    return EvaluationCriteriaCatalog.matchesCriterionLabel(label, expectedLabel);
+                });
+    }
+
+    /** Prêt pour signature EP : section EP + notes EP uniquement. */
+    public boolean pretPourSignatureEncadrantProfessionnel() {
+        return partieEncadrantProfessionnelComplete()
+                && notesPartieComplete(PartieEvaluation.ENCADRANT_PROFESSIONNEL);
+    }
+
+    /** Prêt pour signature RE : section RE + notes RE uniquement. */
+    public boolean pretPourSignatureResponsableEntreprise() {
+        return partieResponsableEntrepriseComplete()
+                && notesPartieComplete(PartieEvaluation.RESPONSABLE_ENTREPRISE);
     }
 
     // ── equals / hashCode sur l'id uniquement (F1) ────────────────────────────
@@ -286,7 +344,14 @@ public class FicheEvaluation {
 
     // ── Utilitaire privé ───────────────────────────────────────────────────────
 
-    private static boolean isNotBlank(String value) {
-        return value != null && !value.isBlank();
+    private static boolean isRequiredCommentText(String value) {
+        return EvaluationCriteriaCatalog.isRequiredText(value);
+    }
+
+    private static String resolveAxesText(String axes, String fallbackPointsForts) {
+        if (axes != null && !axes.isBlank()) {
+            return axes;
+        }
+        return fallbackPointsForts;
     }
 }

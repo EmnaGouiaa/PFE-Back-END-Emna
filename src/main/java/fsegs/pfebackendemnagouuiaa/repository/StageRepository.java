@@ -3,15 +3,39 @@ package fsegs.pfebackendemnagouuiaa.repository;
 import fsegs.pfebackendemnagouuiaa.entities.Stage;
 import fsegs.pfebackendemnagouuiaa.entities.StatutStage;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Persistance et requêtes sur l'entité centrale {@link Stage}.
+ * <p>
+ * <strong>Rôle :</strong> fournir les accès par acteur (stagiaire, encadrants, entreprise),
+ * par offre source, et les contrôles de co-participation pour la sécurité des signatures.
+ * </p>
+ * <p>
+ * <strong>Consommateurs principaux :</strong> {@code StageServiceImpl},
+ * {@code OffreStageServiceImpl}, {@code StageDocumentServiceImpl},
+ * {@code UtilisateurServiceImpl}, {@code EnqueteSatisfactionServiceImpl}.
+ * </p>
+ */
 @Repository
 public interface StageRepository extends JpaRepository<Stage, Long> {
 
+    @Query("""
+            SELECT s FROM Stage s
+            LEFT JOIN FETCH s.stagiaire
+            LEFT JOIN FETCH s.encadrantAcademique
+            LEFT JOIN FETCH s.encadrantProfessionnel
+            WHERE s.id = :id
+            """)
+    Optional<Stage> findByIdWithMeetingActors(@Param("id") Long id);
+
+    /** @param stagiaireId identifiant du stagiaire @return tous ses stages */
     List<Stage> findByStagiaireId(Long stagiaireId);
 
     /** Stages dont le stagiaire a été supprimé (stagiaire_id IS NULL) — orphelins à nettoyer. */

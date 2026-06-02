@@ -2,6 +2,7 @@ package fsegs.pfebackendemnagouuiaa.services;
 
 import fsegs.pfebackendemnagouuiaa.dto.ConventionStageDto;
 import fsegs.pfebackendemnagouuiaa.dto.CreateStageRequest;
+import fsegs.pfebackendemnagouuiaa.validation.StagePeriodValidation;
 import fsegs.pfebackendemnagouuiaa.entities.*;
 import fsegs.pfebackendemnagouuiaa.mapper.StageMapper;
 import fsegs.pfebackendemnagouuiaa.repository.ConventionStageRepository;
@@ -17,9 +18,12 @@ import fsegs.pfebackendemnagouuiaa.repository.StagiaireRepository;
 import fsegs.pfebackendemnagouuiaa.repository.UtilisateurRepository;
 import fsegs.pfebackendemnagouuiaa.security.JwtService;
 import fsegs.pfebackendemnagouuiaa.exception.BusinessException;
+import fsegs.pfebackendemnagouuiaa.support.DemoStageSupport;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
@@ -27,6 +31,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -41,6 +46,8 @@ public class StageServiceImpl implements StageService {
 
     private static final LocalTime HEURE_REUNION_FINALE_PAR_DEFAUT = LocalTime.of(9, 0);
     private static final String TYPE_NOTIFICATION_OUVERTURE_ESPACES = "OUVERTURE_ESPACES_FIN_STAGE";
+    /** Fuseau unique pour le calcul des statuts de stage (comparaison sur des dates calendaires). */
+    private static final ZoneId STAGE_BUSINESS_ZONE = ZoneId.of("Africa/Tunis");
 
     private final StageRepository stageRepository;
     private final StagiaireRepository stagiaireRepository;
@@ -135,6 +142,14 @@ public class StageServiceImpl implements StageService {
         return declenches;
     }
 
+    @Override
+    public Stage synchronizeStageStatut(Long stageId) {
+        Stage stage = stageRepository.findById(stageId)
+                .orElseThrow(() -> new EntityNotFoundException("Stage introuvable avec l'id : " + stageId));
+        appliquerStatutMetier(stage);
+        return stageRepository.save(stage);
+    }
+
     @Scheduled(cron = "${app.stage.finalization.cron:0 0 */1 * * *}", zone = "${app.stage.finalization.zone:Africa/Tunis}")
     @Transactional
     public void synchroniserFinStagesPlanifies() {
@@ -172,6 +187,7 @@ public class StageServiceImpl implements StageService {
         }
 
         validateStageDuration(request.getDuree());
+        validateStageDates(request);
 
         Stage stage = StageMapper.toEntity(request);
         stage.setStatut(StatutStage.PAS_COMMENCE);
@@ -195,6 +211,7 @@ public class StageServiceImpl implements StageService {
         Long previousEncadrantProfessionnelId = stage.getEncadrantProfessionnel() != null ? stage.getEncadrantProfessionnel().getId() : null;
 
         validateStageDuration(request.getDuree());
+        validateStageDates(request);
 
         stage.setTitre(request.getTitre());
         stage.setDateDebut(request.getDateDebut());
@@ -215,6 +232,7 @@ public class StageServiceImpl implements StageService {
     @Override
     public Stage getStageById(Long id) {
         return stageRepository.findById(id)
+                .filter(this::isStageVisibleDansListes)
                 .map(this::synchroniserStatutSiNecessaire)
                 .map(this::enrichStageSurveyStatus)
                 .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
@@ -222,9 +240,16 @@ public class StageServiceImpl implements StageService {
 
     @Override
     public List<Stage> getAllStages() {
+        return getAllStages(null);
+    }
+
+    @Override
+    public List<Stage> getAllStages(String statutSuivi) {
+        StatutSuiviStage filter = StatutSuiviStage.parseFilter(statutSuivi);
         return stageRepository.findAll().stream()
-                .map(this::synchroniserStatutSiNecessaire)
-                .map(this::enrichStageSurveyStatus)
+                .map(this::mapStagePourListe)
+                .filter(Objects::nonNull)
+                .filter(stage -> filter == null || StatutSuiviStage.from(stage.getStatut()) == filter)
                 .toList();
     }
 
@@ -250,10 +275,72 @@ public class StageServiceImpl implements StageService {
     public void deleteStage(Long id) {
         Stage stage = stageRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
+        supprimerStageAutomatiquementApresRefus(stage);
+    }
 
+    @Override
+    @Transactional
+    public void supprimerStageAutomatiquementApresRefus(Long stageId) {
+        Stage stage = stageRepository.findById(stageId)
+                .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
+        supprimerStageAutomatiquementApresRefus(stage);
+    }
+
+    /**
+     * Règle métier : un stage refusé n'est pas conservé en base — suppression immédiate
+     * avec nettoyage des relations (réunions, documents, évaluations) et libération de l'offre.
+     */
+    private void supprimerStageAutomatiquementApresRefus(Stage stage) {
+        if (stage == null || stage.getId() == null) {
+            return;
+        }
+        log.info("[Stage] Suppression automatique du stage id={} suite au refus.", stage.getId());
+        libererOffreSourceApresSuppressionStage(stage);
         detachReunionParticipants(stage);
-
         stageRepository.delete(stage);
+        stageRepository.flush();
+    }
+
+    private void libererOffreSourceApresSuppressionStage(Stage stage) {
+        OffreStage offre = stage.getOffreSource();
+        if (offre == null || offre.getId() == null) {
+            return;
+        }
+        Stagiaire stagiaire = stage.getStagiaire();
+        if (stagiaire == null || stagiaire.getId() == null
+                || offre.getStagiaireAffecte() == null
+                || !stagiaire.getId().equals(offre.getStagiaireAffecte().getId())) {
+            return;
+        }
+        offre.setStagiaireAffecte(null);
+        if (offre.getStatut() == StatutOffre.AFFECTEE) {
+            offre.setStatut(StatutOffre.VALIDEE);
+        }
+        offreStageRepository.save(offre);
+    }
+
+    @EventListener(ApplicationReadyEvent.class)
+    @Transactional
+    public void purgerStagesRefusesObsoletes() {
+        List<Stage> refuses = stageRepository.findByStatutIn(List.of(StatutStage.REFUSE));
+        if (refuses.isEmpty()) {
+            return;
+        }
+        log.info("Purge de {} stage(s) au statut REFUSE (suppression automatique)...", refuses.size());
+        for (Stage stage : refuses) {
+            supprimerStageAutomatiquementApresRefus(stage);
+        }
+    }
+
+    private boolean isStageVisibleDansListes(Stage stage) {
+        return stage != null && stage.getStatut() != StatutStage.REFUSE;
+    }
+
+    private Stage mapStagePourListe(Stage stage) {
+        if (!isStageVisibleDansListes(stage)) {
+            return null;
+        }
+        return enrichStageSurveyStatus(synchroniserStatutSiNecessaire(stage));
     }
 
     @Override
@@ -348,7 +435,10 @@ public class StageServiceImpl implements StageService {
 
     @Override
     public List<Stage> getStagesByStagiaire(Long stagiaireId) {
-        return stageRepository.findByStagiaireId(stagiaireId).stream().map(this::synchroniserStatutSiNecessaire).map(this::enrichStageSurveyStatus).toList();
+        return stageRepository.findByStagiaireId(stagiaireId).stream()
+                .map(this::mapStagePourListe)
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     @Override
@@ -357,17 +447,26 @@ public class StageServiceImpl implements StageService {
         if (utilisateur.getRole() == Role.RESPONSABLE_ENTREPRISE) {
             ensureEntrepriseScope(entrepriseId, utilisateur);
         }
-        return stageRepository.findByEntrepriseId(entrepriseId).stream().map(this::synchroniserStatutSiNecessaire).map(this::enrichStageSurveyStatus).toList();
+        return stageRepository.findByEntrepriseId(entrepriseId).stream()
+                .map(this::mapStagePourListe)
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     @Override
     public List<Stage> getStagesByEncadrantAcademique(Long encadrantId) {
-        return stageRepository.findByEncadrantAcademiqueId(encadrantId).stream().map(this::synchroniserStatutSiNecessaire).map(this::enrichStageSurveyStatus).toList();
+        return stageRepository.findByEncadrantAcademiqueId(encadrantId).stream()
+                .map(this::mapStagePourListe)
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     @Override
     public List<Stage> getStagesByEncadrantProfessionnel(Long encadrantId) {
-        return stageRepository.findByEncadrantProfessionnelId(encadrantId).stream().map(this::synchroniserStatutSiNecessaire).map(this::enrichStageSurveyStatus).toList();
+        return stageRepository.findByEncadrantProfessionnelId(encadrantId).stream()
+                .map(this::mapStagePourListe)
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     @Override
@@ -376,7 +475,10 @@ public class StageServiceImpl implements StageService {
         if (utilisateur.getRole() != Role.ENCADRANT_ACADEMIQUE) {
             throw new RuntimeException("Acces refuse : role encadrant academique requis.");
         }
-        return stageRepository.findByEncadrantAcademiqueId(utilisateur.getId()).stream().map(this::synchroniserStatutSiNecessaire).map(this::enrichStageSurveyStatus).toList();
+        return stageRepository.findByEncadrantAcademiqueId(utilisateur.getId()).stream()
+                .map(this::mapStagePourListe)
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     @Override
@@ -385,7 +487,10 @@ public class StageServiceImpl implements StageService {
         if (utilisateur.getRole() != Role.ENCADRANT_PROFESSIONNEL) {
             throw new RuntimeException("Acces refuse : role encadrant professionnel requis.");
         }
-        return stageRepository.findByEncadrantProfessionnelId(utilisateur.getId()).stream().map(this::synchroniserStatutSiNecessaire).map(this::enrichStageSurveyStatus).toList();
+        return stageRepository.findByEncadrantProfessionnelId(utilisateur.getId()).stream()
+                .map(this::mapStagePourListe)
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     @Override
@@ -400,9 +505,8 @@ public class StageServiceImpl implements StageService {
                 stage.getStagiaire() != null ? stage.getStagiaire().getId() : null));
 
         List<Stage> filtered = allStages.stream()
-                .map(this::synchroniserStatutSiNecessaire)
-                .filter(stage -> stage.getStatut() != StatutStage.REFUSE)
-                .map(this::enrichStageSurveyStatus)
+                .map(this::mapStagePourListe)
+                .filter(Objects::nonNull)
                 .toList();
 
         log.debug("Stages apres filtrage (non-REFUSE): {}", filtered.size());
@@ -437,7 +541,10 @@ public class StageServiceImpl implements StageService {
             throw new EntityNotFoundException("Aucune entreprise associee a ce compte.");
         }
         Long entrepriseId = responsable.getEntreprise().getId();
-        return stageRepository.findByEntrepriseId(entrepriseId).stream().map(this::synchroniserStatutSiNecessaire).map(this::enrichStageSurveyStatus).toList();
+        return stageRepository.findByEntrepriseId(entrepriseId).stream()
+                .map(this::mapStagePourListe)
+                .filter(Objects::nonNull)
+                .toList();
     }
 
     @Override
@@ -482,6 +589,9 @@ public class StageServiceImpl implements StageService {
         ensureNoActiveStageForStagiaire(stagiaire, offre);
 
         validateStageDuration(offre.getDuree());
+        if (offre.getDateDebutPrevue() != null && offre.getDuree() != null) {
+            StagePeriodValidation.validatePeriod(offre.getDateDebutPrevue(), offre.getDuree());
+        }
 
         Stage stage = new Stage();
         stage.setTitre(offre.getTitre());
@@ -572,19 +682,32 @@ public class StageServiceImpl implements StageService {
         stage.setTrelloDoneListId((String) done.get("id"));
     }
 
-    /**
-     * Valide que la duree du stage est comprise entre 1 et 4 mois (inclus).
-     * Lance une {@link IllegalArgumentException} avec un message clair si la regle n'est pas respectee.
-     */
+    /** Verifie la presence et le minimum de duree ; le plafond par periode est valide dans {@link #validateStageDates}. */
     private void validateStageDuration(Integer duree) {
         if (duree == null) {
             throw new IllegalArgumentException(
-                    "La duree du stage est obligatoire. Veuillez indiquer une duree entre 1 et 4 mois.");
+                    "La duree du stage est obligatoire (minimum "
+                            + StagePeriodValidation.MIN_DURATION_MONTHS
+                            + " mois ; maximum 3 mois en periode 1, 2 mois en periode 2).");
         }
-        if (duree < 1 || duree > 4) {
+        if (duree < StagePeriodValidation.MIN_DURATION_MONTHS) {
             throw new IllegalArgumentException(
-                    "La duree du stage doit etre comprise entre 1 et 4 mois "
-                    + "(valeur recue : " + duree + " mois).");
+                    "La duree du stage doit etre d'au moins "
+                            + StagePeriodValidation.MIN_DURATION_MONTHS
+                            + " mois (valeur recue : " + duree + " mois).");
+        }
+    }
+
+    private void validateStageDates(CreateStageRequest request) {
+        if (request.getDateDebut() == null) {
+            return;
+        }
+        if (request.getDuree() != null) {
+            StagePeriodValidation.validatePeriod(request.getDateDebut(), request.getDuree());
+            return;
+        }
+        if (request.getDateFin() != null) {
+            StagePeriodValidation.validatePeriod(request.getDateDebut(), request.getDateFin());
         }
     }
 
@@ -593,7 +716,7 @@ public class StageServiceImpl implements StageService {
             return null;
         }
 
-        return dateDebut.plusMonths(dureeMois.longValue());
+        return StagePeriodValidation.calculateEndDate(dateDebut, dureeMois);
     }
 
     private Stagiaire getAuthenticatedStagiaire() {
@@ -846,7 +969,7 @@ public class StageServiceImpl implements StageService {
     }
 
     @Override
-    public Stage refuserSujetParEncadrantAcademique(Long stageId, Long encadrantId) {
+    public void refuserSujetParEncadrantAcademique(Long stageId, Long encadrantId) {
         Stage stage = stageRepository.findById(stageId)
                 .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
 
@@ -859,20 +982,22 @@ public class StageServiceImpl implements StageService {
 
         stage.setSujetValidePar(encadrant);
         stage.setStatutSujet(StatutValidation.REFUSEE);
-        stage.setStatut(StatutStage.REFUSE);
-
-        Stage saved = stageRepository.save(stage);
-        notifierValidationSujet(saved, false);
-        return enrichStageSurveyStatus(saved);
+        try {
+            notifierValidationSujet(stage, false);
+        } catch (RuntimeException ex) {
+            log.warn("Refus du sujet effectue mais echec d'envoi de notification. stageId={} : {}",
+                    stageId, ex.getMessage());
+        }
+        supprimerStageAutomatiquementApresRefus(stage);
     }
 
     @Override
-    public Stage refuserSujetParEncadrantAcademiqueAuthentifie(Long stageId) {
+    public void refuserSujetParEncadrantAcademiqueAuthentifie(Long stageId) {
         Utilisateur utilisateur = getAuthenticatedUtilisateur();
         if (utilisateur.getRole() != Role.ENCADRANT_ACADEMIQUE) {
             throw new RuntimeException("Acces refuse : seul l'encadrant academique affecte peut refuser le sujet.");
         }
-        return refuserSujetParEncadrantAcademique(stageId, utilisateur.getId());
+        refuserSujetParEncadrantAcademique(stageId, utilisateur.getId());
     }
 
     @Override
@@ -937,8 +1062,6 @@ public class StageServiceImpl implements StageService {
         Stage stage = stageRepository.findById(stageId)
                 .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
 
-        rejectIfStageDateFinPassedForTrello(stage);
-
         Map<String, Object> resume = new LinkedHashMap<>();
         resume.put("stageId", stage.getId());
         resume.put("titreStage", stage.getTitre());
@@ -947,9 +1070,19 @@ public class StageServiceImpl implements StageService {
         // Trello est optionnel : s'il est indisponible (token invalide, service injoignable),
         // le suivi du stage reste accessible avec un resume vide plutot que de planter la page.
         try {
-            createTrelloBoardIfNotExists(stageId);
+            // Lecture seule : un stage termine peut encore afficher son tableau existant.
+            // On ne cree un board que tant que le stage est en cours.
+            if (!hasText(stage.getTrelloBoardId()) && !isStageDateFinPassed(stage)) {
+                createTrelloBoardIfNotExists(stageId);
+            }
             stage = stageRepository.findById(stageId)
                     .orElseThrow(() -> new EntityNotFoundException("Stage introuvable"));
+
+            if (!hasText(stage.getTrelloBoardId())) {
+                fillResumeTrelloIndisponible(resume, stage,
+                        "Aucun tableau Trello n'est associe a ce stage.");
+                return resume;
+            }
 
             List<Map<String, Object>> listes = trelloService.getListsByBoard(stage.getTrelloBoardId());
             List<Map<String, Object>> cartes = trelloService.getCardsByBoard(stage.getTrelloBoardId());
@@ -985,22 +1118,26 @@ public class StageServiceImpl implements StageService {
         } catch (RuntimeException ex) {
             // Degradation gracieuse : on renvoie un resume vide sans interrompre le suivi.
             log.warn("Trello indisponible pour le stage {} : {}", stageId, ex.getMessage());
-            resume.put("trelloDisponible", false);
-            resume.put("messageTrello",
+            fillResumeTrelloIndisponible(resume, stage,
                     "Le tableau Trello est momentanement indisponible. Le suivi du stage reste accessible.");
-            resume.put("trelloBoardId", stage.getTrelloBoardId());
-            resume.put("trelloBoardUrl", stage.getTrelloBoardUrl());
-            resume.put("nombreTotalTaches", 0);
-            resume.put("nombreTachesAFaire", 0);
-            resume.put("nombreTachesEnCours", 0);
-            resume.put("nombreTachesTerminees", 0);
-            resume.put("listes", List.of());
-            resume.put("tachesAFaire", List.of());
-            resume.put("tachesEnCours", List.of());
-            resume.put("tachesTerminees", List.of());
         }
 
         return resume;
+    }
+
+    private void fillResumeTrelloIndisponible(Map<String, Object> resume, Stage stage, String message) {
+        resume.put("trelloDisponible", false);
+        resume.put("messageTrello", message);
+        resume.put("trelloBoardId", stage != null ? stage.getTrelloBoardId() : null);
+        resume.put("trelloBoardUrl", stage != null ? stage.getTrelloBoardUrl() : null);
+        resume.put("nombreTotalTaches", 0);
+        resume.put("nombreTachesAFaire", 0);
+        resume.put("nombreTachesEnCours", 0);
+        resume.put("nombreTachesTerminees", 0);
+        resume.put("listes", List.of());
+        resume.put("tachesAFaire", List.of());
+        resume.put("tachesEnCours", List.of());
+        resume.put("tachesTerminees", List.of());
     }
 
     private Map<String, Object> buildTrelloBoardResponse(Stage stage, boolean created) {
@@ -1035,36 +1172,35 @@ public class StageServiceImpl implements StageService {
     }
 
     /**
-     * Statut d'un stage = fonction pure des dates (regle metier mise a jour) :
-     *   - aujourd'hui < dateDebut         → A_VENIR
-     *   - dateDebut ≤ aujourd'hui ≤ dateFin → EN_COURS
-     *   - aujourd'hui > dateFin           → TERMINE
+     * Date du jour métier (sans heure) dans le fuseau {@link #STAGE_BUSINESS_ZONE}.
+     */
+    private LocalDate todayStageBusiness() {
+        return LocalDate.now(STAGE_BUSINESS_ZONE);
+    }
+
+    /**
+     * Statut d'un stage = fonction pure des dates calendaires :
+     *   - aujourd'hui &lt; dateDebut              → {@link StatutStage#A_VENIR} (non commencé)
+     *   - dateDebut ≤ aujourd'hui ≤ dateFin       → {@link StatutStage#EN_COURS}
+     *   - aujourd'hui &gt; dateFin                → {@link StatutStage#TERMINE}
      *
-     * Les etats manuels ANNULE / REFUSE ne sont jamais ecrases par le calcul automatique.
-     * Le calcul utilise le fuseau Africa/Tunis pour rester coherent avec les cron jobs et
-     * eviter les decalages d'affichage selon le serveur.
-     *
-     * Note : la transition vers TERMINE est desormais purement temporelle. La signature
-     * complete de la fiche d'evaluation reste une exigence metier independante (cf.
-     * FicheEvaluation.estVerrouillee), mais ne conditionne plus le statut du stage.
+     * Les états manuels ANNULE / REFUSE ne sont jamais écrasés.
      */
     private void appliquerStatutMetier(Stage stage) {
         if (stage == null) {
             return;
         }
-        // Etats manuels terminaux : on ne touche pas.
         if (stage.getStatut() == StatutStage.ANNULE || stage.getStatut() == StatutStage.REFUSE) {
             return;
         }
 
         resolveStageEndDate(stage);
 
-        java.time.LocalDate today = java.time.LocalDate.now(java.time.ZoneId.of("Africa/Tunis"));
-        java.time.LocalDate dateDebut = stage.getDateDebut();
-        java.time.LocalDate dateFin = stage.getDateFin();
+        LocalDate today = todayStageBusiness();
+        LocalDate dateDebut = stage.getDateDebut();
+        LocalDate dateFin = stage.getDateFin();
 
         if (dateDebut == null) {
-            // Pas de date : statut par defaut A_VENIR (ou PAS_COMMENCE pour les lignes legacy)
             if (stage.getStatut() != StatutStage.PAS_COMMENCE) {
                 stage.setStatut(StatutStage.A_VENIR);
             }
@@ -1073,10 +1209,10 @@ public class StageServiceImpl implements StageService {
 
         if (today.isBefore(dateDebut)) {
             stage.setStatut(StatutStage.A_VENIR);
-        } else if (dateFin == null || !today.isAfter(dateFin)) {
-            stage.setStatut(StatutStage.EN_COURS);
-        } else {
+        } else if (dateFin != null && today.isAfter(dateFin)) {
             stage.setStatut(StatutStage.TERMINE);
+        } else {
+            stage.setStatut(StatutStage.EN_COURS);
         }
     }
 
@@ -1118,7 +1254,7 @@ public class StageServiceImpl implements StageService {
                 && stage.getEncadrantAcademique() != null
                 && stage.getStatutSujet() == StatutValidation.VALIDEE
                 && stage.getDateDebut() != null
-                && !LocalDate.now().isBefore(stage.getDateDebut());
+                && !todayStageBusiness().isBefore(stage.getDateDebut());
     }
 
     private Stage enregistrerStageAvecDeclenchement(Stage stage, StatutStage previousStatus) {
@@ -1139,10 +1275,12 @@ public class StageServiceImpl implements StageService {
                             savedStage.getTitre(), ex.getMessage());
                 }
             }
-            if (oldStatus != StatutStage.EN_COURS) {
-                genererConventionSiAbsente(savedStage);
-            }
             savedStage = stageRepository.save(savedStage);
+        }
+
+        if (savedStage.getStatut() != StatutStage.REFUSE
+                && savedStage.getStatut() != StatutStage.ANNULE) {
+            genererConventionSiAbsente(savedStage);
         }
 
         savedStage = synchroniserAutomatisationReunionFinaleEtOuverture(savedStage);
@@ -1169,6 +1307,12 @@ public class StageServiceImpl implements StageService {
 
     private void resolveStageEndDate(Stage stage) {
         if (stage == null) {
+            return;
+        }
+        if (DemoStageSupport.mustPreserveExplicitEndDate(stage)) {
+            if (stage.getDateFin() == null) {
+                throw new IllegalStateException("La date de fin du stage de demonstration est absente.");
+            }
             return;
         }
 
@@ -1206,7 +1350,8 @@ public class StageServiceImpl implements StageService {
             if (initialiserFicheEvaluationSiNecessaire(stage, reunionFinale)) {
                 stageChanged = true;
             }
-            if (stage.getStatut() != StatutStage.TERMINE && estEvaluationSigneeEtComplete(stage)) {
+            if (stage.getStatut() != StatutStage.TERMINE
+                    && estEvaluationSigneeEtComplete(stage)) {
                 stage.setStatut(StatutStage.TERMINE);
                 stageChanged = true;
             }
@@ -1294,9 +1439,6 @@ public class StageServiceImpl implements StageService {
         }
         if (stage.getEncadrantProfessionnel() != null) {
             participants.add(stage.getEncadrantProfessionnel());
-        }
-        if (stage.getTuteurEntreprise() != null) {
-            participants.add(stage.getTuteurEntreprise());
         }
         return participants;
     }
@@ -1420,10 +1562,14 @@ public class StageServiceImpl implements StageService {
 
     /**
      * Aligné avec la règle « stage terminé » : {@code dateFin} strictement avant aujourd'hui.
-     * Bloque tout accès aux fonctionnalités Trello (résumé, création de board, lien existant).
+     * Bloque la creation de board Trello ; le resume en lecture reste autorise.
      */
+    private boolean isStageDateFinPassed(Stage stage) {
+        return stage != null && stage.getDateFin() != null && stage.getDateFin().isBefore(todayStageBusiness());
+    }
+
     private void rejectIfStageDateFinPassedForTrello(Stage stage) {
-        if (stage != null && stage.getDateFin() != null && stage.getDateFin().isBefore(LocalDate.now())) {
+        if (isStageDateFinPassed(stage)) {
             throw new BusinessException("Le stage est terminé. Action impossible.");
         }
     }
@@ -1540,46 +1686,29 @@ public class StageServiceImpl implements StageService {
             return;
         }
 
-        List<StatutStage> activeStatuses = List.of(
-                StatutStage.PAS_COMMENCE,
-                StatutStage.EN_COURS,
-                StatutStage.TERMINE
-        );
-        if (stageRepository.existsByStagiaireIdAndStatutIn(stagiaire.getId(), activeStatuses)) {
-            throw new IllegalStateException("Cet etudiant est deja rattache a un autre stage. Verifiez l'affectation existante avant de creer un nouveau stage.");
-        }
-
-        if (offre == null || offre.getDateDebutPrevue() == null) {
-            return;
-        }
-
-        LocalDate requestedStart = offre.getDateDebutPrevue();
-        LocalDate requestedEnd = calculerDateFin(offre.getDateDebutPrevue(), offre.getDuree());
-
-        boolean overlappingStage = stageRepository.findByStagiaireId(stagiaire.getId()).stream()
+        LocalDate today = LocalDate.now();
+        boolean hasStageActiveToday = stageRepository.findByStagiaireId(stagiaire.getId()).stream()
                 .filter(stage -> stage.getStatut() != StatutStage.ANNULE && stage.getStatut() != StatutStage.REFUSE)
-                .anyMatch(stage -> periodsOverlap(
-                        requestedStart,
-                        requestedEnd,
-                        stage.getDateDebut(),
-                        stage.getDateFin() != null ? stage.getDateFin() : calculerDateFin(stage.getDateDebut(), stage.getDuree())
-                ));
-
-        if (overlappingStage) {
-            throw new IllegalStateException("Cet etudiant a deja un stage sur cette periode.");
+                .anyMatch(stage -> isDateWithinStagePeriod(today, stage));
+        if (hasStageActiveToday) {
+            throw new IllegalStateException(
+                    "Cet etudiant ne peut pas etre affecte a un nouveau stage car il est deja dans une periode de stage active."
+            );
         }
+
     }
 
-    private boolean periodsOverlap(LocalDate requestedStart, LocalDate requestedEnd, LocalDate existingStart, LocalDate existingEnd) {
-        if (requestedStart == null || existingStart == null) {
+    private boolean isDateWithinStagePeriod(LocalDate date, Stage stage) {
+        if (date == null || stage == null || stage.getDateDebut() == null) {
             return false;
         }
-
-        LocalDate normalizedRequestedEnd = requestedEnd != null ? requestedEnd : requestedStart;
-        LocalDate normalizedExistingEnd = existingEnd != null ? existingEnd : existingStart;
-
-        return !normalizedExistingEnd.isBefore(requestedStart)
-                && !normalizedRequestedEnd.isBefore(existingStart);
+        LocalDate stageEnd = stage.getDateFin() != null
+                ? stage.getDateFin()
+                : calculerDateFin(stage.getDateDebut(), stage.getDuree());
+        if (stageEnd == null) {
+            return false;
+        }
+        return !date.isBefore(stage.getDateDebut()) && !date.isAfter(stageEnd);
     }
 
 }

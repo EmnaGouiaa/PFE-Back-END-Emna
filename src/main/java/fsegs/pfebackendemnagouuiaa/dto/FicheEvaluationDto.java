@@ -44,6 +44,10 @@ public class FicheEvaluationDto {
     // ── Statuts calculés ───────────────────────────────────────────────────────
 
     private Boolean donneesCompletes;
+    /** Section EP + notes EP prêtes ; indépendant de la partie RE. */
+    private Boolean pretSignatureEncadrantProfessionnel;
+    /** Section RE + notes RE prêtes ; indépendant de la partie EP. */
+    private Boolean pretSignatureResponsableEntreprise;
     private Boolean signaturesCompletes;
     private Boolean complete;
     private Boolean verrouillee;
@@ -73,4 +77,9 @@ public class FicheEvaluationDto {
 
     private Double noteFinale;
     private List<NoteAttribueeDto> notesAttribuees = new ArrayList<>();
+
+    /** Vrai uniquement lorsque le stage est au statut TERMINE — saisie autorisee. */
+    private Boolean evaluationAccessible;
+    /** Message affiche lorsque l'evaluation n'est pas encore disponible. */
+    private String evaluationIndisponibleMessage;
 }

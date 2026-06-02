@@ -4,8 +4,16 @@ import fsegs.pfebackendemnagouuiaa.dto.EntrepriseDto;
 import fsegs.pfebackendemnagouuiaa.entities.Entreprise;
 import org.springframework.stereotype.Component;
 
+/**
+ * Implémentation Spring de {@link EntrepriseMapper}.
+ * <p>
+ * Conversion symétrique {@link Entreprise} ↔ {@link EntrepriseDto}, utilisée par
+ * {@link fsegs.pfebackendemnagouuiaa.services.EntrepriseServiceImpl}.
+ */
 @Component
-public class EntrepriseMapperImpl implements EntrepriseMapper{
+public class EntrepriseMapperImpl implements EntrepriseMapper {
+
+    /** {@inheritDoc} */
     @Override
     public EntrepriseDto toDto(Entreprise entreprise) {
         if (entreprise == null) {
@@ -22,6 +30,7 @@ public class EntrepriseMapperImpl implements EntrepriseMapper{
                 .build();
     }
 
+    /** {@inheritDoc} */
     @Override
     public Entreprise toEntity(EntrepriseDto dto) {
         if (dto == null) {
